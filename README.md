@@ -1,5 +1,5 @@
 # 🧾 InvoiceGemini
-
+Проект целиком и полностью создан в Cursor AI с автоматическим подтверждением всех изменений.
 **AI-Powered Invoice Data Extraction Desktop Application**
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://python.org)
@@ -48,7 +48,7 @@
 
 1. **Клонируйте репозиторий:**
 ```bash
-git clone https://github.com/yourusername/InvoiceGemini.git
+git clone https://github.com/Zeed80/InvoiceGemini.git
 cd InvoiceGemini
 ```
 
@@ -166,23 +166,6 @@ black app/
 - **Документируйте** публичные методы
 - **Покрывайте тестами** новую функциональность
 
-## 🤝 Вклад в проект
-
-Мы приветствуем вклад в развитие проекта! Пожалуйста:
-
-1. Форкните репозиторий
-2. Создайте ветку для новой функции (`git checkout -b feature/amazing-feature`)
-3. Зафиксируйте изменения (`git commit -m 'Add amazing feature'`)
-4. Отправьте в ветку (`git push origin feature/amazing-feature`)
-5. Откройте Pull Request
-
-### Области для вклада:
-- 🔧 Новые LLM плагины
-- 🌐 Локализация на другие языки
-- 📊 Поддержка новых форматов документов
-- 🎨 Улучшения интерфейса
-- 🧪 Тестирование и отладка
-
 ## 📄 Лицензия
 
 Этот проект лицензирован под MIT License - см. файл [LICENSE](LICENSE) для деталей.
@@ -196,7 +179,6 @@ black app/
 
 ## 📞 Поддержка
 
-- 📧 Email: support@invoicegemini.com
 - 🐛 Issues: [GitHub Issues](https://github.com/yourusername/InvoiceGemini/issues)
 - 💬 Discussions: [GitHub Discussions](https://github.com/yourusername/InvoiceGemini/discussions)
 
@@ -204,8 +186,6 @@ black app/
 
 <div align="center">
 
-**⭐ Поставьте звезду, если проект был полезен!**
 
-Made with ❤️ by the InvoiceGemini Team
 
 </div> 
