@@ -1,0 +1,33 @@
+{
+    "name": "Code Llama Plugin",
+    "description": "Специализированная обработка технических документов и счетов с артикулами",
+    "version": "1.0.0",
+    "author": "InvoiceGemini Team",
+    "module": "codellama_plugin",
+    "class": "CodeLlamaPlugin",
+    "supported_models": [
+        "codellama-7b-instruct",
+        "codellama-13b-instruct",
+        "codellama-34b-instruct"
+    ],
+    "requirements": [
+        "torch>=2.0.0",
+        "transformers>=4.35.0",
+        "accelerate>=0.20.0",
+        "bitsandbytes>=0.41.0"
+    ],
+    "capabilities": [
+        "Извлечение артикулов и кодов",
+        "Технические характеристики",
+        "Структурированные данные",
+        "Номенклатурный анализ",
+        "16K контекст"
+    ],
+    "memory_requirements": {
+        "codellama-7b-instruct": "16 GB",
+        "codellama-13b-instruct": "28 GB",
+        "codellama-34b-instruct": "72 GB"
+    },
+    "specialization": "Технические документы и инженерные счета",
+    "tags": ["llm", "code-llama", "technical", "structured-data", "article-codes"]
+} 

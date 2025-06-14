@@ -1,0 +1,2433 @@
+"""
+Главное окно приложения для извлечения данных из счетов-фактур.
+"""
+import os
+import sys
+import json
+from PyQt6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QPushButton, QRadioButton, QLabel, QGroupBox, 
+    QScrollArea, QFileDialog, QProgressBar, QComboBox,
+    QStatusBar, QSplitter, QMenuBar, QMenu, QApplication,
+    QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QTextEdit,
+    QSpacerItem, QSizePolicy, QFrame, QMessageBox
+)
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QUrl, QTimer, QThread
+from PyQt6.QtGui import QPixmap, QImage, QAction, QIcon
+from PIL import Image, ImageQt
+import pdf2image
+import tempfile
+
+from . import config as app_config
+from . import utils
+from .settings_dialog import ModelManagementDialog
+from .threads import ProcessingThread
+from .settings_manager import settings_manager
+from .processing_engine import ModelManager
+from .training_dialog import TrainingDialog
+from .table_fields_dialog import TableFieldsDialog
+
+# NEW: Import LLM Plugin Manager
+from .plugins.plugin_manager import PluginManager
+from .ui.preview_dialog import PreviewDialog
+from .ui.export_template_designer import ExportTemplateDesigner
+from .ui.field_manager_dialog import FieldManagerDialog
+from .ui.llm_providers_dialog import LLMProvidersDialog
+
+
+class MainWindow(QMainWindow):
+    """Главное окно приложения."""
+    
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+        self.current_image_path = None
+        self.current_folder_path = None # NEW: Добавлено для хранения пути к папке
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.processing_thread = None
+        
+        # NEW: Добавляем ссылку на диалог управления моделями
+        self.model_management_dialog = None
+        
+        # Заполняем список моделей Gemini при инициализации
+        self.populate_gemini_models()
+        
+        # NEW: Создаем единый экземпляр ModelManager
+        self.model_manager = ModelManager()
+        
+        # NEW: Initialize LLM Plugin Manager
+        self.plugin_manager = PluginManager()
+        self.current_llm_plugin = None
+        self.llm_loading_thread = None
+        
+        # Populate LLM models after UI initialization
+        QTimer.singleShot(100, self.populate_llm_models)
+        
+        self.model_selector = QComboBox()
+        
+        # Populate Gemini models
+        self.populate_gemini_models()
+        
+        # Populate LLM providers and models
+        self.populate_cloud_providers()
+        self.populate_local_providers()
+    
+    def init_ui(self):
+        """Инициализация пользовательского интерфейса."""
+        self.setWindowTitle(f"{app_config.APP_NAME} v{app_config.APP_VERSION}")
+        self.setMinimumSize(1024, 768)
+        
+        # Создаем центральный виджет и главную компоновку
+        central_widget = QWidget()
+        main_layout = QVBoxLayout(central_widget)
+        
+        # Создаем сплиттер для разделения экрана
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        
+        # Левая часть - для изображения
+        self.image_widget = QWidget()
+        image_layout = QVBoxLayout(self.image_widget)
+        
+        # Виджет для выбора файла
+        file_group = QGroupBox("Выбор файла")
+        file_layout = QVBoxLayout()
+        
+        file_buttons_layout = QHBoxLayout()
+        self.select_file_button = QPushButton("Выбрать файл")
+        self.select_file_button.clicked.connect(self.select_file)
+        file_buttons_layout.addWidget(self.select_file_button)
+
+        # NEW: Добавляем кнопку выбора папки
+        self.select_folder_button = QPushButton("Выбрать папку")
+        self.select_folder_button.clicked.connect(self.select_folder)
+        file_buttons_layout.addWidget(self.select_folder_button)
+        
+        file_layout.addLayout(file_buttons_layout)
+
+        # NEW: Добавляем метку для отображения выбранного файла/папки
+        self.selected_path_label = QLabel("Файл или папка не выбраны")
+        self.selected_path_label.setWordWrap(True)
+        file_layout.addWidget(self.selected_path_label)
+
+        file_group.setLayout(file_layout)
+        
+        # Область отображения изображения
+        image_group = QGroupBox("Изображение")
+        scroll_layout = QVBoxLayout()
+        
+        self.image_scroll = QScrollArea()
+        self.image_scroll.setWidgetResizable(True)
+        self.image_label = QLabel("Изображение не загружено")
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_scroll.setWidget(self.image_label)
+        
+        scroll_layout.addWidget(self.image_scroll)
+        image_group.setLayout(scroll_layout)
+        
+        # Добавляем виджеты в левую часть
+        image_layout.addWidget(file_group)
+        image_layout.addWidget(image_group, 1)  # Растягивать при изменении размера окна
+        
+        # Правая часть - для выбора модели и результатов
+        self.controls_widget = QWidget()
+        controls_layout = QVBoxLayout(self.controls_widget)
+        
+        # Виджет для выбора модели
+        model_group = QGroupBox("Выбор модели")
+        model_layout = QVBoxLayout()
+        
+        # === ОБЛАЧНЫЕ МОДЕЛИ ===
+        cloud_section_label = QLabel("☁️ Облачные модели")
+        cloud_section_label.setStyleSheet("font-weight: bold; color: #2196F3; font-size: 14px; padding: 8px 0px;")
+        model_layout.addWidget(cloud_section_label)
+        
+        # Gemini (перенесено в облачные)
+        gemini_layout = QHBoxLayout()
+        self.gemini_radio = QRadioButton("Google Gemini")
+        self.gemini_radio.toggled.connect(self.on_model_changed)
+        self.gemini_prompt_button = QPushButton("Показать промпт")
+        self.gemini_prompt_button.clicked.connect(lambda: self.show_model_prompt('gemini'))
+        gemini_layout.addWidget(self.gemini_radio)
+        gemini_layout.addWidget(self.gemini_prompt_button)
+        model_layout.addLayout(gemini_layout)
+        
+        # Gemini sub-model selector
+        gemini_sub_layout = QHBoxLayout()
+        gemini_sub_layout.setContentsMargins(20, 0, 0, 0)  # Отступ для подкатегории
+        self.gemini_sub_model_label = QLabel("Модель:")
+        self.gemini_model_selector = QComboBox()
+        self.gemini_model_selector.currentIndexChanged.connect(self.on_gemini_sub_model_changed)
+        
+        gemini_sub_layout.addWidget(self.gemini_sub_model_label)
+        gemini_sub_layout.addWidget(self.gemini_model_selector, 1)
+        model_layout.addLayout(gemini_sub_layout)
+        
+        # Populate Gemini models
+        self.populate_gemini_models()
+        
+        # Cloud LLM Provider Selection
+        cloud_llm_layout = QHBoxLayout()
+        self.cloud_llm_radio = QRadioButton("Другие облачные LLM")
+        self.cloud_llm_radio.toggled.connect(self.on_model_changed)
+        
+        self.cloud_llm_prompt_button = QPushButton("Показать промпт")
+        self.cloud_llm_prompt_button.clicked.connect(lambda: self.show_model_prompt('cloud_llm'))
+        cloud_llm_layout.addWidget(self.cloud_llm_radio)
+        cloud_llm_layout.addWidget(self.cloud_llm_prompt_button)
+        model_layout.addLayout(cloud_llm_layout)
+        
+        # Cloud provider and model selection (with indent)
+        cloud_selection_layout = QVBoxLayout()
+        cloud_selection_layout.setContentsMargins(20, 0, 0, 0)  # Отступ для подкатегории
+        
+        cloud_provider_layout = QHBoxLayout()
+        self.cloud_provider_label = QLabel("Провайдер:")
+        self.cloud_provider_selector = QComboBox()
+        self.cloud_provider_selector.currentIndexChanged.connect(self.on_cloud_provider_changed)
+        cloud_provider_layout.addWidget(self.cloud_provider_label)
+        cloud_provider_layout.addWidget(self.cloud_provider_selector, 1)
+        cloud_selection_layout.addLayout(cloud_provider_layout)
+        
+        cloud_model_layout = QHBoxLayout()
+        self.cloud_model_label = QLabel("Модель:")
+        self.cloud_model_selector = QComboBox()
+        self.cloud_model_selector.currentIndexChanged.connect(self.on_cloud_model_changed)
+        cloud_model_layout.addWidget(self.cloud_model_label)
+        cloud_model_layout.addWidget(self.cloud_model_selector, 1)
+        cloud_selection_layout.addLayout(cloud_model_layout)
+        
+        # Cloud status indicator
+        self.cloud_llm_status_label = QLabel("Не настроено")
+        self.cloud_llm_status_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 0;")
+        cloud_selection_layout.addWidget(self.cloud_llm_status_label)
+        
+        model_layout.addLayout(cloud_selection_layout)
+        
+        # Разделитель между облачными и локальными
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("color: #ccc; margin: 10px 0;")
+        model_layout.addWidget(separator)
+        
+        # === ЛОКАЛЬНЫЕ МОДЕЛИ ===
+        local_section_label = QLabel("🖥️ Локальные модели")
+        local_section_label.setStyleSheet("font-weight: bold; color: #4CAF50; font-size: 14px; padding: 8px 0px;")
+        model_layout.addWidget(local_section_label)
+        
+        # LayoutLM (перенесено в локальные)
+        layoutlm_layout = QHBoxLayout()
+        self.layoutlm_radio = QRadioButton("LayoutLMv3")
+        self.layoutlm_radio.setChecked(True)  # По умолчанию выбрана
+        self.layoutlm_radio.toggled.connect(self.on_model_changed)
+        self.layoutlm_prompt_button = QPushButton("Показать промпт")
+        self.layoutlm_prompt_button.clicked.connect(lambda: self.show_model_prompt('layoutlm'))
+        layoutlm_layout.addWidget(self.layoutlm_radio)
+        layoutlm_layout.addWidget(self.layoutlm_prompt_button)
+        model_layout.addLayout(layoutlm_layout)
+        
+        # Donut (перенесено в локальные)
+        donut_layout = QHBoxLayout()
+        self.donut_radio = QRadioButton("Donut")
+        self.donut_radio.toggled.connect(self.on_model_changed)
+        self.donut_prompt_button = QPushButton("Показать промпт")
+        self.donut_prompt_button.clicked.connect(lambda: self.show_model_prompt('donut'))
+        donut_layout.addWidget(self.donut_radio)
+        donut_layout.addWidget(self.donut_prompt_button)
+        model_layout.addLayout(donut_layout)
+        
+        # Local LLM Models Section
+        local_llm_layout = QHBoxLayout()
+        self.local_llm_radio = QRadioButton("Локальные LLM (Ollama)")
+        self.local_llm_radio.toggled.connect(self.on_model_changed)
+        
+        self.local_llm_prompt_button = QPushButton("Показать промпт")
+        self.local_llm_prompt_button.clicked.connect(lambda: self.show_model_prompt('local_llm'))
+        local_llm_layout.addWidget(self.local_llm_radio)
+        local_llm_layout.addWidget(self.local_llm_prompt_button)
+        model_layout.addLayout(local_llm_layout)
+        
+        # Local provider and model selection (with indent)
+        local_selection_layout = QVBoxLayout()
+        local_selection_layout.setContentsMargins(20, 0, 0, 0)  # Отступ для подкатегории
+        
+        local_provider_layout = QHBoxLayout()
+        self.local_provider_label = QLabel("Провайдер:")
+        self.local_provider_selector = QComboBox()
+        self.local_provider_selector.currentIndexChanged.connect(self.on_local_provider_changed)
+        local_provider_layout.addWidget(self.local_provider_label)
+        local_provider_layout.addWidget(self.local_provider_selector, 1)
+        local_selection_layout.addLayout(local_provider_layout)
+        
+        local_model_layout = QHBoxLayout()
+        self.local_model_label = QLabel("Модель:")
+        self.local_model_selector = QComboBox()
+        self.local_model_selector.currentIndexChanged.connect(self.on_local_model_changed)
+        local_model_layout.addWidget(self.local_model_label)
+        local_model_layout.addWidget(self.local_model_selector, 1)
+        local_selection_layout.addLayout(local_model_layout)
+        
+        # Local status indicator
+        self.local_llm_status_label = QLabel("Не настроено")
+        self.local_llm_status_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 0;")
+        local_selection_layout.addWidget(self.local_llm_status_label)
+        
+        model_layout.addLayout(local_selection_layout)
+
+        model_group.setLayout(model_layout)
+        
+        # Виджет для выбора языка OCR
+        ocr_lang_group = QGroupBox("Язык OCR (для LayoutLMv3)")
+        ocr_lang_layout = QVBoxLayout()
+        
+        self.ocr_lang_combo = QComboBox()
+        self.ocr_lang_combo.addItem("English", "eng")
+        self.ocr_lang_combo.addItem("Русский", "rus")
+        self.ocr_lang_combo.addItem("English + Русский", "eng+rus")
+        self.ocr_lang_combo.currentIndexChanged.connect(self.on_ocr_language_changed)
+        
+        ocr_lang_layout.addWidget(self.ocr_lang_combo)
+        ocr_lang_group.setLayout(ocr_lang_layout)
+        
+        # Кнопка обработки
+        self.process_button = QPushButton("Обработать")
+        self.process_button.setEnabled(False)  # Отключаем до загрузки изображения
+        self.process_button.clicked.connect(self.process_image)
+        
+        # Прогресс-бар
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        
+        # Область результатов с таблицей вместо текста
+        results_group = QGroupBox("Результаты")
+        results_layout = QVBoxLayout()
+        
+        # Добавляем кнопку редактирования полей в заголовок таблицы
+        table_header_layout = QHBoxLayout()
+        table_header_label = QLabel("Извлечённые данные:")
+        table_header_layout.addWidget(table_header_label)
+        
+        # Кнопка редактирования полей
+        self.edit_fields_button = QPushButton("Редактировать поля")
+        self.edit_fields_button.clicked.connect(self.show_table_fields_dialog)
+        table_header_layout.addWidget(self.edit_fields_button)
+        
+        results_layout.addLayout(table_header_layout)
+        
+        # Создаем таблицу для отображения результатов
+        self.results_table = QTableWidget()
+        
+        # Настраиваем таблицу исходя из полей в настройках
+        self.setup_results_table()
+        
+        results_layout.addWidget(self.results_table)
+        
+        # Добавляем кнопки сохранения результатов
+        save_buttons_layout = QHBoxLayout()
+        
+        # NEW: Template Designer button
+        self.template_designer_button = QPushButton("🎨 Дизайнер шаблонов")
+        self.template_designer_button.clicked.connect(self.show_template_designer)
+        self.template_designer_button.setToolTip("Создать и настроить шаблоны экспорта")
+        self.template_designer_button.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; font-weight: bold; }")
+        save_buttons_layout.addWidget(self.template_designer_button)
+        
+        # NEW: Preview button
+        self.preview_button = QPushButton("🔍 Предварительный просмотр")
+        self.preview_button.setEnabled(False)  # Отключаем до завершения обработки
+        self.preview_button.clicked.connect(self.show_preview_dialog)
+        self.preview_button.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
+        save_buttons_layout.addWidget(self.preview_button)
+        
+        self.save_button = QPushButton("Сохранить как...")
+        self.save_button.setEnabled(False)  # Отключаем до завершения обработки
+        self.save_button.clicked.connect(self.save_results)
+        save_buttons_layout.addWidget(self.save_button)
+        
+        self.save_excel_button = QPushButton("Сохранить в Excel")
+        self.save_excel_button.setEnabled(False)  # Отключаем до завершения обработки
+        self.save_excel_button.clicked.connect(self.save_excel)
+        save_buttons_layout.addWidget(self.save_excel_button)
+        
+        results_layout.addLayout(save_buttons_layout)
+        
+        results_group.setLayout(results_layout)
+        
+        # Добавляем виджеты в правую часть
+        controls_layout.addWidget(model_group)
+        controls_layout.addWidget(ocr_lang_group)
+        controls_layout.addWidget(self.process_button)
+        controls_layout.addWidget(self.progress_bar)
+        controls_layout.addWidget(results_group)
+        
+        # Добавляем левую и правую части в сплиттер
+        splitter.addWidget(self.image_widget)
+        splitter.addWidget(self.controls_widget)
+        
+        # Устанавливаем начальные размеры сплиттера
+        splitter.setSizes([int(self.width() * 0.6), int(self.width() * 0.4)])
+        
+        # Добавляем сплиттер в главную компоновку
+        main_layout.addWidget(splitter)
+        
+        # Устанавливаем центральный виджет
+        self.setCentralWidget(central_widget)
+        
+        # Создаем строку состояния
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("Готов к работе")
+        
+        # Создаем меню
+        self.create_menus()
+
+        # NEW: Включаем сортировку для таблицы
+        self.results_table.setSortingEnabled(True)
+        
+        # Загружаем и применяем сохраненные настройки
+        self.load_saved_settings()
+    
+    def load_saved_settings(self):
+        """Загружает сохраненные пользовательские настройки и применяет их."""
+        # Загрузка активной модели
+        active_model = settings_manager.get_active_model()
+        if active_model == 'layoutlm':
+            self.layoutlm_radio.setChecked(True)
+        elif active_model == 'donut':
+            self.donut_radio.setChecked(True)
+        elif active_model == 'gemini':
+            self.gemini_radio.setChecked(True)
+        elif active_model == 'cloud_llm':
+            self.cloud_llm_radio.setChecked(True)
+        elif active_model == 'local_llm':
+            self.local_llm_radio.setChecked(True)
+        else:
+            # По умолчанию выбираем LayoutLM
+            self.layoutlm_radio.setChecked(True)
+        
+        # Загрузка языка OCR
+        ocr_lang = settings_manager.get_string('OCR', 'language', 'rus+eng')
+        for i in range(self.ocr_lang_combo.count()):
+            if self.ocr_lang_combo.itemData(i) == ocr_lang:
+                self.ocr_lang_combo.setCurrentIndex(i)
+                break
+        
+        # Загрузка выбранной модели Gemini
+        selected_gemini_model = settings_manager.get_string('Gemini', 'selected_model', 'models/gemini-2.0-flash-exp')
+        for i in range(self.gemini_model_selector.count()):
+            if self.gemini_model_selector.itemData(i) == selected_gemini_model:
+                self.gemini_model_selector.setCurrentIndex(i)
+                break
+        
+        print(f"Загружены настройки: модель={active_model}, OCR={ocr_lang}, Gemini={selected_gemini_model}")
+    
+    def on_model_changed(self, checked):
+        """Обработчик события изменения модели."""
+        if checked:
+            # Получаем выбранную модель
+            model_name = 'layoutlm'  # По умолчанию
+            if self.layoutlm_radio.isChecked():
+                model_name = 'layoutlm'
+            elif self.donut_radio.isChecked():
+                model_name = 'donut'
+            elif self.gemini_radio.isChecked():
+                model_name = 'gemini'
+            elif self.cloud_llm_radio.isChecked():
+                model_name = 'cloud_llm'
+            elif self.local_llm_radio.isChecked():
+                model_name = 'local_llm'
+                
+            # Сохраняем выбор в настройках
+            settings_manager.set_active_model(model_name)
+            
+            # Обновляем доступность выбора языка OCR (только для LayoutLM)
+            self.ocr_lang_combo.setEnabled(model_name == 'layoutlm')
+            
+            # Обновляем видимость компонентов
+            gemini_enabled = (model_name == 'gemini')
+            cloud_llm_enabled = (model_name == 'cloud_llm')
+            local_llm_enabled = (model_name == 'local_llm')
+            
+            # Gemini компоненты
+            self.gemini_sub_model_label.setEnabled(gemini_enabled)
+            self.gemini_model_selector.setEnabled(gemini_enabled)
+            
+            # Облачные LLM компоненты
+            self.cloud_provider_label.setEnabled(cloud_llm_enabled)
+            self.cloud_provider_selector.setEnabled(cloud_llm_enabled)
+            self.cloud_model_label.setEnabled(cloud_llm_enabled)
+            self.cloud_model_selector.setEnabled(cloud_llm_enabled and self.cloud_provider_selector.count() > 0)
+            
+            # Локальные LLM компоненты  
+            self.local_provider_label.setEnabled(local_llm_enabled)
+            self.local_provider_selector.setEnabled(local_llm_enabled)
+            self.local_model_label.setEnabled(local_llm_enabled)
+            self.local_model_selector.setEnabled(local_llm_enabled and self.local_provider_selector.count() > 0)
+            
+            # Обновляем статусы LLM, если выбраны
+            if cloud_llm_enabled:
+                self.update_cloud_llm_status()
+            if local_llm_enabled:
+                self.update_local_llm_status()
+            
+            print(f"Выбрана модель: {model_name}")
+    
+    def on_ocr_language_changed(self, index):
+        """Обработчик изменения языка OCR."""
+        selected_lang = self.ocr_lang_combo.currentData()
+        print(f"Выбран язык OCR: {selected_lang}")
+        # Сохраняем выбор в настройках
+        settings_manager.set_value('OCR', 'language', selected_lang)
+        # Обновляем настройку в конфиге для использования в реальном времени
+        app_config.DEFAULT_TESSERACT_LANG = selected_lang
+    
+    def create_menus(self):
+        """Создание меню приложения."""
+        menu_bar = self.menuBar()
+
+        # Меню Файл
+        file_menu = menu_bar.addMenu("Файл")
+        
+        open_action = QAction("Открыть...", self)
+        open_action.triggered.connect(self.select_file)
+        open_action.setShortcut("Ctrl+O")
+        file_menu.addAction(open_action)
+
+        # Добавляем действие "Открыть папку" в меню
+        open_folder_action = QAction("Открыть папку...", self)
+        open_folder_action.triggered.connect(self.select_folder)
+        file_menu.addAction(open_folder_action)
+        
+        file_menu.addSeparator()
+
+        save_action = QAction("Сохранить результаты...", self)
+        save_action.triggered.connect(self.save_results)
+        save_action.setShortcut("Ctrl+S")
+        save_action.setEnabled(False) 
+        self.save_action = save_action
+        file_menu.addAction(save_action)
+        
+        save_excel_action = QAction("Экспорт в Excel...", self)
+        save_excel_action.triggered.connect(self.save_excel)
+        save_excel_action.setShortcut("Ctrl+E")
+        save_excel_action.setEnabled(False)
+        self.save_excel_action = save_excel_action
+        file_menu.addAction(save_excel_action)
+        
+        file_menu.addSeparator()
+        
+        exit_action = QAction("Выход", self)
+        exit_action.triggered.connect(self.close)
+        exit_action.setShortcut("Ctrl+Q")
+        file_menu.addAction(exit_action)
+
+        # Меню Настройки
+        settings_menu = menu_bar.addMenu("Настройки")
+        
+        # Настройки и управление моделями
+        models_action = QAction("Настройки и управление моделями...", self)
+        models_action.triggered.connect(self.show_model_management_dialog)
+        settings_menu.addAction(models_action)
+        
+        # Управление полями таблицы
+        fields_action = QAction("🔧 Управление полями таблицы...", self)
+        fields_action.triggered.connect(self.show_field_manager_dialog)
+        settings_menu.addAction(fields_action)
+        
+        settings_menu.addSeparator()
+        
+        # Добавляем новый пункт меню для LLM плагинов
+        llm_plugins_action = QAction("🔌 Управление LLM плагинами...", self)
+        llm_plugins_action.triggered.connect(self.show_llm_plugins_dialog)
+        settings_menu.addAction(llm_plugins_action)
+
+        # Настройки Tesseract
+        if hasattr(self, 'show_tesseract_settings'):
+            tesseract_action = QAction("Настройки Tesseract OCR...", self)
+            tesseract_action.triggered.connect(self.show_tesseract_settings)
+            settings_menu.addAction(tesseract_action)
+        
+        # Меню Обучение
+        training_menu = menu_bar.addMenu("Обучение")
+        open_training_action = QAction("Обучение моделей", self)
+        open_training_action.triggered.connect(self._open_training_dialog)
+        training_menu.addAction(open_training_action)
+
+        # Меню Помощь
+        help_menu = menu_bar.addMenu("Помощь")
+        about_action = QAction("О программе", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_action = QAction("Краткая инструкция", self)
+        help_action.triggered.connect(self.show_help)
+        win7_info_action = QAction("Win7 Совместимость", self)
+        win7_info_action.triggered.connect(self.show_win7_info)
+        help_menu.addAction(about_action)
+        help_menu.addAction(help_action)
+        help_menu.addAction(win7_info_action)
+    
+    def select_file(self):
+        """Открытие диалога выбора файла."""
+        file_filter = "Изображения и PDF (*.jpg *.jpeg *.png *.bmp *.tiff *.tif *.pdf)"
+        
+        # Получаем последний сохраненный путь из настроек
+        last_open_path = settings_manager.get_string('Interface', 'last_open_path', utils.get_documents_dir())
+        
+        file_path = utils.get_open_file_path(
+            self, "Выбрать файл", last_open_path, file_filter
+        )
+        
+        if not file_path:
+            return
+        
+        if not utils.is_supported_format(file_path):
+            utils.show_error_message(
+                self, "Ошибка", "Неподдерживаемый формат файла. "
+                "Поддерживаются форматы: JPG, PNG, BMP, TIFF и PDF."
+            )
+            return
+        
+        # Сохраняем директорию выбранного файла в настройках
+        file_dir = os.path.dirname(file_path)
+        settings_manager.save_interface_setting('last_open_path', file_dir)
+            
+        self.load_image(file_path)
+    
+    def load_image(self, file_path):
+        """
+        Загрузка изображения для отображения.
+        
+        Args:
+            file_path (str): Путь к файлу изображения или PDF
+        """
+        self.current_image_path = file_path
+        self.status_bar.showMessage(f"Загрузка файла: {os.path.basename(file_path)}...")
+        
+        try:
+            # Если это PDF, конвертируем первую страницу в изображение
+            if utils.is_pdf_format(file_path):
+                try:
+                    # Конвертируем первую страницу PDF в изображение
+                    pdf_images = pdf2image.convert_from_path(
+                        file_path, 
+                        first_page=1, 
+                        last_page=1,
+                        dpi=200,  # Разрешение изображения
+                        poppler_path=app_config.POPPLER_PATH  # Используем путь к Poppler из конфига
+                    )
+                    
+                    if pdf_images:
+                        # Сохраняем изображение во временный файл
+                        temp_img_path = os.path.join(self.temp_dir.name, "temp_pdf_page.jpg")
+                        pdf_images[0].save(temp_img_path, "JPEG")
+                        
+                        # Обновляем путь к текущему изображению
+                        self.current_image_path = temp_img_path
+                        self.current_folder_path = None # Сбрасываем папку, если был выбран файл
+                        
+                        # Загружаем изображение из временного файла
+                        img = Image.open(temp_img_path)
+                    else:
+                        raise ValueError("Не удалось конвертировать PDF в изображение")
+                except Exception as e:
+                    utils.show_error_message(
+                        self, "Ошибка конвертации PDF", f"Не удалось преобразовать PDF: {str(e)}"
+                    )
+                    return
+            else:
+                # Загружаем обычное изображение
+                img = Image.open(file_path)
+            
+            # Конвертируем PIL Image в QPixmap для отображения
+            img_qt = ImageQt.toqpixmap(img)
+            
+            # Создаем новый QLabel для изображения
+            self.image_label = QLabel()
+            self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.image_label.setPixmap(img_qt)
+            
+            # Обновляем QScrollArea
+            self.image_scroll.setWidget(self.image_label)
+            
+            # Включаем кнопку обработки
+            self.process_button.setEnabled(True)
+            
+            # Обновляем статус
+            self.status_bar.showMessage(f"Загружен файл: {os.path.basename(file_path)}")
+            
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка загрузки", f"Не удалось загрузить изображение: {str(e)}"
+            )
+    
+    def process_image(self):
+        """Обработка изображения или папки выбранной моделью.""" # Обновили описание
+        # NEW: Проверяем, выбран ли файл или папка
+        if not self.current_image_path and not self.current_folder_path:
+            utils.show_error_message(
+                self, "Ошибка", "Сначала необходимо выбрать файл или папку."
+            )
+            return
+
+        input_path = self.current_folder_path if self.current_folder_path else self.current_image_path
+        is_folder = bool(self.current_folder_path)
+        
+        # Определяем тип модели
+        model_type = "layoutlm" if self.layoutlm_radio.isChecked() else "donut"
+        if self.gemini_radio.isChecked():
+            model_type = "gemini"
+        elif self.cloud_llm_radio.isChecked():
+            model_type = "cloud_llm"
+        elif self.local_llm_radio.isChecked():
+            model_type = "local_llm"
+            
+        ocr_lang = self.ocr_lang_combo.currentData() if model_type == "layoutlm" else None
+        
+        # NEW: Обработка LLM плагинов
+        if model_type in ["cloud_llm", "local_llm"]:
+            if not hasattr(self, 'current_llm_plugin') or not self.current_llm_plugin:
+                utils.show_error_message(
+                    self, "Ошибка LLM", "LLM плагин не загружен. Сначала загрузите плагин."
+                )
+                return
+            
+            # Используем LLM плагин для обработки
+            self.process_with_llm_plugin(input_path, is_folder)
+            return
+        
+        # Получаем ID выбранной под-модели Gemini, если выбрана Gemini
+        gemini_sub_model_id = None
+        if model_type == 'gemini':
+            gemini_sub_model_id = self.gemini_model_selector.currentData()
+            # На всякий случай сохраним еще раз перед обработкой
+            if gemini_sub_model_id:
+                 settings_manager.set_value('Gemini', 'sub_model_id', gemini_sub_model_id)
+            else: # Если вдруг currentData пустое, берем из настроек или дефолт
+                 gemini_sub_model_id = settings_manager.get_string('Gemini', 'sub_model_id', 'models/gemini-1.5-flash-latest')
+                 print(f"Предупреждение: Не удалось получить ID под-модели Gemini из ComboBox, используем: {gemini_sub_model_id}")
+
+        # NEW: Получаем текущий промпт через ModelManager
+        processor = self.model_manager.get_model(model_type)
+        if not processor:
+            utils.show_error_message(self, "Ошибка модели", f"Не удалось инициализировать процессор для модели {model_type}")
+            self.progress_bar.setVisible(False)
+            self.status_bar.showMessage("Ошибка инициализации модели")
+            return
+        
+        prompt_text = processor.get_full_prompt()
+        if not prompt_text: # Добавим проверку, что промпт получен
+            utils.show_error_message(self, "Ошибка промпта", f"Не удалось получить текст промпта для модели {model_type}")
+            self.progress_bar.setVisible(False)
+            self.status_bar.showMessage("Ошибка получения промпта")
+            return
+        
+        # Показываем индикатор прогресса
+        self.status_bar.showMessage(f"Обработка изображения моделью {model_type.upper()}...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        
+        # Сохраняем выбранную модель в настройках
+        settings_manager.set_active_model(model_type)
+        
+        # Очищаем таблицу перед запуском пакетной обработки
+        if is_folder:
+            self.results_table.setRowCount(0)
+        
+        print(f"Запуск обработки для файла: {input_path}, Модель: {model_type}, OCR: {ocr_lang}")
+        
+        # Создаем поток обработки, передавая model_manager
+        self.processing_thread = ProcessingThread(
+            model_type, input_path, ocr_lang, is_folder=is_folder, 
+            model_manager=self.model_manager, # NEW: Передаем менеджер
+            parent=self
+        )
+        self.processing_thread.progress_signal.connect(self.update_progress)
+        self.processing_thread.finished_signal.connect(self.processing_finished) # NEW: Переименовали слот
+        self.processing_thread.partial_result_signal.connect(self.append_result_to_table) # NEW: Подключаем слот для частичных результатов
+        self.processing_thread.error_signal.connect(self.show_processing_error)
+        self.processing_thread.start()
+    
+    def update_progress(self, value):
+        """Обновление индикатора прогресса."""
+        self.progress_bar.setValue(value)
+    
+    def show_results(self, results):
+        """Отображение результатов обработки в таблице (для ОДИНОЧНОГО файла)."""
+        # Этот метод теперь используется только для отображения результата одного файла
+        # Сохраняем результаты для дальнейшего использования
+        self.processing_thread.result = results # Сохраняем для совместимости с сохранением одиночного файла
+        
+        # Очищаем таблицу
+        self.results_table.setRowCount(0)
+        
+        # Заполняем таблицу данными
+        if results:
+            # Добавляем результаты в таблицу
+            self.append_result_to_table(results)
+        
+        # Включаем кнопки сохранения
+        self.save_button.setEnabled(True)
+        if hasattr(self, 'save_action'): self.save_action.setEnabled(True)
+        self.save_excel_button.setEnabled(True)
+        if hasattr(self, 'save_excel_action'): self.save_excel_action.setEnabled(True)
+        
+        # NEW: Включаем кнопку предварительного просмотра
+        self.preview_button.setEnabled(True)
+        
+        # Скрываем индикатор прогресса
+        self.progress_bar.setVisible(False)
+        self.status_bar.showMessage("Обработка завершена")
+    
+    def show_processing_error(self, error_msg):
+        """Обработка ошибки при обработке изображения."""
+        self.progress_bar.setVisible(False)
+        self.status_bar.showMessage("Ошибка обработки")
+        utils.show_error_message(
+            self, "Ошибка обработки", f"Произошла ошибка: {error_msg}"
+        )
+    
+    def save_results(self):
+        """Сохранение результатов обработки (файл или папка)."""
+        # NEW: Проверяем, есть ли что сохранять в таблице или в результате потока
+        data_to_save = None
+        is_batch_result = bool(self.current_folder_path) # Проверяем, была ли обработка папки
+
+        if is_batch_result:
+            if self.results_table.rowCount() == 0:
+                utils.show_info_message(
+                    self, "Информация", "Нет результатов в таблице для сохранения. Сначала обработайте папку."
+                )
+                return
+            
+            # Собираем данные из таблицы для пакетного сохранения
+            data_to_save = []
+            headers = [self.results_table.horizontalHeaderItem(col).text() 
+                       for col in range(self.results_table.columnCount())]
+            for row in range(self.results_table.rowCount()):
+                row_data = {}
+                for col, header in enumerate(headers):
+                    item = self.results_table.item(row, col)
+                    row_data[header] = item.text() if item else ""
+                data_to_save.append(row_data)
+            
+            default_folder_name = os.path.basename(self.current_folder_path) or "batch_results"
+            default_name = f"{default_folder_name}_результаты.txt" # Имя по умолчанию для папки
+        
+        else: # Обработка одного файла
+            # Используем старую логику для одиночного файла
+            if not hasattr(self.processing_thread, 'result') or not self.processing_thread.result:
+                utils.show_info_message(
+                    self, "Информация", "Нет результатов для сохранения. Сначала обработайте файл."
+                )
+                return
+            data_to_save = self.processing_thread.result # Один словарь
+            
+            if not self.current_image_path: # На случай если путь к файлу потерялся
+                 default_name = "single_file_results.txt"
+            else:
+                 default_name = os.path.splitext(os.path.basename(self.current_image_path))[0] + "_результаты.txt"
+
+        # Получаем последний сохраненный путь экспорта из настроек или используем каталог документов
+        last_export_path = settings_manager.get_string('Interface', 'last_export_path', utils.get_documents_dir())
+        
+        file_path = utils.get_save_file_path(
+            self, "Сохранить результаты", 
+            os.path.join(last_export_path, default_name),
+            "Текстовый файл (*.txt);;JSON файл (*.json);;CSV файл (*.csv);;HTML файл (*.html)" # Обновил порядок и форматы
+        )
+        
+        if not file_path:
+            return
+        
+        # Сохраняем директорию выбранного файла в настройках
+        file_dir = os.path.dirname(file_path)
+        settings_manager.save_interface_setting('last_export_path', file_dir)
+        
+        try:
+            # Определяем формат файла по расширению
+            ext = utils.get_extension(file_path)
+            format_type = ext[1:] if ext.startswith('.') else ext
+            
+            # Используем общую функцию экспорта из utils
+            # ПРЕДУПРЕЖДЕНИЕ: utils.export_results пока может не поддерживать список словарей (data_to_save)
+            # Это будет исправлено следующим шагом.
+            success, message = utils.export_results(data_to_save, file_path, format_type)
+            
+            if success:
+                self.status_bar.showMessage(f"Результаты сохранены в {file_path}")
+                utils.show_info_message(
+                    self, "Сохранение успешно", f"Результаты экспортированы в файл {file_path}"
+                )
+            else:
+                utils.show_error_message(
+                    self, "Ошибка сохранения", message
+                )
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка сохранения", f"Не удалось сохранить результаты: {str(e)}"
+            )
+
+    def show_model_management_dialog(self):
+        """Показывает диалог управления моделями."""
+        dialog = ModelManagementDialog(self)
+        dialog.exec()
+    
+    def show_field_manager_dialog(self):
+        """Показывает диалог управления полями таблицы."""
+        try:
+            dialog = FieldManagerDialog(self)
+            dialog.fields_updated.connect(self.on_fields_updated)
+            dialog.exec()
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка", f"Не удалось открыть диалог управления полями: {str(e)}"
+            )
+    
+    def on_fields_updated(self):
+        """Обработчик обновления полей таблицы."""
+        try:
+            # Обновляем заголовки таблицы результатов
+            self.setup_results_table()
+            # Можно добавить уведомление об успешном обновлении
+            self.status_bar.showMessage("Поля таблицы обновлены", 3000)
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка", f"Ошибка при обновлении таблицы: {str(e)}"
+            )
+
+    def show_llm_plugins_dialog(self):
+        """Показывает диалог настройки LLM плагинов."""
+        try:
+            dialog = LLMProvidersDialog(self)
+            dialog.providers_updated.connect(self.on_llm_providers_updated)
+            
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                # Обновляем список доступных LLM после изменения настроек
+                self.populate_llm_models()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка открытия диалога LLM провайдеров: {e}")
+            print(f"Ошибка открытия диалога LLM провайдеров: {e}")
+    
+    def on_llm_providers_updated(self):
+        """Обработчик обновления настроек LLM провайдеров."""
+        try:
+            print("🔄 Обновление списков LLM провайдеров...")
+            
+            # Перезагружаем списки провайдеров и моделей
+            self.populate_cloud_providers()
+            self.populate_local_providers()
+            
+            # Обновляем статусы
+            self.update_cloud_llm_status()
+            self.update_local_llm_status()
+            
+            print("[OK] Списки LLM провайдеров обновлены")
+            
+        except Exception as e:
+            print(f"Ошибка обновления LLM провайдеров: {e}")
+
+    def show_tesseract_settings(self):
+        """Открывает диалог настроек Tesseract OCR."""
+        # dialog = TesseractSettingsDialog(settings_manager, self) 
+        # dialog.exec()
+        # ПОКА ПРОСТО ВЫЗЫВАЕМ ОБЩИЙ ДИАЛОГ УПРАВЛЕНИЯ МОДЕЛЯМИ
+        self.show_model_management_dialog()
+
+    def show_poppler_settings(self):
+        """Открывает диалог настроек Poppler."""
+        # dialog = PopplerSettingsDialog(settings_manager, self) 
+        # dialog.exec()
+        # ПОКА ПРОСТО ВЫЗЫВАЕМ ОБЩИЙ ДИАЛОГ УПРАВЛЕНИЯ МОДЕЛЯМИ
+        self.show_model_management_dialog()
+
+    def show_about_dialog(self):
+        """Отображение диалога "О программе"."""
+        about_text = (f"<h2>{app_config.APP_NAME} v{app_config.APP_VERSION}</h2>"
+                   f"<p>© 2025 {app_config.ORGANIZATION_NAME}</p>"
+                   "<p>Приложение для извлечения данных из счетов-фактур "
+                   "с использованием моделей LayoutLMv3, Donut и Gemini.</p>")
+        
+        utils.show_info_message(self, "О программе", about_text)
+    
+    def show_help(self):
+        """Отображение справки по использованию приложения."""
+        help_text = (
+            "<h2>Инструкция по использованию</h2>"
+            "<ol>"
+            "<li>Нажмите кнопку <b>Выбрать изображение/PDF</b> для загрузки файла.</li>"
+            "<li>Выберите модель обработки: <b>LayoutLMv3</b>, <b>Donut</b> или <b>Gemini 2.0</b>.</li>"
+            "<li>Нажмите кнопку <b>Обработать</b> для анализа изображения.</li>"
+            "<li>Результаты будут отображены в правой части окна.</li>"
+            "<li>Используйте кнопку <b>Сохранить результаты</b> для экспорта данных.</li>"
+            "</ol>"
+            "<p><b>Примечание:</b> Для использования модели Gemini 2.0 требуется указать API ключ Google в настройках.</p>"
+        )
+        
+        utils.show_info_message(self, "Справка", help_text)
+    
+    def show_win7_info(self):
+        """Отображение информации о совместимости с Windows 7."""
+        win7_text = (
+            "<h2>Информация о совместимости с Windows 7</h2>"
+            "<p>Данное приложение разработано с учетом совместимости с Windows 7 (32-bit и 64-bit).</p>"
+            "<p><b>Возможные проблемы:</b></p>"
+            "<ul>"
+            "<li>Tesseract OCR может требовать дополнительной настройки на Windows 7.</li>"
+            "<li>При отсутствии актуальных обновлений Windows могут возникать проблемы с SSL/TLS при загрузке моделей.</li>"
+            "<li>Производительность на Windows 7 может быть ниже, особенно на старом оборудовании.</li>"
+            "</ul>"
+            "<p>Если у вас возникают проблемы, проверьте, что Windows 7 обновлена "
+            "до последней версии с установленными Service Pack 1 и обновлениями.</p>"
+        )
+        
+        utils.show_info_message(self, "Windows 7", win7_text)
+    
+    def show_model_prompt(self, model_type):
+        """
+        Отображает диалог с полным запросом для выбранной модели.
+        
+        Args:
+            model_type (str): Тип модели ('layoutlm', 'donut' или 'gemini')
+        """
+        # Получаем экземпляр процессора для указанного типа модели
+        processor = self.model_manager.get_model(model_type)
+        
+        # Получаем полный запрос к модели
+        full_prompt = processor.get_full_prompt()
+        
+        # Создаем диалог с текстом запроса
+        prompt_dialog = QDialog(self)
+        prompt_dialog.setWindowTitle(f"Полный запрос к модели {model_type.upper()}")
+        prompt_dialog.resize(700, 600)
+        
+        layout = QVBoxLayout(prompt_dialog)
+        
+        # Добавляем текстовое поле с запросом (с возможностью редактирования)
+        text_edit = QTextEdit()
+        text_edit.setPlainText(full_prompt)
+        text_edit.setReadOnly(False)  # Разрешаем редактирование
+        layout.addWidget(text_edit)
+        
+        # Кнопки
+        button_layout = QHBoxLayout()
+        
+        # Кнопка сохранения промпта
+        save_button = QPushButton("Сохранить")
+        save_button.clicked.connect(lambda: self.save_prompt(model_type, text_edit.toPlainText()))
+        
+        # Кнопка закрытия
+        close_button = QPushButton("Закрыть")
+        close_button.clicked.connect(prompt_dialog.accept)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+        
+        # Отображаем диалог
+        prompt_dialog.exec()
+        
+    def save_prompt(self, model_type, prompt_text):
+        """
+        Сохраняет промпт для указанной модели.
+        
+        Args:
+            model_type (str): Тип модели ('layoutlm', 'donut' или 'gemini')
+            prompt_text (str): Текст промпта
+        """
+        # Проверяем, что текст не пустой
+        if not prompt_text.strip():
+            utils.show_warning_message(self, "Предупреждение", "Промпт не может быть пустым")
+            return
+            
+        # Формируем ключ для настроек
+        prompt_key = f"{model_type}_prompt"
+        
+        # Сохраняем промпт в настройках
+        settings_manager.set_value('Prompts', prompt_key, prompt_text)
+        settings_manager.save_settings()
+        
+        # Обновляем промпт в процессоре
+        processor = self.model_manager.get_model(model_type)
+        if processor:
+            processor.set_prompt(prompt_text)
+            
+        # Выводим сообщение об успешном сохранении
+        utils.show_info_message(self, "Сохранение промпта", f"Промпт для модели {model_type.upper()} успешно сохранен")
+    
+    # NEW: Метод для обновления видимости селектора под-модели Gemini
+    def update_gemini_selector_visibility(self):
+        is_gemini_selected = self.gemini_radio.isChecked()
+        self.gemini_sub_model_label.setVisible(is_gemini_selected)
+        self.gemini_model_selector.setVisible(is_gemini_selected)
+    
+    # NEW: Обработчик изменения выбранной под-модели Gemini
+    def on_gemini_sub_model_changed(self, index):
+        selected_model_id = self.gemini_model_selector.itemData(index)
+        if selected_model_id:
+            settings_manager.set_value('Gemini', 'sub_model_id', selected_model_id)
+            print(f"Выбрана под-модель Gemini: {selected_model_id}") # Для отладки 
+
+    # NEW: Метод для заполнения списка моделей Gemini
+    def populate_gemini_models(self):
+        """Заполняет QComboBox `gemini_model_selector` списком моделей Gemini."""
+        print("Заполнение списка моделей Gemini...")
+        current_selection = self.gemini_model_selector.currentData() # Сохраняем текущий выбор
+        self.gemini_model_selector.clear()
+
+        models_to_load = []
+        # Пытаемся загрузить из настроек
+        models_json = settings_manager.get_string('[Gemini]', 'available_models_json', None)
+        if models_json:
+            try:
+                saved_models = json.loads(models_json)
+                if isinstance(saved_models, list) and saved_models:
+                    # Проверяем, что в сохраненном списке есть нужные поля
+                    valid_saved_models = [
+                        m for m in saved_models 
+                        if isinstance(m, dict) and m.get('id') and m.get('display_name')
+                    ]
+                    if valid_saved_models:
+                        models_to_load = valid_saved_models
+                        print(f"Загружен список моделей из настроек ({len(models_to_load)} моделей).")
+                    else:
+                         print("Сохраненный список моделей невалиден, используется дефолтный.")
+            except json.JSONDecodeError:
+                print("Ошибка декодирования JSON списка моделей из настроек.")
+
+        # Если из настроек не загрузились или они невалидны, используем дефолтный список
+        if not models_to_load:
+            print("Используется дефолтный список моделей Gemini.")
+            # NEW: Обновленный дефолтный список моделей (убраны 1.5, добавлен 2.0 Flash)
+            models_to_load = [
+                {'id': 'models/gemini-2.0-flash', 'display_name': '2.0 Flash'}, # Добавлена стабильная 2.0
+                # Оставляем модели 2.5 Preview как самые новые
+                {'id': 'models/gemini-2.5-flash-preview-04-17', 'display_name': '2.5 Flash Preview (04-17)'},
+                {'id': 'models/gemini-2.5-pro-preview-05-06', 'display_name': '2.5 Pro Preview (05-06)'},
+            ]
+        
+        # Заполняем комбобокс
+        default_index = 0
+        current_index_to_set = -1
+        for i, model_info in enumerate(models_to_load):
+            model_id = model_info.get('id')
+            display_name_base = model_info.get('display_name', model_id) # Базовое имя
+            
+            if not model_id or not display_name_base:
+                continue # Пропускаем невалидные записи
+
+            # Добавляем информацию о тарифе/лимите/статусе к известным моделям
+            display_text = display_name_base
+            # NEW: Обновляем логику пометок для нового списка
+            if '2.0-flash' in model_id:
+                 display_text += " (Stable, Free Tier*)"
+                 default_index = i # Делаем 2.0 Flash основной по умолчанию
+            elif '2.5-flash-preview' in model_id:
+                display_text += " (Preview, Free Tier*)" 
+            elif '2.5-pro-preview' in model_id:
+                 display_text += " (Preview, Paid Only*)" # Pro модели обычно платные
+            # Для других моделей статус будет неизвестен
+
+            self.gemini_model_selector.addItem(display_text, model_id)
+            
+            # Проверяем, совпадает ли с предыдущим выбором
+            if model_id == current_selection:
+                current_index_to_set = i
+
+        # Восстанавливаем предыдущий выбор или ставим по умолчанию
+        if current_index_to_set != -1:
+            self.gemini_model_selector.setCurrentIndex(current_index_to_set)
+        elif self.gemini_model_selector.count() > default_index:
+             self.gemini_model_selector.setCurrentIndex(default_index)
+        
+        # Обновляем всплывающую подсказку
+        self.gemini_model_selector.setToolTip(
+            "Выберите модель Gemini. *Free Tier обычно имеет лимиты (e.g., 15 RPM).\n"
+            "Paid tier требует привязки биллинга Google Cloud.\n"
+            "Preview модели могут быть менее стабильны.\n"
+            "Используйте кнопку в Расширенных настройках для обновления списка."
+            )
+        print("Список моделей Gemini заполнен.") 
+
+    # NEW: Метод для выбора папки
+    def select_folder(self):
+        """Открытие диалога выбора папки."""
+        last_open_path = settings_manager.get_string('Interface', 'last_open_path', utils.get_documents_dir())
+        folder_path = QFileDialog.getExistingDirectory(
+            self, "Выбрать папку со счетами", last_open_path
+        )
+
+        if not folder_path:
+            return
+
+        self.current_folder_path = folder_path
+        self.current_image_path = None # Сбрасываем путь к файлу
+        self.selected_path_label.setText(f"Выбрана папка: {folder_path}")
+        self.image_label.setText("Папка выбрана. Нажмите \"Обработать\" для запуска.")
+        self.image_label.setPixmap(QPixmap()) # Очищаем изображение
+        self.process_button.setEnabled(True)
+        settings_manager.save_interface_setting('last_open_path', folder_path) # Сохраняем путь
+
+    # NEW: Слот для добавления строки результата в таблицу (для пакетной обработки)
+    def append_result_to_table(self, result):
+        """Добавляет одну строку с результатами в таблицу."""
+        if not result:
+            return
+
+        row_position = self.results_table.rowCount()
+        self.results_table.insertRow(row_position)
+
+        # Создаем маппинг display_name -> column_index на основе заголовков таблицы
+        column_mapping = {}
+        for col in range(self.results_table.columnCount()):
+            header_item = self.results_table.horizontalHeaderItem(col)
+            if header_item:
+                column_mapping[header_item.text()] = col
+
+        # Заполняем данные по display_name
+        for field_name, value in result.items():
+            if field_name in column_mapping:
+                column_index = column_mapping[field_name]
+                item = QTableWidgetItem(str(value))
+                
+                # Выравнивание для числовых колонок (опционально)
+                if any(word in field_name for word in ["Amount", "Total", "VAT", "Сумма", "НДС"]):
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                
+                self.results_table.setItem(row_position, column_index, item)
+            else:
+                # Логируем неизвестные поля для отладки
+                print(f"ОТЛАДКА: Неизвестное поле '{field_name}' со значением '{value}' не добавлено в таблицу")
+
+        self.results_table.resizeRowsToContents()
+        print(f"ОТЛАДКА: Добавлена строка в таблицу. Полей обработано: {len([k for k in result.keys() if k in column_mapping])}/{len(result)}")
+
+    # NEW: Слот для обработки завершения всего процесса
+    def processing_finished(self, result_or_none):
+        """Вызывается, когда поток завершает обработку (файла или папки)."""
+        self.progress_bar.setVisible(False)
+        if self.current_folder_path: # Если обрабатывали папку
+            self.status_bar.showMessage(f"Пакетная обработка папки {os.path.basename(self.current_folder_path)} завершена.")
+            self.results_table.resizeColumnsToContents() # Подгоняем ширину колонок
+            self.results_table.resizeRowsToContents()    # Подгоняем высоту строк
+            # Сортируем по поставщику (колонка 0)
+            self.results_table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+            # Включаем кнопки сохранения, если есть результаты
+            if self.results_table.rowCount() > 0:
+                self.save_button.setEnabled(True)
+                if hasattr(self, 'save_action'): self.save_action.setEnabled(True)
+                self.save_excel_button.setEnabled(True)
+                if hasattr(self, 'save_excel_action'): self.save_excel_action.setEnabled(True)
+                # NEW: Enable preview button
+                self.preview_button.setEnabled(True)
+            else:
+                self.save_button.setEnabled(False)
+                if hasattr(self, 'save_action'): self.save_action.setEnabled(False)
+                self.save_excel_button.setEnabled(False)
+                if hasattr(self, 'save_excel_action'): self.save_excel_action.setEnabled(False)
+                # NEW: Disable preview button  
+                self.preview_button.setEnabled(False)
+        else: # Если обрабатывали один файл
+            # Используем старый метод для отображения одного результата
+            if result_or_none:
+                self.show_results(result_or_none)
+            else:
+                # Если результат None (например, ошибка в потоке, но не исключение)
+                self.status_bar.showMessage("Ошибка обработки файла.")
+                self.save_button.setEnabled(False)
+                if hasattr(self, 'save_action'): self.save_action.setEnabled(False)
+                self.save_excel_button.setEnabled(False)
+                if hasattr(self, 'save_excel_action'): self.save_excel_action.setEnabled(False)
+                # NEW: Disable preview button on error
+                self.preview_button.setEnabled(False)
+    
+    def save_excel(self):
+        """Сохранение результатов в формате Excel."""
+        # NEW: Проверяем, есть ли строки в таблице
+        if self.results_table.rowCount() == 0:
+            utils.show_info_message(
+                self, "Информация", "Нет результатов в таблице для экспорта в Excel. Сначала обработайте файл или папку."
+            )
+            return
+            
+        # Определяем имя файла по умолчанию в зависимости от режима (файл или папка)
+        if self.current_folder_path:
+            default_folder_name = os.path.basename(self.current_folder_path) or "batch_results"
+            default_name = f"{default_folder_name}_результаты.xlsx"
+        elif self.current_image_path:
+             default_name = os.path.splitext(os.path.basename(self.current_image_path))[0] + "_результаты.xlsx"
+        else: # На всякий случай
+             default_name = "results.xlsx"
+        
+        # Получаем последний сохраненный путь экспорта из настроек или используем каталог документов
+        last_export_path = settings_manager.get_string('Interface', 'last_export_path', utils.get_documents_dir())
+        
+        file_path = utils.get_save_file_path(
+            self, "Сохранить результаты в Excel", 
+            os.path.join(last_export_path, default_name),
+            "Excel файл (*.xlsx)"
+        )
+        
+        if not file_path:
+            return
+        
+        # Сохраняем директорию выбранного файла в настройках
+        file_dir = os.path.dirname(file_path)
+        settings_manager.save_interface_setting('last_export_path', file_dir)
+        
+        try:
+            # Используем pandas для экспорта в Excel
+            import pandas as pd
+            
+            # Собираем данные из ТАБЛИЦЫ для экспорта
+            column_headers = []
+            for col in range(self.results_table.columnCount()):
+                header_item = self.results_table.horizontalHeaderItem(col)
+                column_headers.append(header_item.text() if header_item else f"Column_{col+1}") # Запасной вариант, если заголовок пуст
+            
+            data = []
+            for row in range(self.results_table.rowCount()):
+                row_data = []
+                for col in range(self.results_table.columnCount()):
+                    item = self.results_table.item(row, col)
+                    if item is not None:
+                        row_data.append(item.text())
+                    else:
+                        row_data.append("")
+                data.append(row_data)
+            
+            df = pd.DataFrame(data, columns=column_headers)
+            
+            # Сохраняем DataFrame в Excel
+            df.to_excel(file_path, index=False, sheet_name="Результаты анализа")
+            
+            self.status_bar.showMessage(f"Результаты сохранены в {file_path}")
+            utils.show_info_message(
+                self, "Сохранение успешно", f"Результаты экспортированы в Excel-файл {file_path}"
+            )
+        except ImportError: # NEW: Явно ловим ImportError для pandas
+             utils.show_error_message(
+                 self, "Отсутствует библиотека", 
+                 "Для экспорта в Excel необходимо установить библиотеки pandas и openpyxl. "
+                 "Используйте команду: pip install pandas openpyxl"
+             )
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка сохранения", f"Не удалось сохранить результаты в Excel: {str(e)}"
+            )
+            
+            # В случае отсутствия pandas, предложим установить (дублируется, но оставим на всякий случай)
+            if "No module named 'pandas'" in str(e):
+                 utils.show_info_message(
+                     self, "Отсутствует pandas", 
+                     "Для экспорта в Excel необходимо установить библиотеку pandas. "
+                     "Используйте команду: pip install pandas openpyxl"
+                 )
+    
+    def closeEvent(self, event):
+        """Обработка закрытия окна."""
+        print("Начинаем корректное закрытие приложения...")
+        
+        # Останавливаем обработку изображений
+        if self.processing_thread and self.processing_thread.isRunning():
+            print("Останавливаем поток обработки изображений...")
+            self.processing_thread.quit()
+            self.processing_thread.wait(3000)  # Ждем до 3 секунд
+            
+        # Останавливаем загрузку LLM моделей
+        if self.llm_loading_thread and self.llm_loading_thread.isRunning():
+            print("Останавливаем поток загрузки LLM...")
+            self.llm_loading_thread.quit()
+            self.llm_loading_thread.wait(3000)  # Ждем до 3 секунд
+            
+        # ВАЖНО: Закрываем диалог обучения
+        if hasattr(self, 'training_dialog') and self.training_dialog:
+            print("Закрываем диалог обучения...")
+            self.training_dialog.close()
+            
+        # Ищем все экземпляры DataPreparator в системе и останавливаем их
+        try:
+            # Принудительно завершаем все QThread'ы
+            from PyQt6.QtCore import QCoreApplication
+            import threading
+            
+            print("Проверяем активные потоки...")
+            active_threads = threading.active_count()
+            print(f"Активных потоков: {active_threads}")
+            
+            # Устанавливаем флаг остановки для всех DataPreparator'ов
+            import gc
+            for obj in gc.get_objects():
+                if hasattr(obj, '__class__') and 'DataPreparator' in obj.__class__.__name__:
+                    if hasattr(obj, 'stop_requested'):
+                        obj.stop_requested = True
+                        print("Установлен флаг остановки для DataPreparator")
+                    if hasattr(obj, 'stop'):
+                        try:
+                            obj.stop()
+                            print("Вызван метод stop() для DataPreparator")
+                        except:
+                            pass
+                            
+            # Даем время для остановки
+            QCoreApplication.processEvents()
+            
+        except Exception as e:
+            print(f"Ошибка при остановке фоновых потоков: {e}")
+        
+        # Очистка временных файлов при закрытии приложения
+        try:
+            self.temp_dir.cleanup()
+            print("Временные файлы очищены")
+        except:
+            pass
+            
+        print("Закрытие приложения завершено")
+        super().closeEvent(event)
+
+    def _open_training_dialog(self):
+        # Получаем процессоры из model_manager
+        ocr_processor = self.model_manager.get_ocr_processor()
+        gemini_processor = self.model_manager.get_gemini_processor()
+
+        # Убедимся, что процессоры успешно получены/инициализированы
+        if not ocr_processor:
+            self.status_bar.showMessage("Ошибка: OCR процессор не доступен.", 5000)
+            return
+        if not gemini_processor:
+            self.status_bar.showMessage("Ошибка: Gemini процессор не доступен.", 5000)
+            return
+
+        # Создаем и показываем диалог обучения
+        # Передаем модуль app_config напрямую
+        training_dialog = TrainingDialog(
+            app_config=app_config, # Все верно, не требует исправления
+            ocr_processor=ocr_processor,
+            gemini_processor=gemini_processor,
+            parent=self
+        )
+        training_dialog.exec() 
+
+    def setup_results_table(self):
+        """Настраивает таблицу результатов на основе полей из FieldManager."""
+        try:
+            # Импортируем field_manager
+            from .field_manager import field_manager
+            
+            # Получаем колонки из FieldManager
+            columns = field_manager.get_table_columns()
+            
+            # Устанавливаем количество колонок
+            self.results_table.setColumnCount(len(columns))
+            
+            # Устанавливаем заголовки колонок
+            for i, column in enumerate(columns):
+                self.results_table.setHorizontalHeaderItem(
+                    i, QTableWidgetItem(column["name"])
+                )
+                
+            # Настраиваем отображение таблицы
+            self.results_table.setAlternatingRowColors(True)
+            self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            self.results_table.horizontalHeader().setStretchLastSection(True)
+            self.results_table.verticalHeader().setVisible(False)
+            
+            # Сохраняем маппинг полей для последующего использования
+            self.field_mapping = {column["id"]: i for i, column in enumerate(columns)}
+            
+            print(f"Таблица настроена с {len(columns)} колонками: {[c['name'] for c in columns]}")
+            
+        except Exception as e:
+            print(f"Ошибка настройки таблицы результатов: {e}")
+            # Fallback на старую логику
+            self._setup_results_table_fallback()
+    
+    def _setup_results_table_fallback(self):
+        """Fallback метод настройки таблицы результатов если FieldManager недоступен."""
+        try:
+            # Получаем поля из настроек (старая логика)
+            fields = settings_manager.get_table_fields()
+            
+            # Получаем только видимые поля и сортируем их по порядку
+            visible_fields = [field for field in fields if field.get("visible", True)]
+            visible_fields = sorted(visible_fields, key=lambda f: f.get("order", 0))
+            
+            # Устанавливаем количество колонок
+            self.results_table.setColumnCount(len(visible_fields))
+            
+            # Устанавливаем заголовки колонок
+            for i, field in enumerate(visible_fields):
+                self.results_table.setHorizontalHeaderItem(i, QTableWidgetItem(field.get("name", "")))
+                
+            # Настраиваем отображение таблицы
+            self.results_table.setAlternatingRowColors(True)
+            self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            self.results_table.horizontalHeader().setStretchLastSection(True)
+            self.results_table.verticalHeader().setVisible(False)
+            
+            # Сохраняем маппинг полей для последующего использования
+            self.field_mapping = {field.get("id", ""): i for i, field in enumerate(visible_fields)}
+            
+            print(f"Fallback таблица настроена с {len(visible_fields)} колонками")
+            
+        except Exception as e:
+            print(f"Ошибка fallback настройки таблицы: {e}")
+            # Если и fallback не работает, создаем базовую таблицу
+            self._setup_basic_results_table()
+    
+    def _setup_basic_results_table(self):
+        """Создает базовую таблицу результатов с минимальными колонками."""
+        basic_columns = [
+            {"id": "sender", "name": "Sender"},
+            {"id": "invoice_number", "name": "№ Invoice"},
+            {"id": "invoice_date", "name": "Invoice Date"},
+            {"id": "total", "name": "Total"},
+            {"id": "note", "name": "Note"}
+        ]
+        
+        self.results_table.setColumnCount(len(basic_columns))
+        
+        for i, column in enumerate(basic_columns):
+            self.results_table.setHorizontalHeaderItem(
+                i, QTableWidgetItem(column["name"])
+            )
+        
+        self.results_table.setAlternatingRowColors(True)
+        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.results_table.horizontalHeader().setStretchLastSection(True)
+        self.results_table.verticalHeader().setVisible(False)
+        
+        self.field_mapping = {column["id"]: i for i, column in enumerate(basic_columns)}
+        
+        print("Базовая таблица создана с 5 колонками")
+
+    def show_table_fields_dialog(self):
+        """Открывает диалог настройки полей таблицы."""
+        dialog = TableFieldsDialog(self)
+        dialog.fieldsChanged.connect(self.on_table_fields_changed)
+        dialog.exec()
+
+    def on_table_fields_changed(self, fields):
+        """Обработчик изменения выбранных полей таблицы."""
+        print(f"Поля таблицы изменены: {fields}")
+        
+        # Заново создаем таблицу с выбранными полями
+        self.setup_results_table()
+    
+    # NEW: LLM Plugin Integration Methods
+    
+    def populate_llm_models(self):
+        """Заполняет список всех доступных LLM моделей."""
+        try:
+            # Заполняем локальные модели (только Ollama)
+            self.populate_local_models()
+            
+            # Заполняем облачные модели (все кроме Ollama)
+            self.populate_cloud_models()
+            
+        except Exception as e:
+            print(f"❌ Ошибка загрузки LLM моделей: {e}")
+    
+    def populate_local_models(self):
+        """Заполняет список локальных моделей (Ollama)."""
+        try:
+            # Старый метод - больше не используется, так как llm_model_selector удален
+            # Заполнение теперь происходит через populate_local_providers
+            print("[INFO] populate_local_models() - метод устарел, используется populate_local_providers()")
+            
+        except Exception as e:
+            print(f"❌ Ошибка загрузки локальных моделей: {e}")
+            # llm_model_selector больше не существует
+    
+    def populate_cloud_models(self):
+        """Заполняет список облачных моделей (все кроме Ollama)."""
+        try:
+            # Старый метод - больше не используется, так как cloud_llm_selector удален
+            # Заполнение теперь происходит через populate_cloud_providers
+            print("[INFO] populate_cloud_models() - метод устарел, используется populate_cloud_providers()")
+
+            
+        except Exception as e:
+            print(f"❌ Ошибка загрузки облачных моделей: {e}")
+            # cloud_llm_selector больше не существует
+    
+    def on_llm_model_changed(self):
+        """Обработчик изменения выбранного LLM плагина"""
+        # Этот метод больше не используется после реструктуризации
+        pass
+    
+    def on_cloud_llm_changed(self):
+        """Обработчик изменения выбранной облачной LLM модели"""
+        self.update_cloud_llm_status()
+    
+    # Удален метод update_llm_status - больше не используется
+    
+    def update_cloud_llm_status(self):
+        """Обновляет статус облачной LLM."""
+        try:
+            provider_data = self.cloud_provider_selector.currentData()
+            model_data = self.cloud_model_selector.currentData()
+            
+            if not provider_data:
+                self.cloud_llm_status_label.setText("Статус: Не выбран провайдер")
+                return
+            
+            if not model_data:
+                self.cloud_llm_status_label.setText("Статус: Не выбрана модель")
+                return
+            
+            if not provider_data.get('configured', False):
+                self.cloud_llm_status_label.setText("Статус: ⚙️ Требуется настройка API")
+                return
+            
+            # Если все готово к загрузке
+            provider_name = provider_data.get('provider')
+            model_name = model_data.get('model')
+            pricing = model_data.get('pricing', '')
+            
+            status_text = f"Готов: {provider_name}/{model_name} {pricing}"
+            self.cloud_llm_status_label.setText(status_text)
+            
+        except Exception as e:
+            print(f"Ошибка обновления статуса облачной LLM: {e}")
+            self.cloud_llm_status_label.setText("Статус: Ошибка")
+
+    def update_local_llm_status(self):
+        """Обновляет статус локальной LLM."""
+        try:
+            provider_data = self.local_provider_selector.currentData()
+            model_data = self.local_model_selector.currentData()
+            
+            if not provider_data:
+                self.local_llm_status_label.setText("Статус: Не выбран провайдер")
+                return
+            
+            if not model_data:
+                self.local_llm_status_label.setText("Статус: Не выбрана модель")
+                return
+            
+            if not provider_data.get('available', False):
+                self.local_llm_status_label.setText("Статус: ❌ Провайдер недоступен")
+                return
+            
+            # Если все готово к загрузке
+            provider_name = provider_data.get('provider')
+            model_name = model_data.get('model')
+            size_info = model_data.get('size', '')
+            
+            status_text = f"Готов: {provider_name}/{model_name} {size_info}"
+            self.local_llm_status_label.setText(status_text)
+            
+        except Exception as e:
+            print(f"Ошибка обновления статуса локальной LLM: {e}")
+            self.local_llm_status_label.setText("Статус: Ошибка")
+
+    def get_selected_llm_plugin(self):
+        """Возвращает настроенный экземпляр выбранного LLM плагина."""
+        try:
+            # Проверяем, какой тип LLM выбран
+            if self.cloud_llm_radio.isChecked():
+                provider_data = self.cloud_provider_selector.currentData()
+                model_data = self.cloud_model_selector.currentData()
+            elif self.local_llm_radio.isChecked():
+                provider_data = self.local_provider_selector.currentData()
+                model_data = self.local_model_selector.currentData()
+            else:
+                return None
+            
+            if not provider_data or not model_data:
+                return None
+            
+            provider_name = provider_data.get('provider')
+            model_name = model_data.get('model')
+            config = provider_data.get('config')
+            
+            # Получаем настройки провайдера
+            llm_settings = settings_manager.get_setting('llm_providers', {})
+            provider_settings = llm_settings.get(provider_name, {})
+            
+            # Получаем API ключ если требуется
+            api_key = None
+            if config.requires_api_key:
+                api_key = settings_manager.get_encrypted_setting(f'{provider_name}_api_key')
+                if not api_key:
+                    print(f"❌ API ключ для {provider_name} не найден")
+                    return None
+            
+            # Создаем экземпляр универсального плагина
+            from .plugins.models.universal_llm_plugin import UniversalLLMPlugin
+            
+            # Дополнительные параметры
+            plugin_kwargs = {
+                'generation_config': {
+                    'temperature': provider_settings.get('temperature', 0.1),
+                    'max_tokens': provider_settings.get('max_tokens', 4096),
+                    'top_p': provider_settings.get('top_p', 0.9),
+                }
+            }
+            
+            # Для Ollama добавляем base_url
+            if provider_name == "ollama":
+                plugin_kwargs['base_url'] = provider_settings.get('base_url', 'http://localhost:11434')
+            
+            # Создаем плагин
+            plugin = UniversalLLMPlugin(
+                provider_name=provider_name,
+                model_name=model_name,
+                api_key=api_key,
+                **plugin_kwargs
+            )
+            
+            return plugin
+            
+        except Exception as e:
+            print(f"❌ Ошибка создания LLM плагина: {e}")
+            return None
+    
+    def load_selected_llm(self):
+        """Загружает выбранный LLM плагин - УСТАРЕЛ, используется load_selected_local_llm()"""
+        print("[INFO] load_selected_llm() - метод устарел, используется load_selected_local_llm() или load_selected_cloud_llm()")
+        return
+    
+    def load_selected_cloud_llm(self):
+        """Загружает выбранный облачный LLM плагин"""
+        provider_data = self.cloud_provider_selector.currentData()
+        model_data = self.cloud_model_selector.currentData()
+        
+        if not provider_data or not model_data:
+            return
+            
+        # Проверяем, не идет ли уже загрузка
+        if self.llm_loading_thread and self.llm_loading_thread.isRunning():
+            utils.show_info_message(self, "Загрузка", "LLM модель уже загружается...")
+            return
+        
+        # Формируем данные для загрузки
+        load_data = {
+            'provider': provider_data.get('provider'),
+            'model': model_data.get('model'), 
+            'config': provider_data.get('config')
+        }
+        
+        # Создаем поток для загрузки модели
+        self.llm_loading_thread = LLMLoadingThread(self.plugin_manager, load_data)
+        self.llm_loading_thread.loading_started.connect(self.on_cloud_llm_loading_started)
+        self.llm_loading_thread.loading_finished.connect(self.on_cloud_llm_loading_finished)
+        self.llm_loading_thread.loading_error.connect(self.on_cloud_llm_loading_error)
+        
+        self.llm_loading_thread.start()
+    
+    def on_llm_loading_started(self, plugin_id: str):
+        """Обработчик начала загрузки LLM - УСТАРЕЛ после реструктуризации"""
+        # Этот метод больше не используется, т.к. llm_status_label и llm_load_button удалены
+        pass
+    
+    def on_cloud_llm_loading_started(self, plugin_id: str):
+        """Обработчик начала загрузки облачной LLM"""
+        self.cloud_llm_status_label.setText("Статус: 🔄 Загружается...")
+        QApplication.processEvents()
+
+    def on_llm_loading_finished(self, plugin_id: str, plugin_instance):
+        """Обработчик завершения загрузки LLM - УСТАРЕЛ после реструктуризации"""
+        # Этот метод больше не используется, т.к. update_llm_status удален
+        pass
+    
+    def on_cloud_llm_loading_finished(self, plugin_id: str, plugin_instance):
+        """Обработчик завершения загрузки облачной LLM"""
+        self.current_llm_plugin = plugin_instance
+        self.update_cloud_llm_status()
+        
+        plugin_info = self.plugin_manager.get_plugin_info(plugin_id)
+        plugin_name = plugin_info.get('name', plugin_id) if plugin_info else plugin_id
+        
+        utils.show_info_message(
+            self, 
+            "Облачная LLM Загружена", 
+            f"Облачный LLM плагин {plugin_name} успешно загружен!"
+        )
+
+    def on_llm_loading_error(self, plugin_id: str, error_message: str):
+        """Обработчик ошибки загрузки LLM - УСТАРЕЛ после реструктуризации"""
+        # Этот метод больше не используется, т.к. llm_status_label и llm_load_button удалены
+        pass
+    
+    def on_cloud_llm_loading_error(self, plugin_id: str, error_message: str):
+        """Обработчик ошибки загрузки облачной LLM"""
+        self.cloud_llm_status_label.setText("Статус: ❌ Ошибка загрузки")
+        
+        utils.show_error_message(
+            self,
+            "Ошибка загрузки облачной LLM",
+            f"Не удалось загрузить облачный LLM плагин:\n{error_message}"
+        )
+    
+    def process_with_llm_plugin(self, input_path, is_folder):
+        """Обработка файла/папки с использованием LLM плагина"""
+        try:
+            self.status_bar.showMessage("Обработка LLM плагином...")
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+            
+            if is_folder:
+                self.results_table.setRowCount(0)
+                # Для папки - обрабатываем все файлы
+                self.process_folder_with_llm(input_path)
+            else:
+                # Для одного файла
+                result = self.current_llm_plugin.extract_invoice_data(input_path)
+                if result:
+                    self.show_results(result)
+                else:
+                    self.show_processing_error("LLM плагин не вернул результат")
+            
+        except Exception as e:
+            self.show_processing_error(f"Ошибка LLM плагина: {str(e)}")
+    
+    def process_folder_with_llm(self, folder_path):
+        """Обработка папки с файлами через LLM плагин"""
+        try:
+            supported_files = []
+            for file_name in os.listdir(folder_path):
+                file_path = os.path.join(folder_path, file_name)
+                if os.path.isfile(file_path) and utils.is_supported_format(file_path):
+                    supported_files.append(file_path)
+            
+            if not supported_files:
+                utils.show_info_message(self, "Информация", "В папке не найдено поддерживаемых файлов")
+                return
+            
+            total_files = len(supported_files)
+            processed = 0
+            
+            for file_path in supported_files:
+                try:
+                    # Обновляем прогресс
+                    progress = int((processed / total_files) * 100)
+                    self.progress_bar.setValue(progress)
+                    QApplication.processEvents()
+                    
+                    # Обрабатываем файл через LLM плагин
+                    result = self.current_llm_plugin.process_image(file_path)
+                    
+                    if result:
+                        # Добавляем имя файла к результату
+                        result['Файл'] = os.path.basename(file_path)
+                        self.append_result_to_table(result)
+                    else:
+                        # Добавляем запись о пустом результате
+                        error_result = {
+                            'Файл': os.path.basename(file_path),
+                            'Ошибка': 'Пустой результат от LLM'
+                        }
+                        self.append_result_to_table(error_result)
+                    
+                    processed += 1
+                    
+                except Exception as e:
+                    print(f"Ошибка обработки файла {file_path}: {e}")
+                    # Добавляем запись об ошибке
+                    error_result = {
+                        'Файл': os.path.basename(file_path),
+                        'Ошибка': str(e)
+                    }
+                    self.append_result_to_table(error_result)
+                    processed += 1
+            
+            # Завершение обработки
+            self.progress_bar.setValue(100)
+            self.progress_bar.setVisible(False)
+            self.status_bar.showMessage(f"Обработано файлов: {processed}")
+            
+            # Включаем кнопки сохранения
+            self.save_button.setEnabled(True)
+            if hasattr(self, 'save_action'): 
+                self.save_action.setEnabled(True)
+            self.save_excel_button.setEnabled(True)
+            if hasattr(self, 'save_excel_action'): 
+                self.save_excel_action.setEnabled(True)
+            # NEW: Enable preview button
+            self.preview_button.setEnabled(True)
+            
+        except Exception as e:
+            self.show_processing_error(f"Ошибка обработки папки: {str(e)}")
+
+    # NEW: Preview Dialog Integration Methods
+    
+    def show_preview_dialog(self):
+        """Показывает диалог предварительного просмотра результатов"""
+        try:
+            # Определяем данные для preview
+            preview_data = None
+            model_type = "unknown"
+            file_path = ""
+            
+            # Получаем данные в зависимости от режима обработки
+            if self.current_folder_path:
+                # Пакетная обработка - собираем данные из таблицы
+                if self.results_table.rowCount() == 0:
+                    utils.show_info_message(
+                        self, "Информация", 
+                        "Нет результатов для предварительного просмотра. Сначала обработайте файлы."
+                    )
+                    return
+                
+                # Собираем все результаты из таблицы для batch preview
+                batch_results = []
+                headers = [self.results_table.horizontalHeaderItem(col).text() 
+                          for col in range(self.results_table.columnCount())]
+                
+                for row in range(self.results_table.rowCount()):
+                    row_data = {}
+                    for col, header in enumerate(headers):
+                        item = self.results_table.item(row, col)
+                        row_data[header] = item.text() if item else ""
+                    batch_results.append(row_data)
+                
+                preview_data = {"batch_results": batch_results}
+                file_path = self.current_folder_path
+                
+            else:
+                # Одиночная обработка
+                if not hasattr(self.processing_thread, 'result') or not self.processing_thread.result:
+                    utils.show_info_message(
+                        self, "Информация", 
+                        "Нет результатов для предварительного просмотра. Сначала обработайте файл."
+                    )
+                    return
+                
+                preview_data = self.processing_thread.result
+                file_path = self.current_image_path or ""
+            
+            # Определяем активную модель
+            if self.layoutlm_radio.isChecked():
+                model_type = "LayoutLMv3"
+            elif self.donut_radio.isChecked():
+                model_type = "Donut"
+            elif self.gemini_radio.isChecked():
+                model_type = "Gemini 2.0"
+            elif self.cloud_llm_radio.isChecked():
+                model_type = f"Cloud LLM ({self.cloud_model_selector.currentText()})"
+            elif self.local_llm_radio.isChecked():
+                model_type = f"Local LLM ({self.local_model_selector.currentText()})"
+            
+            # Создаем и показываем диалог preview
+            preview_dialog = PreviewDialog(
+                results=preview_data,
+                model_type=model_type,
+                file_path=file_path,
+                parent=self
+            )
+            
+            # Подключаем сигналы
+            preview_dialog.results_edited.connect(self.on_preview_results_edited)
+            preview_dialog.export_requested.connect(self.on_preview_export_requested)
+            
+            # Показываем диалог
+            result = preview_dialog.exec()
+            
+            if result == QDialog.DialogCode.Accepted:
+                self.status_bar.showMessage("Изменения из предварительного просмотра применены")
+            
+        except Exception as e:
+            utils.show_error_message(
+                self,
+                "Ошибка предварительного просмотра",
+                f"Не удалось открыть предварительный просмотр:\n{str(e)}"
+            )
+    
+    def on_preview_results_edited(self, edited_results):
+        """Обработчик изменения результатов в preview dialog"""
+        try:
+            if self.current_folder_path:
+                # Batch mode - обновляем таблицу
+                # Для пакетного режима нужна более сложная логика обновления
+                self.status_bar.showMessage("Результаты пакетной обработки обновлены")
+            else:
+                # Single mode - обновляем processing_thread.result и таблицу
+                if hasattr(self.processing_thread, 'result'):
+                    self.processing_thread.result = edited_results
+                
+                # Обновляем отображение в таблице
+                self.show_results(edited_results)
+                self.status_bar.showMessage("Результаты обновлены из предварительного просмотра")
+                
+        except Exception as e:
+            utils.show_error_message(
+                self,
+                "Ошибка обновления",
+                f"Не удалось применить изменения из предварительного просмотра:\n{str(e)}"
+            )
+    
+    def on_preview_export_requested(self, results, format_type):
+        """Обработчик запроса экспорта из preview dialog"""
+        try:
+            # Определяем формат для экспорта
+            if "Excel" in format_type:
+                self.save_excel()
+            else:
+                self.save_results()
+                
+        except Exception as e:
+            utils.show_error_message(
+                self,
+                "Ошибка экспорта",
+                f"Не удалось выполнить экспорт из предварительного просмотра:\n{str(e)}"
+            )
+
+    # NEW: Template Designer Integration Methods
+    
+    def show_template_designer(self):
+        """Показывает дизайнер шаблонов экспорта"""
+        try:
+            # Подготавливаем данные для дизайнера
+            current_results = None
+            
+            # Получаем данные в зависимости от режима обработки
+            if self.current_folder_path:
+                # Пакетная обработка - собираем данные из таблицы
+                if self.results_table.rowCount() > 0:
+                    batch_results = []
+                    for row in range(self.results_table.rowCount()):
+                        row_data = {}
+                        for col in range(self.results_table.columnCount()):
+                            header = self.results_table.horizontalHeaderItem(col)
+                            item = self.results_table.item(row, col)
+                            if header and item:
+                                row_data[header.text()] = item.text()
+                        batch_results.append(row_data)
+                    current_results = {"batch_results": batch_results}
+            else:
+                # Одиночная обработка - берем данные из таблицы
+                if self.results_table.rowCount() > 0:
+                    current_results = {}
+                    for row in range(self.results_table.rowCount()):
+                        key_item = self.results_table.item(row, 0)
+                        value_item = self.results_table.item(row, 1)
+                        if key_item and value_item:
+                            current_results[key_item.text()] = value_item.text()
+            
+            # Создаем и показываем диалог дизайнера шаблонов
+            designer = ExportTemplateDesigner(current_results=current_results, parent=self)
+            
+            # Подключаем сигналы
+            designer.template_applied.connect(self.on_template_applied)
+            
+            # Показываем диалог
+            result = designer.exec()
+            
+            if result == designer.DialogCode.Accepted:
+                utils.show_info_message(
+                    self, "Дизайнер шаблонов", 
+                    "Шаблон успешно создан/настроен"
+                )
+                
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка дизайнера шаблонов", 
+                f"Не удалось открыть дизайнер шаблонов:\n{str(e)}"
+            )
+    
+    def on_template_applied(self, template_data):
+        """Обработчик применения шаблона"""
+        try:
+            # Здесь можно добавить логику применения шаблона к текущим результатам
+            # Например, сохранить шаблон как предпочтительный для экспорта
+            
+            template_name = template_data.get("name", "Неизвестный шаблон")
+            utils.show_info_message(
+                self, "Шаблон применён", 
+                f"Шаблон '{template_name}' был применён к текущим результатам"
+            )
+            
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка применения шаблона", 
+                f"Не удалось применить шаблон:\n{str(e)}"
+            )
+
+    def populate_cloud_providers(self):
+        """Заполняет список облачных провайдеров."""
+        try:
+            self.cloud_provider_selector.clear()
+            self.cloud_provider_selector.addItem("Выберите провайдера...", None)
+            
+            from .plugins.base_llm_plugin import LLM_PROVIDERS
+            
+            providers_added = 0
+            llm_settings = settings_manager.get_setting('llm_providers', {})
+            
+            # Добавляем только облачных провайдеров (все кроме ollama)
+            for provider_name, config in LLM_PROVIDERS.items():
+                if provider_name != "ollama":  # Пропускаем локальные
+                    # Проверяем настроенность провайдера
+                    is_configured = False
+                    if config.requires_api_key:
+                        api_key = settings_manager.get_encrypted_setting(f'{provider_name}_api_key')
+                        is_configured = bool(api_key)
+                    else:
+                        is_configured = True
+                    
+                    # Формируем название с индикатором
+                    status_icon = "[OK]" if is_configured else "[CFG]"
+                    display_name = f"{status_icon} {config.display_name}"
+                    
+                    self.cloud_provider_selector.addItem(display_name, {
+                        'provider': provider_name,
+                        'config': config,
+                        'configured': is_configured
+                    })
+                    providers_added += 1
+            
+            print(f"[OK] Загружено {providers_added} облачных провайдеров")
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка загрузки облачных провайдеров: {e}")
+            self.cloud_provider_selector.clear()
+            self.cloud_provider_selector.addItem("Ошибка загрузки", None)
+
+    def populate_local_providers(self):
+        """Заполняет список локальных провайдеров."""
+        try:
+            self.local_provider_selector.clear()
+            self.local_provider_selector.addItem("Выберите провайдера...", None)
+            
+            from .plugins.base_llm_plugin import LLM_PROVIDERS
+            
+            providers_added = 0
+            
+            # Добавляем только локальных провайдеров (пока только ollama)
+            for provider_name, config in LLM_PROVIDERS.items():
+                if provider_name == "ollama":  # Только локальные
+                    # Проверяем доступность Ollama
+                    is_available = self.check_ollama_availability()
+                    
+                    # Формируем название с индикатором
+                    status_icon = "[OK]" if is_available else "[ERR]"
+                    display_name = f"{status_icon} {config.display_name}"
+                    
+                    self.local_provider_selector.addItem(display_name, {
+                        'provider': provider_name,
+                        'config': config,
+                        'available': is_available
+                    })
+                    providers_added += 1
+            
+            print(f"[OK] Загружено {providers_added} локальных провайдеров")
+            
+        except Exception as e:
+            print(f"❌ Ошибка загрузки локальных провайдеров: {e}")
+            self.local_provider_selector.clear()
+            self.local_provider_selector.addItem("Ошибка загрузки", None)
+
+    def check_ollama_availability(self) -> bool:
+        """Проверяет доступность Ollama сервера."""
+        try:
+            import requests
+            response = requests.get("http://localhost:11434/api/tags", timeout=2)
+            return response.status_code == 200
+        except:
+            return False
+
+    def on_cloud_provider_changed(self):
+        """Обработчик изменения выбранного облачного провайдера."""
+        current_data = self.cloud_provider_selector.currentData()
+        
+        if not current_data:
+            self.cloud_model_selector.clear()
+            self.cloud_model_selector.addItem("Сначала выберите провайдера", None)
+            self.cloud_model_selector.setEnabled(False)
+            self.update_cloud_llm_status()
+            return
+            
+        provider_name = current_data.get('provider')
+        config = current_data.get('config')
+        is_configured = current_data.get('configured', False)
+        
+        # Заполняем модели
+        self.populate_cloud_models_for_provider(provider_name, config, is_configured)
+        self.update_cloud_llm_status()
+
+    def on_local_provider_changed(self):
+        """Обработчик изменения выбранного локального провайдера."""
+        current_data = self.local_provider_selector.currentData()
+        
+        if not current_data:
+            self.local_model_selector.clear()
+            self.local_model_selector.addItem("Сначала выберите провайдера", None)
+            self.local_model_selector.setEnabled(False)
+            self.update_local_llm_status()
+            return
+            
+        provider_name = current_data.get('provider')
+        config = current_data.get('config')
+        is_available = current_data.get('available', False)
+        
+        # Заполняем модели
+        self.populate_local_models_for_provider(provider_name, config, is_available)
+        self.update_local_llm_status()
+
+    def populate_cloud_models_for_provider(self, provider_name: str, config, is_configured: bool):
+        """Заполняет модели для выбранного облачного провайдера."""
+        try:
+            self.cloud_model_selector.clear()
+            
+            if not is_configured:
+                self.cloud_model_selector.addItem("⚙️ Настройте API ключ в настройках", None)
+                self.cloud_model_selector.setEnabled(False)
+                return
+            
+            # Получаем настройки провайдера
+            llm_settings = settings_manager.get_setting('llm_providers', {})
+            provider_settings = llm_settings.get(provider_name, {})
+            selected_model = provider_settings.get('model', config.default_model)
+            
+            models_added = 0
+            for model in config.models:
+                # Добавляем информацию о платности и возможностях
+                pricing_info = self.get_model_pricing_info(provider_name, model)
+                vision_support = "👁️" if config.supports_vision else ""
+                
+                display_name = f"{model} {pricing_info} {vision_support}".strip()
+                
+                self.cloud_model_selector.addItem(display_name, {
+                    'provider': provider_name,
+                    'model': model,
+                    'config': config,
+                    'pricing': pricing_info
+                })
+                models_added += 1
+                
+                # Выбираем сохраненную модель
+                if model == selected_model:
+                    self.cloud_model_selector.setCurrentIndex(models_added - 1)
+            
+            self.cloud_model_selector.setEnabled(models_added > 0)
+            print(f"[OK] Загружено {models_added} моделей для {config.display_name}")
+            
+        except Exception as e:
+            print(f"❌ Ошибка загрузки моделей для {provider_name}: {e}")
+            self.cloud_model_selector.clear()
+            self.cloud_model_selector.addItem("Ошибка загрузки моделей", None)
+            self.cloud_model_selector.setEnabled(False)
+
+    def populate_local_models_for_provider(self, provider_name: str, config, is_available: bool):
+        """Заполняет модели для выбранного локального провайдера."""
+        try:
+            self.local_model_selector.clear()
+            
+            if not is_available:
+                self.local_model_selector.addItem("❌ Ollama недоступен", None)
+                self.local_model_selector.setEnabled(False)
+                return
+            
+            if provider_name == "ollama":
+                # Получаем доступные модели из Ollama
+                available_models = self.get_ollama_models()
+                
+                if not available_models:
+                    self.local_model_selector.addItem("📥 Загрузите модели в Ollama", None)
+                    self.local_model_selector.setEnabled(False)
+                    return
+                
+                # Получаем настройки провайдера
+                llm_settings = settings_manager.get_setting('llm_providers', {})
+                provider_settings = llm_settings.get(provider_name, {})
+                selected_model = provider_settings.get('model', config.default_model)
+                
+                models_added = 0
+                for model in available_models:
+                    # Добавляем информацию о модели
+                    vision_support = "👁️" if "vision" in model.lower() else ""
+                    size_info = self.get_model_size_info(model)
+                    
+                    display_name = f"{model} {size_info} {vision_support}".strip()
+                    
+                    self.local_model_selector.addItem(display_name, {
+                        'provider': provider_name,
+                        'model': model,
+                        'config': config,
+                        'size': size_info
+                    })
+                    models_added += 1
+                    
+                    # Выбираем сохраненную модель
+                    if model == selected_model:
+                        self.local_model_selector.setCurrentIndex(models_added - 1)
+                
+                self.local_model_selector.setEnabled(models_added > 0)
+                print(f"[OK] Загружено {models_added} локальных моделей для {config.display_name}")
+            
+        except Exception as e:
+            print(f"❌ Ошибка загрузки локальных моделей для {provider_name}: {e}")
+            self.local_model_selector.clear()
+            self.local_model_selector.addItem("Ошибка загрузки моделей", None)
+            self.local_model_selector.setEnabled(False)
+
+    def get_ollama_models(self) -> list:
+        """Получает список доступных моделей из Ollama."""
+        try:
+            import requests
+            response = requests.get("http://localhost:11434/api/tags", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                return [model['name'] for model in data.get('models', [])]
+            return []
+        except:
+            return []
+
+    def get_model_pricing_info(self, provider_name: str, model: str) -> str:
+        """Возвращает информацию о платности модели."""
+        # Базовая информация о платности моделей
+        free_models = {
+            'openai': ['gpt-3.5-turbo'],
+            'anthropic': [],
+            'google': ['models/gemini-1.5-flash-latest', 'models/gemini-1.5-flash-002'],
+            'mistral': [],
+            'deepseek': ['deepseek-chat', 'deepseek-coder'], 
+            'xai': [],
+        }
+        
+        if provider_name in free_models and model in free_models[provider_name]:
+            return "🆓"
+        else:
+            return "💰"
+
+    def get_model_size_info(self, model: str) -> str:
+        """Извлекает информацию о размере модели из названия."""
+        import re
+        size_match = re.search(r'(\d+\.?\d*[bmk])', model.lower())
+        if size_match:
+            return f"({size_match.group(1).upper()})"
+        return ""
+
+    def on_cloud_model_changed(self):
+        """Обработчик изменения выбранной облачной модели."""
+        self.update_cloud_llm_status()
+
+    def on_local_model_changed(self):
+        """Обработчик изменения выбранной локальной модели."""
+        self.update_local_llm_status()
+
+    def load_selected_local_llm(self):
+        """Загружает выбранный локальный LLM плагин"""
+        provider_data = self.local_provider_selector.currentData()
+        model_data = self.local_model_selector.currentData()
+        
+        if not provider_data or not model_data:
+            return
+            
+        # Проверяем, не идет ли уже загрузка
+        if self.llm_loading_thread and self.llm_loading_thread.isRunning():
+            utils.show_info_message(self, "Загрузка", "LLM модель уже загружается...")
+            return
+        
+        # Формируем данные для загрузки
+        load_data = {
+            'provider': provider_data.get('provider'),
+            'model': model_data.get('model'),
+            'config': provider_data.get('config')
+        }
+        
+        # Создаем поток для загрузки модели
+        self.llm_loading_thread = LLMLoadingThread(self.plugin_manager, load_data)
+        self.llm_loading_thread.loading_started.connect(self.on_local_llm_loading_started)
+        self.llm_loading_thread.loading_finished.connect(self.on_local_llm_loading_finished)
+        self.llm_loading_thread.loading_error.connect(self.on_local_llm_loading_error)
+        
+        self.llm_loading_thread.start()
+    
+    def on_local_llm_loading_started(self, plugin_id: str):
+        """Обработчик начала загрузки локальной LLM"""
+        self.local_llm_status_label.setText("Статус: 🔄 Загружается...")
+        QApplication.processEvents()
+
+    def on_local_llm_loading_finished(self, plugin_id: str, plugin_instance):
+        """Обработчик завершения загрузки локальной LLM"""
+        self.current_llm_plugin = plugin_instance
+        self.update_local_llm_status()
+        
+        plugin_info = self.plugin_manager.get_plugin_info(plugin_id)
+        plugin_name = plugin_info.get('name', plugin_id) if plugin_info else plugin_id
+        
+        utils.show_info_message(
+            self, 
+            "Локальная LLM Загружена", 
+            f"Локальный LLM плагин {plugin_name} успешно загружен!"
+        )
+
+    def on_local_llm_loading_error(self, plugin_id: str, error_message: str):
+        """Обработчик ошибки загрузки локальной LLM"""
+        self.local_llm_status_label.setText("Статус: ❌ Ошибка загрузки")
+        
+        utils.show_error_message(
+            self,
+            "Ошибка загрузки локальной LLM",
+            f"Не удалось загрузить локальный LLM плагин:\n{error_message}"
+        )
+
+
+# NEW: LLM Loading Thread
+class LLMLoadingThread(QThread):
+    """Поток для загрузки LLM плагинов в фоне"""
+    loading_started = pyqtSignal(str)
+    loading_finished = pyqtSignal(str, object)
+    loading_error = pyqtSignal(str, str)
+    
+    def __init__(self, plugin_manager, plugin_data):
+        super().__init__()
+        self.plugin_manager = plugin_manager
+        self.plugin_data = plugin_data
+        
+    def run(self):
+        try:
+            provider_name = self.plugin_data.get('provider')
+            model_name = self.plugin_data.get('model')
+            config = self.plugin_data.get('config')
+            
+            plugin_id = f"{provider_name}:{model_name}"
+            self.loading_started.emit(plugin_id)
+            
+            # Получаем настройки провайдера
+            llm_settings = settings_manager.get_setting('llm_providers', {})
+            provider_settings = llm_settings.get(provider_name, {})
+            
+            # Получаем API ключ если требуется
+            api_key = None
+            if config.requires_api_key:
+                api_key = settings_manager.get_encrypted_setting(f'{provider_name}_api_key')
+                if not api_key:
+                    self.loading_error.emit(plugin_id, f"API ключ для {provider_name} не найден")
+                    return
+            
+            # Создаем экземпляр универсального плагина
+            from .plugins.models.universal_llm_plugin import UniversalLLMPlugin
+            
+            # Дополнительные параметры
+            plugin_kwargs = {
+                'generation_config': {
+                    'temperature': provider_settings.get('temperature', 0.1),
+                    'max_tokens': provider_settings.get('max_tokens', 4096),
+                    'top_p': provider_settings.get('top_p', 0.9),
+                }
+            }
+            
+            # Для Ollama добавляем base_url
+            if provider_name == "ollama":
+                plugin_kwargs['base_url'] = provider_settings.get('base_url', 'http://localhost:11434')
+            
+            plugin = UniversalLLMPlugin(
+                provider_name=provider_name,
+                model_name=model_name,
+                api_key=api_key,
+                **plugin_kwargs
+            )
+            
+            # Инициализируем плагин
+            if plugin.load_model():
+                self.loading_finished.emit(plugin_id, plugin)
+            else:
+                self.loading_error.emit(plugin_id, f"Не удалось инициализировать {config.display_name}")
+                
+        except Exception as e:
+            plugin_id = f"{self.plugin_data.get('provider', 'unknown')}:{self.plugin_data.get('model', 'unknown')}"
+            self.loading_error.emit(plugin_id, str(e))

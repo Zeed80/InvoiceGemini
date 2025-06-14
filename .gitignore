@@ -1,0 +1,187 @@
+# InvoiceGemini - AI-Powered Invoice Processing Application
+# Professional .gitignore for GitHub publication
+
+# ============================================================================
+# Python
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ============================================================================
+# Virtual Environments
+# ============================================================================
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.conda/
+
+# ============================================================================
+# IDE and Editors
+# ============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================================================
+# Application Specific
+# ============================================================================
+
+# User Data and Settings
+data/settings.ini
+data/secrets/
+*.log
+logs/
+
+# Models and Training Data (too large for Git)
+data/models/
+data/trained_models/
+data/training_datasets/
+data/temp/
+
+# User Documents and Invoices
+data/source_invoices/
+data/test_invoices/
+data/processed_invoices/
+
+# API Keys and Sensitive Data
+.env
+.env.local
+.env.production
+config/secrets.py
+api_keys.json
+
+# ============================================================================
+# Machine Learning
+# ============================================================================
+*.pkl
+*.joblib
+*.h5
+*.hdf5
+*.onnx
+*.pb
+*.pth
+*.pt
+*.safetensors
+wandb/
+mlruns/
+.neptune/
+
+# ============================================================================
+# PyQt6 and GUI
+# ============================================================================
+*.ui~
+*.qrc~
+
+# ============================================================================
+# Documentation
+# ============================================================================
+docs/_build/
+site/
+
+# ============================================================================
+# Testing
+# ============================================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ============================================================================
+# Jupyter Notebooks
+# ============================================================================
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# ============================================================================
+# OS Generated Files
+# ============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ============================================================================
+# Temporary Files
+# ============================================================================
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+
+# ============================================================================
+# Large Files and Datasets
+# ============================================================================
+*.zip
+*.tar.gz
+*.rar
+*.7z
+data/golden_dataset/
+test_integration.log
+
+# ============================================================================
+# Development and Debug Files
+# ============================================================================
+debug_*.py
+test_*.py
+*_test.py
+*_debug.py
+analyze_*.py
+retrain_*.py
+fix_*.py
+apply_*.py
+comprehensive_*.py
+mass_*.py
+validate_*.py
+train_*.py
+training_log_*.txt
+
+# ============================================================================
+# Memory and Performance
+# ============================================================================
+memory-bank/
+*.prof
+*.pstats
+
+# ============================================================================
+# Git LFS (for large files if needed)
+# ============================================================================
+# Uncomment if using Git LFS
+# *.model filter=lfs diff=lfs merge=lfs -text
+# *.bin filter=lfs diff=lfs merge=lfs -text 

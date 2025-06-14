@@ -1,0 +1,252 @@
+{
+  "sender": {
+    "id": "sender",
+    "display_name": "Поставщик",
+    "description": "Название компании-поставщика или продавца",
+    "data_type": "text",
+    "required": true,
+    "priority": 1,
+    "position": 1,
+    "gemini_keywords": [
+      "Поставщик",
+      "поставщик",
+      "company",
+      "supplier",
+      "vendor",
+      "организация"
+    ],
+    "layoutlm_labels": [
+      "SELLER",
+      "VENDOR",
+      "COMPANY"
+    ],
+    "ocr_patterns": [
+      "ООО.*",
+      "ИП.*",
+      "АО.*",
+      "ПАО.*"
+    ],
+    "enabled": true
+  },
+  "invoice_number": {
+    "id": "invoice_number",
+    "display_name": "№ счета",
+    "description": "Номер счета, инвойса или фактуры",
+    "data_type": "text",
+    "required": true,
+    "priority": 1,
+    "position": 2,
+    "gemini_keywords": [
+      "№ Счета",
+      "№ счета",
+      "номер счета",
+      "invoice_number",
+      "счет №"
+    ],
+    "layoutlm_labels": [
+      "INVOICE_NUMBER",
+      "DOC_NUMBER"
+    ],
+    "ocr_patterns": [
+      "№\\s*\\d+",
+      "счет\\s*№?\\s*\\d+",
+      "инвойс\\s*№?\\s*\\d+"
+    ],
+    "enabled": true
+  },
+  "invoice_date": {
+    "id": "invoice_date",
+    "display_name": "Дата счета",
+    "description": "Дата выставления счета или инвойса",
+    "data_type": "date",
+    "required": true,
+    "priority": 1,
+    "position": 3,
+    "gemini_keywords": [
+      "Дата счета",
+      "дата счета",
+      "invoice_date",
+      "date",
+      "дата"
+    ],
+    "layoutlm_labels": [
+      "DATE",
+      "INVOICE_DATE"
+    ],
+    "ocr_patterns": [
+      "\\d{1,2}\\.\\d{1,2}\\.\\d{4}",
+      "\\d{1,2}\\s+\\w+\\s+\\d{4}"
+    ],
+    "enabled": true
+  },
+  "total": {
+    "id": "total",
+    "display_name": "Сумма с НДС",
+    "description": "Общая сумма к оплате с учетом НДС",
+    "data_type": "currency",
+    "required": true,
+    "priority": 1,
+    "position": 8,
+    "gemini_keywords": [
+      "Сумма с НДС",
+      "сумма с ндс",
+      "total",
+      "итого",
+      "к оплате"
+    ],
+    "layoutlm_labels": [
+      "TOTAL",
+      "AMOUNT",
+      "TOTAL_AMOUNT"
+    ],
+    "ocr_patterns": [
+      "\\d+[,\\.\\s]\\d+\\s*руб",
+      "итого.*\\d+"
+    ],
+    "enabled": true
+  },
+  "amount_no_vat": {
+    "id": "amount_no_vat",
+    "display_name": "Сумма без НДС",
+    "description": "Сумма без НДС",
+    "data_type": "currency",
+    "required": false,
+    "priority": 2,
+    "position": 6,
+    "gemini_keywords": [
+      "Сумма без НДС",
+      "сумма без ндс",
+      "amount_no_vat",
+      "net_amount"
+    ],
+    "layoutlm_labels": [
+      "NET_AMOUNT",
+      "AMOUNT_NO_VAT"
+    ],
+    "ocr_patterns": [
+      "без\\s+НДС.*\\d+",
+      "net.*amount.*\\d+"
+    ],
+    "enabled": true
+  },
+  "vat_percent": {
+    "id": "vat_percent",
+    "display_name": "% НДС",
+    "description": "Ставка НДС в процентах",
+    "data_type": "number",
+    "required": false,
+    "priority": 2,
+    "position": 7,
+    "gemini_keywords": [
+      "НДС %",
+      "ндс %",
+      "vat_rate",
+      "tax_rate",
+      "ставка ндс"
+    ],
+    "layoutlm_labels": [
+      "VAT_RATE",
+      "TAX_RATE"
+    ],
+    "ocr_patterns": [
+      "НДС\\s*\\d+%",
+      "\\d+%\\s*НДС"
+    ],
+    "enabled": true
+  },
+  "currency": {
+    "id": "currency",
+    "display_name": "Валюта",
+    "description": "Валюта платежа",
+    "data_type": "text",
+    "required": false,
+    "priority": 3,
+    "position": 9,
+    "gemini_keywords": [
+      "Валюта",
+      "валюта",
+      "currency"
+    ],
+    "layoutlm_labels": [
+      "CURRENCY"
+    ],
+    "ocr_patterns": [
+      "RUB|руб|USD|EUR|₽"
+    ],
+    "enabled": true
+  },
+  "category": {
+    "id": "category",
+    "display_name": "Категория",
+    "description": "Категория товаров или услуг",
+    "data_type": "text",
+    "required": false,
+    "priority": 3,
+    "position": 4,
+    "gemini_keywords": [
+      "Категория",
+      "категория",
+      "category"
+    ],
+    "layoutlm_labels": [
+      "CATEGORY",
+      "ITEM_TYPE"
+    ],
+    "ocr_patterns": [
+      "категория.*",
+      "тип.*товар"
+    ],
+    "enabled": true
+  },
+  "description": {
+    "id": "description",
+    "display_name": "Товары",
+    "description": "Описание товаров, услуг или содержимого документа",
+    "data_type": "text",
+    "required": false,
+    "priority": 3,
+    "position": 5,
+    "gemini_keywords": [
+      "Товары",
+      "товары",
+      "description",
+      "items",
+      "услуги"
+    ],
+    "layoutlm_labels": [
+      "DESCRIPTION",
+      "ITEMS"
+    ],
+    "ocr_patterns": [
+      "наименование.*",
+      "товар.*",
+      "услуг.*"
+    ],
+    "enabled": true
+  },
+  "note": {
+    "id": "note",
+    "display_name": "Примечание",
+    "description": "Дополнительные примечания и комментарии",
+    "data_type": "text",
+    "required": false,
+    "priority": 5,
+    "position": 12,
+    "gemini_keywords": [
+      "Комментарии",
+      "комментарии",
+      "note",
+      "comment",
+      "примечание"
+    ],
+    "layoutlm_labels": [
+      "NOTE",
+      "COMMENT"
+    ],
+    "ocr_patterns": [
+      "примечание.*",
+      "комментарий.*"
+    ],
+    "enabled": true
+  }
+}

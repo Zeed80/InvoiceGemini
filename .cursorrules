@@ -1,0 +1,315 @@
+# InvoiceGemini Project Rules
+
+## Project Overview
+InvoiceGemini is a PyQt6-based desktop application for automated invoice data extraction using multiple ML models (LayoutLMv3, Donut, Google Gemini 2.0 Flash) with an extensible LLM plugin system.
+
+## Interactive Application Monitoring Rules
+
+### Real-time Application Monitoring
+- ALWAYS use `debug_runner.py` for launching applications requiring monitoring
+- NEVER use `is_background=true` when debugging or monitoring GUI applications
+- Use `python -u` flag for unbuffered output in terminal commands
+- Monitor log files in `logs/` directory for detailed application behavior
+
+### Cursor AI Terminal Command Patterns
+```python
+# CORRECT - For real-time monitoring
+run_terminal_cmd(
+    command="python debug_runner.py",
+    is_background=false,  # Shows real-time output
+    explanation="Launch with full monitoring and logging"
+)
+
+# CORRECT - For debug output
+run_terminal_cmd(
+    command="python -u main.py --debug | tee debug.log",
+    is_background=false,
+    explanation="Launch with real-time debug output and logging"
+)
+
+# WRONG - Loses output visibility
+run_terminal_cmd(
+    command="python main.py",
+    is_background=true,  # Hidden output
+    explanation="Launch in background"
+)
+```
+
+### Log Monitoring Setup
+- Create `logs/` directory for session logs
+- Use timestamped log files for each session
+- Include both console and file logging
+- Monitor PyQt6 events and signals in real-time
+
+### Debug Session Best Practices
+1. **Start with monitoring wrapper**: Use `debug_runner.py`
+2. **Enable verbose logging**: Use `--debug` flag
+3. **Keep terminal visible**: Set `is_background=false`
+4. **Monitor log files**: Watch `logs/debug_session_*.log`
+5. **Use unbuffered output**: Python `-u` flag
+
+### Error Tracking Patterns
+- Capture stderr and stdout together
+- Log PyQt6 widget creation and destruction
+- Monitor signal-slot connections
+- Track ML model loading and memory usage
+- Log file processing pipeline steps
+
+### Real-time GUI Monitoring
+```python
+# Enable PyQt6 debug mode
+os.environ['QT_LOGGING_RULES'] = '*.debug=true'
+
+# Monitor GUI events
+app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps)
+app.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
+```
+
+## Essential Code Patterns
+
+### PyQt6 GUI Development
+- Always use `PyQt6` imports, never PyQt5 or PySide
+- Use `QThread` for background processing to maintain UI responsiveness
+- Implement proper signal-slot patterns for cross-thread communication
+- Always use `self.deleteLater()` for proper widget cleanup
+
+```python
+# Correct PyQt6 pattern
+from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer
+from PyQt6.QtGui import QIcon, QPixmap
+
+# Threading pattern for ML processing
+class ProcessingWorker(QThread):
+    progress_updated = pyqtSignal(int)
+    finished = pyqtSignal(dict)
+    error_occurred = pyqtSignal(str)
+    
+    def run(self):
+        try:
+            # Processing logic here
+            result = self.process_document()
+            self.finished.emit(result)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+```
+
+### ML Model Integration Patterns
+- Always use `cache_dir="data/models"` for model downloads
+- Implement graceful degradation when models fail to load
+- Use context managers for GPU memory management
+- Include progress callbacks for long-running operations
+
+```python
+# Correct model loading pattern
+from transformers import AutoProcessor, AutoModelForTokenClassification
+import torch
+
+class ModelProcessor:
+    def __init__(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+    def load_model(self, model_name):
+        try:
+            processor = AutoProcessor.from_pretrained(
+                model_name,
+                cache_dir="data/models"
+            )
+            model = AutoModelForTokenClassification.from_pretrained(
+                model_name,
+                cache_dir="data/models"
+            ).to(self.device)
+            return processor, model
+        except Exception as e:
+            self.logger.error(f"Failed to load model {model_name}: {e}")
+            return None, None
+```
+
+### LLM Plugin System Architecture
+- All plugins MUST inherit from `BaseLLMPlugin`
+- Use dependency injection for OCR and logging services
+- Implement proper error handling with fallback mechanisms
+- Include resource cleanup in plugin destructors
+
+```python
+# Correct plugin implementation pattern
+from app.plugins.base_llm_plugin import BaseLLMPlugin
+
+class CustomLLMPlugin(BaseLLMPlugin):
+    def __init__(self, ocr_service=None, logger=None):
+        super().__init__(ocr_service=ocr_service, logger=logger)
+        self.model_name = "custom-model"
+        self.model = None
+        
+    def load_model(self):
+        try:
+            # Model loading logic
+            self.model = self._load_custom_model()
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to load {self.model_name}: {e}")
+            return False
+            
+    def extract_invoice_data(self, image_path, prompt=None):
+        if not self.model:
+            raise RuntimeError("Model not loaded")
+        # Implementation here
+        
+    def cleanup(self):
+        if self.model:
+            del self.model
+            self.model = None
+```
+
+### Settings Management
+- Use `SettingsManager` singleton for all configuration
+- Encrypt sensitive data (API keys) before storage
+- Validate settings on load with sensible defaults
+- Use INI format for human-readable configuration
+
+```python
+# Correct settings pattern
+from app.settings_manager import SettingsManager
+
+settings = SettingsManager()
+api_key = settings.get_encrypted_setting('google_api_key')
+model_cache_size = settings.get_setting('model_cache_size', default=4000)
+```
+
+### File Processing Patterns
+- Always validate file types and sizes before processing
+- Use temporary files for intermediate processing steps
+- Implement proper error handling for corrupted files
+- Support both PDF and image formats consistently
+
+```python
+# Correct file processing pattern
+import tempfile
+from pathlib import Path
+
+def process_file(self, file_path):
+    file_path = Path(file_path)
+    
+    # Validate file
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+        
+    if file_path.suffix.lower() not in ['.pdf', '.png', '.jpg', '.jpeg']:
+        raise ValueError(f"Unsupported file type: {file_path.suffix}")
+        
+    # Process with cleanup
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Processing logic here
+        pass
+```
+
+## Deprecated Patterns (DO NOT USE)
+
+### ❌ Wrong Import Patterns
+```python
+# NEVER use these
+from PyQt5.QtWidgets import *  # Wrong Qt version
+from PySide6.QtCore import *   # Wrong framework
+import cv2                     # Use Pillow instead for basic ops
+```
+
+### ❌ Wrong Threading Patterns
+```python
+# NEVER do direct UI updates from worker threads
+def worker_function():
+    self.progress_bar.setValue(50)  # WRONG - UI update from worker thread
+```
+
+### ❌ Wrong Model Loading
+```python
+# NEVER load models without error handling
+model = AutoModel.from_pretrained("model_name")  # WRONG - no error handling
+# NEVER use hardcoded paths
+model_path = "/home/user/models/"  # WRONG - not portable
+```
+
+### ❌ Wrong Monitoring Patterns
+```python
+# NEVER use background mode for debugging
+run_terminal_cmd(command="python main.py", is_background=true)  # WRONG - no output visible
+
+# NEVER ignore error output
+subprocess.run([...], stdout=subprocess.DEVNULL)  # WRONG - hides errors
+```
+
+## Russian Localization Requirements
+- All user-facing strings must support Russian translation
+- Use `self.tr("text")` for all translatable strings
+- Date formatting must follow Russian standards (DD.MM.YYYY)
+- Number formatting must use comma as decimal separator for Russian locale
+
+```python
+# Correct localization pattern
+self.setWindowTitle(self.tr("Обработка счетов"))
+error_msg = self.tr("Ошибка при загрузке модели: {error}").format(error=str(e))
+```
+
+## Error Handling Patterns
+- Always log errors with context information
+- Provide user-friendly error messages in Russian
+- Implement graceful degradation for non-critical failures
+- Use specific exception types for different error conditions
+
+```python
+# Correct error handling pattern
+try:
+    result = self.process_document()
+except FileNotFoundError as e:
+    self.logger.error(f"File not found: {e}")
+    self.show_error_message(self.tr("Файл не найден: {file}").format(file=str(e)))
+except ModelLoadError as e:
+    self.logger.error(f"Model load failed: {e}")
+    self.show_error_message(self.tr("Ошибка загрузки модели"))
+    # Fall back to alternative model
+    self.try_fallback_model()
+```
+
+## Code Organization Rules
+- Group imports: standard library → third-party → local
+- Use type hints for all function parameters and returns
+- Keep functions under 50 lines when possible
+- Use descriptive variable names in English (code) and Russian (UI)
+
+## Performance Requirements
+- Models must be cached after first load
+- UI must remain responsive during processing (use QThread)
+- Memory usage should not exceed 8GB for model operations
+- File processing should show progress for operations > 2 seconds
+
+## Security Requirements
+- Never store API keys in plain text
+- Use encryption for all sensitive configuration data
+- Validate all user inputs before processing
+- Clear temporary files after processing
+
+## Verification Steps
+Before submitting code, verify:
+1. ✅ All PyQt6 imports are correct (no PyQt5/PySide)
+2. ✅ Background operations use QThread
+3. ✅ All user strings are translatable with self.tr()
+4. ✅ Error handling includes logging and user messages
+5. ✅ No hardcoded file paths or API keys
+6. ✅ Plugin implementations inherit from BaseLLMPlugin
+7. ✅ Settings use SettingsManager singleton
+8. ✅ File operations include proper validation
+9. ✅ Interactive applications use proper monitoring setup
+10. ✅ Terminal commands use `is_background=false` for debugging
+
+## Testing Requirements
+- All new features must include basic error condition testing
+- GUI components should be testable with QTest framework
+- Model loading should be testable with mock objects
+- Plugin system should support dependency injection for testing
+
+Failure to follow these patterns may result in:
+- Application crashes due to improper threading
+- Security vulnerabilities from unencrypted storage
+- UI freezing during long operations
+- Plugin system integration failures
+- Localization issues for Russian users
+- Loss of debugging visibility and monitoring capabilities 

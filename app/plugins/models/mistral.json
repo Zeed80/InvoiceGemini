@@ -1,0 +1,32 @@
+{
+    "name": "Mistral Plugin", 
+    "description": "Поддержка Mistral и Mixtral моделей для извлечения данных из счетов",
+    "version": "1.0.0",
+    "author": "InvoiceGemini Team",
+    "module": "mistral_plugin",
+    "class": "MistralPlugin",
+    "supported_models": [
+        "mistral-7b-instruct",
+        "mistral-8x7b-instruct", 
+        "mistral-7b-base"
+    ],
+    "requirements": [
+        "torch>=2.0.0",
+        "transformers>=4.35.0",
+        "accelerate>=0.20.0",
+        "bitsandbytes>=0.41.0"
+    ],
+    "capabilities": [
+        "Многоязычная обработка",
+        "32K контекст",
+        "4-bit квантизация",
+        "LoRA/QLoRA fine-tuning",
+        "Структурированное извлечение данных"
+    ],
+    "memory_requirements": {
+        "mistral-7b-instruct": "16 GB",
+        "mistral-8x7b-instruct": "96 GB", 
+        "mistral-7b-base": "14 GB"
+    },
+    "tags": ["llm", "mistral", "text-generation", "instruction-following"]
+} 
