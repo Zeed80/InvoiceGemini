@@ -1,5 +1,7 @@
 # 🧾 InvoiceGemini
 Проект целиком и полностью создан в Cursor AI с автоматическим подтверждением всех изменений.
+Проект еще очень сырой.
+
 **AI-Powered Invoice Data Extraction Desktop Application**
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://python.org)
