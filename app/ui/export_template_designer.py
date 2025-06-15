@@ -108,27 +108,73 @@ class ExportTemplateDesigner(QDialog):
     template_applied = pyqtSignal(dict)  # template_data
     
     def __init__(self, current_results=None, parent=None):
-        super().__init__(parent)
+        print("DEBUG: ExportTemplateDesigner.__init__() начинается...")
         
-        # Data
-        self.current_results = current_results or {}
-        self.current_template = ExportTemplate()
-        self.templates_directory = os.path.join(os.path.dirname(__file__), "..", "..", "data", "templates")
-        self.ensure_templates_directory()
-        
-        # UI state
-        self.preview_document = QTextDocument()
-        self.is_modified = False
-        
-        self.init_ui()
-        self.load_builtin_templates()
-        self.load_field_formats()
-        self.update_preview()
-        
-        # Auto-update timer for preview
-        self.preview_timer = QTimer()
-        self.preview_timer.timeout.connect(self.update_preview)
-        self.preview_timer.setSingleShot(True)
+        try:
+            super().__init__(parent)
+            print("DEBUG: ✅ Родительский класс инициализирован")
+            
+            # Data
+            self.current_results = current_results or {}
+            print(f"DEBUG: ✅ current_results установлены ({len(self.current_results)} элементов)")
+            
+            self.current_template = ExportTemplate()
+            print("DEBUG: ✅ ExportTemplate создан")
+            
+            self.templates_directory = os.path.join(os.path.dirname(__file__), "..", "..", "data", "templates")
+            print(f"DEBUG: ✅ templates_directory: {self.templates_directory}")
+            
+            self.ensure_templates_directory()
+            print("DEBUG: ✅ Директория шаблонов проверена")
+            
+            # UI state
+            self.preview_document = QTextDocument()
+            print("DEBUG: ✅ QTextDocument создан")
+            
+            self.is_modified = False
+            
+            print("DEBUG: Инициализируем UI...")
+            self.init_ui()
+            print("DEBUG: ✅ UI инициализирован")
+            
+            print("DEBUG: Загружаем встроенные шаблоны...")
+            try:
+                self.load_builtin_templates()
+                print("DEBUG: ✅ Встроенные шаблоны загружены")
+            except Exception as e:
+                print(f"DEBUG: ⚠️ Ошибка загрузки встроенных шаблонов: {e}")
+                # Продолжаем инициализацию, это не критично
+            
+            print("DEBUG: Загружаем форматы полей...")
+            try:
+                self.load_field_formats()
+                print("DEBUG: ✅ Форматы полей загружены")
+            except Exception as e:
+                print(f"DEBUG: ⚠️ Ошибка загрузки форматов полей: {e}")
+                # Продолжаем инициализацию, это не критично
+            
+            print("DEBUG: Обновляем предпросмотр...")
+            try:
+                self.update_preview()
+                print("DEBUG: ✅ Предпросмотр обновлен")
+            except Exception as e:
+                print(f"DEBUG: ⚠️ Ошибка обновления предпросмотра: {e}")
+                # Продолжаем инициализацию, это не критично
+            
+            # Auto-update timer for preview
+            print("DEBUG: Настраиваем таймер...")
+            self.preview_timer = QTimer()
+            self.preview_timer.timeout.connect(self.update_preview)
+            self.preview_timer.setSingleShot(True)
+            print("DEBUG: ✅ Таймер настроен")
+            
+            print("DEBUG: ✅ ExportTemplateDesigner полностью инициализирован")
+            
+        except Exception as e:
+            print(f"DEBUG: ❌ Ошибка в ExportTemplateDesigner.__init__(): {e}")
+            import traceback
+            traceback.print_exc()
+            raise  # Перебрасываем исключение дальше
     
     def init_ui(self):
         """Initialize the user interface"""
@@ -698,75 +744,219 @@ class ExportTemplateDesigner(QDialog):
     
     def load_builtin_templates(self):
         """Load built-in templates into combo box"""
-        self.template_combo.clear()
+        print("DEBUG: Входим в load_builtin_templates...")
         
-        # Add built-in templates
-        builtin_templates = [
-            "Стандартный",
-            "Подробный отчёт", 
-            "Сводка",
-            "Счёт-фактура",
-            "Финансовый отчёт"
-        ]
-        
-        for template in builtin_templates:
-            self.template_combo.addItem(template)
-        
-        # Add custom templates from directory
         try:
-            for file_name in os.listdir(self.templates_directory):
-                if file_name.endswith('.json'):
-                    template_name = os.path.splitext(file_name)[0]
-                    self.template_combo.addItem(f"📄 {template_name}")
-        except OSError:
-            pass
+            # Проверяем, что template_combo существует
+            if not hasattr(self, 'template_combo') or self.template_combo is None:
+                print("DEBUG: ❌ template_combo не найден, пропускаем загрузку шаблонов")
+                return
+                
+            print("DEBUG: ✅ template_combo найден, отключаем сигналы...")
+            # Временно отключаем сигналы чтобы избежать проблем с callback'ами
+            self.template_combo.blockSignals(True)
+            
+            print("DEBUG: Очищаем template_combo...")
+            self.template_combo.clear()
+            
+            # Add built-in templates
+            builtin_templates = [
+                "Стандартный",
+                "Подробный отчёт", 
+                "Сводка",
+                "Счёт-фактура",
+                "Финансовый отчёт"
+            ]
+            
+            print(f"DEBUG: Добавляем {len(builtin_templates)} встроенных шаблонов...")
+            for i, template in enumerate(builtin_templates):
+                try:
+                    print(f"DEBUG:   Добавляем шаблон {i+1}/{len(builtin_templates)}: '{template}'")
+                    self.template_combo.addItem(template)
+                    print(f"DEBUG:   ✅ Добавлен: {template}")
+                except Exception as e:
+                    print(f"DEBUG:   ❌ Ошибка добавления шаблона '{template}': {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Продолжаем с остальными шаблонами
+            
+            # Add custom templates from directory
+            print(f"DEBUG: Проверяем пользовательские шаблоны в {self.templates_directory}...")
+            try:
+                if os.path.exists(self.templates_directory):
+                    custom_count = 0
+                    file_list = os.listdir(self.templates_directory)
+                    json_files = [f for f in file_list if f.endswith('.json')]
+                    print(f"DEBUG: Найдено {len(json_files)} JSON файлов шаблонов")
+                    
+                    for i, file_name in enumerate(json_files):
+                        try:
+                            template_name = os.path.splitext(file_name)[0]
+                            print(f"DEBUG:   Добавляем пользовательский шаблон {i+1}/{len(json_files)}: '📄 {template_name}'")
+                            self.template_combo.addItem(f"📄 {template_name}")
+                            custom_count += 1
+                            print(f"DEBUG:   ✅ Добавлен: 📄 {template_name}")
+                        except Exception as e:
+                            print(f"DEBUG:   ❌ Ошибка добавления пользовательского шаблона '{file_name}': {e}")
+                            import traceback
+                            traceback.print_exc()
+                            # Продолжаем с остальными файлами
+                            
+                    print(f"DEBUG: ✅ Добавлено {custom_count} пользовательских шаблонов")
+                else:
+                    print("DEBUG: Директория шаблонов не существует")
+            except OSError as e:
+                print(f"DEBUG: ⚠️ Ошибка чтения директории шаблонов: {e}")
+                
+            print("DEBUG: Включаем сигналы обратно...")
+            # Включаем сигналы обратно
+            self.template_combo.blockSignals(False)
+            
+            print("DEBUG: ✅ load_builtin_templates завершен успешно")
+            
+        except AttributeError as e:
+            print(f"DEBUG: ❌ AttributeError в load_builtin_templates: {e}")
+            # Возможно, UI еще не полностью инициализирован
+            print("DEBUG: UI может быть не полностью инициализирован, пропускаем загрузку шаблонов")
+            # Включаем сигналы обратно если template_combo существует
+            if hasattr(self, 'template_combo') and self.template_combo is not None:
+                self.template_combo.blockSignals(False)
+            
+        except Exception as e:
+            print(f"DEBUG: ❌ Неожиданная ошибка в load_builtin_templates: {e}")
+            import traceback
+            traceback.print_exc()
+            # Включаем сигналы обратно если template_combo существует
+            if hasattr(self, 'template_combo') and self.template_combo is not None:
+                self.template_combo.blockSignals(False)
+            # Не прерываем инициализацию, просто логируем ошибку
     
     def load_field_formats(self):
         """Load available fields into field combo"""
-        self.field_combo.clear()
+        print("DEBUG: Входим в load_field_formats...")
         
-        # Get fields from settings
-        table_fields = settings_manager.get_table_fields()
-        
-        for field in table_fields:
-            if field.get("visible", True):
-                field_id = field.get("id", "")
-                field_name = field.get("name", field_id)
-                self.field_combo.addItem(field_name, field_id)
-        
-        # Initialize field formats for current template
-        if not self.current_template.field_formats:
-            self.current_template.field_formats = {}
+        try:
+            # Проверяем, что field_combo существует
+            if not hasattr(self, 'field_combo') or self.field_combo is None:
+                print("DEBUG: ❌ field_combo не найден, пропускаем загрузку полей")
+                return
+                
+            print("DEBUG: ✅ field_combo найден, очищаем...")
+            self.field_combo.clear()
             
+            # Get fields from settings
+            print("DEBUG: Получаем поля из settings_manager...")
+            table_fields = settings_manager.get_table_fields()
+            print(f"DEBUG: Получено {len(table_fields)} полей из настроек")
+            
+            field_count = 0
             for field in table_fields:
-                field_id = field.get("id", "")
-                if field_id and field.get("visible", True):
-                    self.current_template.field_formats[field_id] = FieldFormat()
+                if field.get("visible", True):
+                    field_id = field.get("id", "")
+                    field_name = field.get("name", field_id)
+                    self.field_combo.addItem(field_name, field_id)
+                    field_count += 1
+                    print(f"DEBUG:   + {field_name} ({field_id})")
+            
+            print(f"DEBUG: ✅ Добавлено {field_count} видимых полей в combo")
+            
+            # Initialize field formats for current template
+            print("DEBUG: Инициализируем форматы полей для шаблона...")
+            if not self.current_template.field_formats:
+                self.current_template.field_formats = {}
+                
+                format_count = 0
+                for field in table_fields:
+                    field_id = field.get("id", "")
+                    if field_id and field.get("visible", True):
+                        self.current_template.field_formats[field_id] = FieldFormat()
+                        format_count += 1
+                        
+                print(f"DEBUG: ✅ Инициализировано {format_count} форматов полей")
+            else:
+                print("DEBUG: Форматы полей уже существуют")
+                
+            print("DEBUG: ✅ load_field_formats завершен успешно")
+            
+        except AttributeError as e:
+            print(f"DEBUG: ❌ AttributeError в load_field_formats: {e}")
+            print("DEBUG: UI может быть не полностью инициализирован, пропускаем загрузку полей")
+            
+        except Exception as e:
+            print(f"DEBUG: ❌ Неожиданная ошибка в load_field_formats: {e}")
+            import traceback
+            traceback.print_exc()
+            # Не прерываем инициализацию, просто логируем ошибку
     
     def update_preview(self):
         """Update the visual preview"""
+        print("DEBUG: Входим в update_preview...")
+        
         try:
+            # Проверяем наличие необходимых UI элементов
+            if not hasattr(self, 'preview_format_combo') or self.preview_format_combo is None:
+                print("DEBUG: ❌ preview_format_combo не найден, пропускаем обновление предпросмотра")
+                return
+                
+            if not hasattr(self, 'preview_browser') or self.preview_browser is None:
+                print("DEBUG: ❌ preview_browser не найден, пропускаем обновление предпросмотра")
+                return
+                
+            print("DEBUG: ✅ UI элементы для предпросмотра найдены")
             preview_format = self.preview_format_combo.currentText()
+            print(f"DEBUG: Формат предпросмотра: {preview_format}")
             
             if "HTML" in preview_format:
+                print("DEBUG: Генерируем HTML предпросмотр...")
                 html_content = self.generate_html_preview()
                 self.preview_browser.setHtml(html_content)
+                print("DEBUG: ✅ HTML предпросмотр установлен")
+                
             elif "PDF" in preview_format:
+                print("DEBUG: Генерируем PDF предпросмотр...")
                 # For PDF preview, show HTML representation
                 html_content = self.generate_pdf_preview_html()
                 self.preview_browser.setHtml(html_content)
+                print("DEBUG: ✅ PDF предпросмотр установлен")
+                
             elif "Excel" in preview_format:
+                print("DEBUG: Генерируем Excel предпросмотр...")
                 html_content = self.generate_excel_preview_html()
                 self.preview_browser.setHtml(html_content)
+                print("DEBUG: ✅ Excel предпросмотр установлен")
+            else:
+                print(f"DEBUG: ⚠️ Неизвестный формат предпросмотра: {preview_format}")
+                
+            print("DEBUG: ✅ update_preview завершен успешно")
+                
+        except AttributeError as e:
+            print(f"DEBUG: ❌ AttributeError в update_preview: {e}")
+            print("DEBUG: UI может быть не полностью инициализирован, показываем ошибку")
+            if hasattr(self, 'preview_browser') and self.preview_browser is not None:
+                error_html = f"""
+                <html><body>
+                <h3 style="color: orange;">UI еще не готов</h3>
+                <p>Предварительный просмотр будет доступен после полной загрузки интерфейса.</p>
+                <p>Ошибка: {str(e)}</p>
+                </body></html>
+                """
+                self.preview_browser.setHtml(error_html)
                 
         except Exception as e:
-            error_html = f"""
-            <html><body>
-            <h3 style="color: red;">Ошибка предварительного просмотра</h3>
-            <p>{str(e)}</p>
-            </body></html>
-            """
-            self.preview_browser.setHtml(error_html)
+            print(f"DEBUG: ❌ Неожиданная ошибка в update_preview: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Показываем ошибку в браузере если возможно
+            if hasattr(self, 'preview_browser') and self.preview_browser is not None:
+                error_html = f"""
+                <html><body>
+                <h3 style="color: red;">Ошибка предварительного просмотра</h3>
+                <p>{str(e)}</p>
+                <p><small>Проверьте консоль для получения подробностей</small></p>
+                </body></html>
+                """
+                self.preview_browser.setHtml(error_html)
     
     def generate_html_preview(self):
         """Generate HTML preview content"""
@@ -1056,16 +1246,36 @@ class ExportTemplateDesigner(QDialog):
     # Event handlers
     def on_template_changed(self, template_name):
         """Handle template selection change"""
-        if template_name.startswith("📄"):
-            # Custom template
-            custom_name = template_name[2:].strip()
-            self.load_custom_template(custom_name)
-        else:
-            # Built-in template
-            self.load_builtin_template(template_name)
+        print(f"DEBUG: on_template_changed вызван с template_name='{template_name}'")
         
-        self.update_ui_from_template()
-        self.schedule_preview_update()
+        try:
+            if not template_name or not template_name.strip():
+                print("DEBUG: Пустое имя шаблона, пропускаем")
+                return
+                
+            if template_name.startswith("📄"):
+                # Custom template
+                custom_name = template_name[2:].strip()
+                print(f"DEBUG: Загружаем пользовательский шаблон: {custom_name}")
+                self.load_custom_template(custom_name)
+            else:
+                # Built-in template
+                print(f"DEBUG: Загружаем встроенный шаблон: {template_name}")
+                self.load_builtin_template(template_name)
+            
+            print("DEBUG: Обновляем UI из шаблона...")
+            self.update_ui_from_template()
+            
+            print("DEBUG: Планируем обновление предпросмотра...")
+            self.schedule_preview_update()
+            
+            print("DEBUG: ✅ on_template_changed завершен успешно")
+            
+        except Exception as e:
+            print(f"DEBUG: ❌ Ошибка в on_template_changed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Не прерываем работу, просто логируем ошибку
     
     def on_template_modified(self):
         """Handle template modification"""

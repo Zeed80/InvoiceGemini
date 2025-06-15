@@ -1956,12 +1956,34 @@ class MainWindow(QMainWindow):
     
     def show_template_designer(self):
         """Показывает дизайнер шаблонов экспорта"""
+        print("DEBUG: Начинаем запуск дизайнера шаблонов...")
+        
+        # Проверяем критические зависимости перед запуском
         try:
+            print("DEBUG: Проверяем наличие PyQt6...")
+            import PyQt6
+            from PyQt6.QtWidgets import QDialog, QComboBox, QTextBrowser
+            print("DEBUG: ✅ PyQt6 и основные виджеты доступны")
+        except ImportError as pyqt_error:
+            print(f"DEBUG: ❌ PyQt6 недоступен: {pyqt_error}")
+            utils.show_error_message(
+                self, "Отсутствуют зависимости", 
+                f"PyQt6 не установлен или поврежден.\n\nДля установки выполните:\npip install PyQt6\n\nПодробности: {str(pyqt_error)}"
+            )
+            return
+        
+        try:
+            print("DEBUG: Проверяем импорт ExportTemplateDesigner...")
+            from .ui.export_template_designer import ExportTemplateDesigner
+            print("DEBUG: ✅ Импорт ExportTemplateDesigner успешен")
+            
             # Подготавливаем данные для дизайнера
             current_results = None
+            print("DEBUG: Подготавливаем данные для дизайнера...")
             
             # Получаем данные в зависимости от режима обработки
             if self.current_folder_path:
+                print("DEBUG: Режим пакетной обработки")
                 # Пакетная обработка - собираем данные из таблицы
                 if self.results_table.rowCount() > 0:
                     batch_results = []
@@ -1974,7 +1996,9 @@ class MainWindow(QMainWindow):
                                 row_data[header.text()] = item.text()
                         batch_results.append(row_data)
                     current_results = {"batch_results": batch_results}
+                    print(f"DEBUG: Собрано {len(batch_results)} записей для пакетной обработки")
             else:
+                print("DEBUG: Режим одиночной обработки")
                 # Одиночная обработка - берем данные из таблицы
                 if self.results_table.rowCount() > 0:
                     current_results = {}
@@ -1983,27 +2007,116 @@ class MainWindow(QMainWindow):
                         value_item = self.results_table.item(row, 1)
                         if key_item and value_item:
                             current_results[key_item.text()] = value_item.text()
+                    print(f"DEBUG: Собрано {len(current_results)} полей для одиночной обработки")
             
+            print("DEBUG: Создаем экземпляр дизайнера шаблонов...")
             # Создаем и показываем диалог дизайнера шаблонов
             designer = ExportTemplateDesigner(current_results=current_results, parent=self)
+            print("DEBUG: ✅ ExportTemplateDesigner создан успешно")
             
+            print("DEBUG: Подключаем сигналы...")
             # Подключаем сигналы
             designer.template_applied.connect(self.on_template_applied)
+            print("DEBUG: ✅ Сигналы подключены")
             
+            print("DEBUG: Показываем диалог...")
             # Показываем диалог
             result = designer.exec()
+            print(f"DEBUG: Диалог закрыт с результатом: {result}")
             
             if result == designer.DialogCode.Accepted:
                 utils.show_info_message(
                     self, "Дизайнер шаблонов", 
                     "Шаблон успешно создан/настроен"
                 )
+                print("DEBUG: ✅ Шаблон применен успешно")
+                
+        except ImportError as e:
+            print(f"DEBUG: ❌ Ошибка импорта: {e}")
+            print("DEBUG: Пытаемся использовать упрощенный дизайнер...")
+            
+            try:
+                from .ui.simple_template_designer import SimpleTemplateDesigner
+                print("DEBUG: ✅ SimpleTemplateDesigner импортирован")
+                
+                # Подготавливаем те же данные
+                current_results = None
+                if self.current_folder_path:
+                    if self.results_table.rowCount() > 0:
+                        batch_results = []
+                        for row in range(self.results_table.rowCount()):
+                            row_data = {}
+                            for col in range(self.results_table.columnCount()):
+                                header = self.results_table.horizontalHeaderItem(col)
+                                item = self.results_table.item(row, col)
+                                if header and item:
+                                    row_data[header.text()] = item.text()
+                            batch_results.append(row_data)
+                        current_results = {"batch_results": batch_results}
+                else:
+                    if self.results_table.rowCount() > 0:
+                        current_results = {}
+                        for row in range(self.results_table.rowCount()):
+                            key_item = self.results_table.item(row, 0)
+                            value_item = self.results_table.item(row, 1)
+                            if key_item and value_item:
+                                current_results[key_item.text()] = value_item.text()
+                
+                simple_designer = SimpleTemplateDesigner(current_results=current_results, parent=self)
+                simple_designer.template_applied.connect(self.on_template_applied)
+                
+                result = simple_designer.exec()
+                print(f"DEBUG: ✅ Упрощенный дизайнер работал, результат: {result}")
+                
+                if result == simple_designer.DialogCode.Accepted:
+                    utils.show_info_message(
+                        self, "Дизайнер шаблонов", 
+                        "Шаблон успешно создан/настроен (упрощенная версия)"
+                    )
+                    
+            except Exception as fallback_error:
+                print(f"DEBUG: ❌ Ошибка fallback дизайнера: {fallback_error}")
+                import traceback
+                traceback.print_exc()
+                utils.show_error_message(
+                    self, "Ошибка импорта", 
+                    f"Не удалось запустить ни основной, ни упрощенный дизайнер шаблонов:\n\nОсновная ошибка: {str(e)}\nFallback ошибка: {str(fallback_error)}\n\nВозможно, отсутствуют зависимости PyQt6."
+                )
                 
         except Exception as e:
-            utils.show_error_message(
-                self, "Ошибка дизайнера шаблонов", 
-                f"Не удалось открыть дизайнер шаблонов:\n{str(e)}"
-            )
+            print(f"DEBUG: ❌ Общая ошибка: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Пытаемся fallback дизайнер
+            try:
+                print("DEBUG: Пытаемся запустить упрощенный дизайнер после общей ошибки...")
+                from .ui.simple_template_designer import SimpleTemplateDesigner
+                
+                # Подготавливаем данные (упрощенно)
+                current_results = {}
+                if self.results_table.rowCount() > 0:
+                    for row in range(self.results_table.rowCount()):
+                        key_item = self.results_table.item(row, 0)
+                        value_item = self.results_table.item(row, 1)
+                        if key_item and value_item:
+                            current_results[key_item.text()] = value_item.text()
+                
+                simple_designer = SimpleTemplateDesigner(current_results=current_results, parent=self)
+                result = simple_designer.exec()
+                
+                if result == simple_designer.DialogCode.Accepted:
+                    utils.show_info_message(
+                        self, "Дизайнер шаблонов", 
+                        "Шаблон создан с помощью упрощенного дизайнера"
+                    )
+                
+            except Exception as final_error:
+                print(f"DEBUG: ❌ Финальная ошибка: {final_error}")
+                utils.show_error_message(
+                    self, "Критическая ошибка дизайнера шаблонов", 
+                    f"Не удалось запустить дизайнер шаблонов:\n\nОсновная ошибка: {str(e)}\nFallback ошибка: {str(final_error)}\n\nПодробности в консоли отладки.\n\nВозможные причины:\n• Отсутствуют зависимости\n• Поврежденные файлы модулей\n• Проблемы с PyQt6"
+                )
     
     def on_template_applied(self, template_data):
         """Обработчик применения шаблона"""
