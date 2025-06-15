@@ -13,7 +13,8 @@
       "company",
       "supplier",
       "vendor",
-      "организация"
+      "организация",
+      "Sender"
     ],
     "layoutlm_labels": [
       "SELLER",
@@ -41,7 +42,9 @@
       "№ счета",
       "номер счета",
       "invoice_number",
-      "счет №"
+      "счет №",
+      "invoice number",
+      "№счета"
     ],
     "layoutlm_labels": [
       "INVOICE_NUMBER",
@@ -67,7 +70,8 @@
       "дата счета",
       "invoice_date",
       "date",
-      "дата"
+      "дата",
+      "Invoice Date"
     ],
     "layoutlm_labels": [
       "DATE",
@@ -86,13 +90,14 @@
     "data_type": "currency",
     "required": true,
     "priority": 1,
-    "position": 8,
+    "position": 4,
     "gemini_keywords": [
       "Сумма с НДС",
       "сумма с ндс",
       "total",
       "итого",
-      "к оплате"
+      "к оплате",
+      "Total"
     ],
     "layoutlm_labels": [
       "TOTAL",
@@ -107,12 +112,12 @@
   },
   "amount_no_vat": {
     "id": "amount_no_vat",
-    "display_name": "Сумма без НДС",
+    "display_name": "Amount (0% VAT)",
     "description": "Сумма без НДС",
     "data_type": "currency",
     "required": false,
     "priority": 2,
-    "position": 6,
+    "position": 5,
     "gemini_keywords": [
       "Сумма без НДС",
       "сумма без ндс",
@@ -136,13 +141,16 @@
     "data_type": "number",
     "required": false,
     "priority": 2,
-    "position": 7,
+    "position": 6,
     "gemini_keywords": [
       "НДС %",
       "ндс %",
       "vat_rate",
       "tax_rate",
-      "ставка ндс"
+      "ставка ндс",
+      "НДС%",
+      "ндс%",
+      "% НДС"
     ],
     "layoutlm_labels": [
       "VAT_RATE",
@@ -156,12 +164,12 @@
   },
   "currency": {
     "id": "currency",
-    "display_name": "Валюта",
+    "display_name": "Currency",
     "description": "Валюта платежа",
     "data_type": "text",
     "required": false,
     "priority": 3,
-    "position": 9,
+    "position": 7,
     "gemini_keywords": [
       "Валюта",
       "валюта",
@@ -177,12 +185,12 @@
   },
   "category": {
     "id": "category",
-    "display_name": "Категория",
+    "display_name": "Category",
     "description": "Категория товаров или услуг",
     "data_type": "text",
     "required": false,
     "priority": 3,
-    "position": 4,
+    "position": 8,
     "gemini_keywords": [
       "Категория",
       "категория",
@@ -200,12 +208,12 @@
   },
   "description": {
     "id": "description",
-    "display_name": "Товары",
+    "display_name": "Description",
     "description": "Описание товаров, услуг или содержимого документа",
     "data_type": "text",
     "required": false,
     "priority": 3,
-    "position": 5,
+    "position": 9,
     "gemini_keywords": [
       "Товары",
       "товары",
@@ -233,11 +241,13 @@
     "priority": 5,
     "position": 12,
     "gemini_keywords": [
-      "Комментарии",
-      "комментарии",
+      "Примечание",
+      "примечание",
       "note",
       "comment",
-      "примечание"
+      "Комментарии",
+      "комментарии",
+      "comments"
     ],
     "layoutlm_labels": [
       "NOTE",

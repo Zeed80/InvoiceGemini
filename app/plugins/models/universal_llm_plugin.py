@@ -546,6 +546,33 @@ class UniversalLLMPlugin(BaseLLMPlugin):
                 print(f"❌ Ошибка удаления временного файла {temp_file}: {e}")
         self.temp_files.clear()
     
+    def extract_invoice_data(self, image_path: str, prompt: str = None) -> Dict[str, Any]:
+        """
+        Извлекает данные из счета-фактуры.
+        Совместимый метод для интеграции с основным приложением.
+        
+        Args:
+            image_path: Путь к изображению счета
+            prompt: Пользовательский промпт (опционально)
+            
+        Returns:
+            Dict[str, Any]: Извлеченные данные счета
+        """
+        try:
+            # Используем основной метод process_image
+            result = self.process_image(image_path, custom_prompt=prompt)
+            
+            if result is None:
+                print(f"❌ Не удалось извлечь данные из {image_path}")
+                return {}
+            
+            print(f"✅ Успешно извлечены данные из {image_path}")
+            return result
+            
+        except Exception as e:
+            print(f"❌ Ошибка извлечения данных счета: {e}")
+            return {}
+    
     def __del__(self):
         """Деструктор для очистки ресурсов."""
         self.cleanup_temp_files() 

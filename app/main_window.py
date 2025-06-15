@@ -57,8 +57,19 @@ class MainWindow(QMainWindow):
         self.model_manager = ModelManager()
         
         # NEW: Initialize LLM Plugin Manager
+        # Инициализируем универсальный менеджер плагинов
+        from app.plugins.universal_plugin_manager import UniversalPluginManager
+        from app.plugins.llm_plugin_adapter import adapt_all_llm_plugins
+        from app.plugins.base_plugin import PluginType
+        
+        self.universal_plugin_manager = UniversalPluginManager()
+        
+        # Для обратной совместимости также инициализируем старый менеджер
         self.plugin_manager = PluginManager()
         self.current_llm_plugin = None
+        
+        # Создаем адаптеры для существующих LLM плагинов
+        self.llm_adapters = adapt_all_llm_plugins(self.plugin_manager)
         self.llm_loading_thread = None
         
         # Populate LLM models after UI initialization
@@ -483,6 +494,348 @@ class MainWindow(QMainWindow):
         # Обновляем настройку в конфиге для использования в реальном времени
         app_config.DEFAULT_TESSERACT_LANG = selected_lang
     
+    def auto_load_llm_plugin(self, model_type, provider_data, model_data):
+        """Автоматическая загрузка LLM плагина синхронно"""
+        try:
+            provider_name = provider_data.get('provider')
+            model_name = model_data.get('model')
+            config = provider_data.get('config')
+            
+            # Получаем настройки провайдера
+            llm_settings = settings_manager.get_setting('llm_providers', {})
+            provider_settings = llm_settings.get(provider_name, {})
+            
+            # Получаем API ключ если требуется
+            api_key = None
+            if config.requires_api_key:
+                api_key = settings_manager.get_encrypted_setting(f'{provider_name}_api_key')
+                if not api_key:
+                    print(f"❌ API ключ для {provider_name} не найден")
+                    return False
+            
+            # Создаем экземпляр универсального плагина
+            from .plugins.models.universal_llm_plugin import UniversalLLMPlugin
+            
+            # Дополнительные параметры
+            plugin_kwargs = {
+                'generation_config': {
+                    'temperature': provider_settings.get('temperature', 0.1),
+                    'max_tokens': provider_settings.get('max_tokens', 4096),
+                    'top_p': provider_settings.get('top_p', 0.9),
+                }
+            }
+            
+            # Для Ollama добавляем base_url
+            if provider_name == "ollama":
+                plugin_kwargs['base_url'] = provider_settings.get('base_url', 'http://localhost:11434')
+            
+            plugin = UniversalLLMPlugin(
+                provider_name=provider_name,
+                model_name=model_name,
+                api_key=api_key,
+                **plugin_kwargs
+            )
+            
+            # Инициализируем плагин
+            if plugin.load_model():
+                self.current_llm_plugin = plugin
+                print(f"✅ Автоматически загружен {provider_name} плагин")
+                
+                # Обновляем статус в UI
+                if model_type == "cloud_llm":
+                    self.update_cloud_llm_status()
+                else:
+                    self.update_local_llm_status()
+                
+                return True
+            else:
+                print(f"❌ Не удалось инициализировать {provider_name} плагин")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Ошибка автоматической загрузки плагина: {e}")
+            return False
+    
+    # NEW: Методы для работы с универсальной системой плагинов
+    
+    def export_with_plugin(self, data, output_path: str, format_type: str):
+        """Экспортирует данные используя плагин экспорта"""
+        try:
+            success = self.universal_plugin_manager.export_data(data, output_path, format_type)
+            if success:
+                utils.show_info_message(
+                    self, "Успех", f"Данные успешно экспортированы в {output_path}"
+                )
+            else:
+                utils.show_error_message(
+                    self, "Ошибка экспорта", f"Не удалось экспортировать данные в формат {format_type}"
+                )
+            return success
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка экспорта", f"Ошибка при экспорте: {e}"
+            )
+            return False
+    
+    def validate_with_plugin(self, data, validator_type: str = "invoice"):
+        """Валидирует данные используя плагин валидации"""
+        try:
+            validation_result = self.universal_plugin_manager.validate_data(data, validator_type)
+            
+            errors = validation_result.get('errors', [])
+            warnings = validation_result.get('warnings', [])
+            
+            if errors:
+                error_msg = "Найдены ошибки валидации:\n" + "\n".join(errors)
+                if warnings:
+                    error_msg += "\n\nПредупреждения:\n" + "\n".join(warnings)
+                utils.show_error_message(self, "Ошибки валидации", error_msg)
+                return False
+            elif warnings:
+                warning_msg = "Предупреждения валидации:\n" + "\n".join(warnings)
+                utils.show_warning_message(self, "Предупреждения валидации", warning_msg)
+            
+            return True
+            
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка валидации", f"Ошибка при валидации: {e}"
+            )
+            return False
+    
+    def create_data_viewer(self, data, viewer_type: str = "table"):
+        """Создает просмотрщик данных используя плагин"""
+        try:
+            viewer = self.universal_plugin_manager.create_viewer(data, viewer_type, self)
+            if viewer:
+                # Создаем диалог для отображения просмотрщика
+                from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton
+                
+                dialog = QDialog(self)
+                dialog.setWindowTitle(f"Просмотр данных - {viewer_type}")
+                dialog.setModal(True)
+                dialog.resize(800, 600)
+                
+                layout = QVBoxLayout()
+                layout.addWidget(viewer)
+                
+                # Кнопка закрытия
+                close_button = QPushButton("Закрыть")
+                close_button.clicked.connect(dialog.accept)
+                layout.addWidget(close_button)
+                
+                dialog.setLayout(layout)
+                dialog.exec()
+                
+                return True
+            else:
+                utils.show_error_message(
+                    self, "Ошибка просмотра", f"Не удалось создать просмотрщик типа {viewer_type}"
+                )
+                return False
+                
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка просмотра", f"Ошибка при создании просмотрщика: {e}"
+            )
+            return False
+    
+    def get_plugin_statistics(self):
+        """Возвращает статистику по плагинам"""
+        try:
+            stats = self.universal_plugin_manager.get_statistics()
+            
+            # Создаем диалог для отображения статистики
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
+            
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Статистика плагинов")
+            dialog.setModal(True)
+            dialog.resize(600, 400)
+            
+            layout = QVBoxLayout()
+            
+            # Текстовое поле для статистики
+            text_edit = QTextEdit()
+            text_edit.setReadOnly(True)
+            
+            stats_text = "📊 Статистика универсальной системы плагинов\n\n"
+            stats_text += f"Всего доступно: {stats['total']['available']}\n"
+            stats_text += f"Всего загружено: {stats['total']['loaded']}\n\n"
+            
+            for plugin_type, type_stats in stats.items():
+                if plugin_type != 'total':
+                    stats_text += f"📋 {plugin_type.upper()}:\n"
+                    stats_text += f"   Доступно: {type_stats['available']}\n"
+                    stats_text += f"   Загружено: {type_stats['loaded']}\n"
+                    if type_stats['plugins']:
+                        stats_text += f"   Плагины: {', '.join(type_stats['plugins'])}\n"
+                    stats_text += "\n"
+            
+            text_edit.setPlainText(stats_text)
+            layout.addWidget(text_edit)
+            
+            # Кнопка закрытия
+            close_button = QPushButton("Закрыть")
+            close_button.clicked.connect(dialog.accept)
+            layout.addWidget(close_button)
+            
+            dialog.setLayout(layout)
+            dialog.exec()
+            
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка", f"Ошибка получения статистики плагинов: {e}"
+            )
+    
+    def validate_current_data(self):
+        """Валидирует текущие данные"""
+        try:
+            if self.batch_mode:
+                if hasattr(self, 'batch_results') and self.batch_results:
+                    # Валидируем каждый результат в пакете
+                    all_valid = True
+                    for i, result in enumerate(self.batch_results):
+                        if not self.validate_with_plugin(result, "invoice"):
+                            all_valid = False
+                            print(f"Ошибка валидации в результате {i+1}")
+                    
+                    if all_valid:
+                        utils.show_info_message(
+                            self, "Валидация", "Все результаты пакетной обработки прошли валидацию"
+                        )
+                else:
+                    utils.show_warning_message(
+                        self, "Предупреждение", "Нет данных для валидации. Сначала обработайте файлы."
+                    )
+            else:
+                if hasattr(self, 'processing_thread') and self.processing_thread and \
+                   hasattr(self.processing_thread, 'result') and self.processing_thread.result:
+                    if self.validate_with_plugin(self.processing_thread.result, "invoice"):
+                        utils.show_info_message(
+                            self, "Валидация", "Данные прошли валидацию успешно"
+                        )
+                else:
+                    utils.show_warning_message(
+                        self, "Предупреждение", "Нет данных для валидации. Сначала обработайте файл."
+                    )
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка валидации", f"Ошибка при валидации данных: {e}"
+            )
+    
+    def view_current_data(self):
+        """Показывает текущие данные в просмотрщике"""
+        try:
+            if self.batch_mode:
+                if hasattr(self, 'batch_results') and self.batch_results:
+                    self.create_data_viewer(self.batch_results, "table")
+                else:
+                    utils.show_warning_message(
+                        self, "Предупреждение", "Нет данных для просмотра. Сначала обработайте файлы."
+                    )
+            else:
+                if hasattr(self, 'processing_thread') and self.processing_thread and \
+                   hasattr(self.processing_thread, 'result') and self.processing_thread.result:
+                    self.create_data_viewer(self.processing_thread.result, "table")
+                else:
+                    utils.show_warning_message(
+                        self, "Предупреждение", "Нет данных для просмотра. Сначала обработайте файл."
+                    )
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка просмотра", f"Ошибка при просмотре данных: {e}"
+            )
+    
+    def show_plugin_export_dialog(self):
+        """Показывает диалог экспорта через плагины"""
+        try:
+            # Получаем данные для экспорта
+            data_to_export = None
+            if self.batch_mode:
+                if hasattr(self, 'batch_results') and self.batch_results:
+                    data_to_export = self.batch_results
+                else:
+                    utils.show_warning_message(
+                        self, "Предупреждение", "Нет данных для экспорта. Сначала обработайте файлы."
+                    )
+                    return
+            else:
+                if hasattr(self, 'processing_thread') and self.processing_thread and \
+                   hasattr(self.processing_thread, 'result') and self.processing_thread.result:
+                    data_to_export = self.processing_thread.result
+                else:
+                    utils.show_warning_message(
+                        self, "Предупреждение", "Нет данных для экспорта. Сначала обработайте файл."
+                    )
+                    return
+            
+            # Создаем диалог выбора формата экспорта
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QPushButton, QFileDialog
+            
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Экспорт через плагины")
+            dialog.setModal(True)
+            dialog.resize(400, 150)
+            
+            layout = QVBoxLayout()
+            
+            # Выбор формата
+            format_layout = QHBoxLayout()
+            format_layout.addWidget(QLabel("Формат экспорта:"))
+            
+            format_combo = QComboBox()
+            format_combo.addItem("JSON", "json")
+            format_combo.addItem("Excel (XLSX)", "xlsx")
+            format_combo.addItem("CSV", "csv")
+            format_combo.addItem("PDF", "pdf")
+            format_layout.addWidget(format_combo)
+            
+            layout.addLayout(format_layout)
+            
+            # Кнопки
+            buttons_layout = QHBoxLayout()
+            
+            export_button = QPushButton("Экспортировать")
+            cancel_button = QPushButton("Отмена")
+            
+            buttons_layout.addWidget(export_button)
+            buttons_layout.addWidget(cancel_button)
+            
+            layout.addLayout(buttons_layout)
+            dialog.setLayout(layout)
+            
+            def on_export():
+                format_type = format_combo.currentData()
+                
+                # Выбираем файл для сохранения
+                file_filter = {
+                    "json": "JSON файлы (*.json)",
+                    "xlsx": "Excel файлы (*.xlsx)",
+                    "csv": "CSV файлы (*.csv)",
+                    "pdf": "PDF файлы (*.pdf)"
+                }.get(format_type, "Все файлы (*)")
+                
+                output_path, _ = QFileDialog.getSaveFileName(
+                    dialog, "Сохранить как", f"export.{format_type}", file_filter
+                )
+                
+                if output_path:
+                    if self.export_with_plugin(data_to_export, output_path, format_type):
+                        dialog.accept()
+                    # Ошибка уже показана в export_with_plugin
+            
+            export_button.clicked.connect(on_export)
+            cancel_button.clicked.connect(dialog.reject)
+            
+            dialog.exec()
+            
+        except Exception as e:
+            utils.show_error_message(
+                self, "Ошибка экспорта", f"Ошибка при создании диалога экспорта: {e}"
+            )
+    
+
     def create_menus(self):
         """Создание меню приложения."""
         menu_bar = self.menuBar()
@@ -542,6 +895,13 @@ class MainWindow(QMainWindow):
         llm_plugins_action = QAction("🔌 Управление LLM плагинами...", self)
         llm_plugins_action.triggered.connect(self.show_llm_plugins_dialog)
         settings_menu.addAction(llm_plugins_action)
+        
+        settings_menu.addSeparator()
+        
+        # Новая универсальная система плагинов
+        universal_plugins_action = QAction("🔧 Универсальная система плагинов...", self)
+        universal_plugins_action.triggered.connect(self.get_plugin_statistics)
+        settings_menu.addAction(universal_plugins_action)
         
         # Меню Обучение
         training_menu = menu_bar.addMenu("Обучение")
@@ -678,13 +1038,41 @@ class MainWindow(QMainWindow):
             
         ocr_lang = self.ocr_lang_combo.currentData() if model_type == "layoutlm" else None
         
-        # NEW: Обработка LLM плагинов
+        # NEW: Обработка LLM плагинов с автоматической загрузкой
         if model_type in ["cloud_llm", "local_llm"]:
+            # Проверяем, загружен ли уже плагин
             if not hasattr(self, 'current_llm_plugin') or not self.current_llm_plugin:
-                utils.show_error_message(
-                    self, "Ошибка LLM", "LLM плагин не загружен. Сначала загрузите плагин."
-                )
-                return
+                # Пытаемся автоматически загрузить плагин
+                try:
+                    if model_type == "cloud_llm":
+                        provider_data = self.cloud_provider_selector.currentData()
+                        model_data = self.cloud_model_selector.currentData()
+                    else:  # local_llm
+                        provider_data = self.local_provider_selector.currentData()
+                        model_data = self.local_model_selector.currentData()
+                    
+                    if not provider_data or not model_data:
+                        utils.show_error_message(
+                            self, "Ошибка модели", "Выберите провайдера и модель для LLM плагина."
+                        )
+                        return
+                    
+                    # Автоматическая загрузка плагина
+                    self.status_bar.showMessage(f"Загружается {model_type} плагин...")
+                    success = self.auto_load_llm_plugin(model_type, provider_data, model_data)
+                    
+                    if not success:
+                        utils.show_error_message(
+                            self, "Ошибка LLM", 
+                            f"Не удалось автоматически загрузить {model_type} плагин. Проверьте настройки API ключей."
+                        )
+                        return
+                        
+                except Exception as e:
+                    utils.show_error_message(
+                        self, "Ошибка загрузки", f"Ошибка автоматической загрузки плагина: {str(e)}"
+                    )
+                    return
             
             # Используем LLM плагин для обработки
             self.process_with_llm_plugin(input_path, is_folder)
@@ -769,6 +1157,14 @@ class MainWindow(QMainWindow):
         # NEW: Включаем кнопку предварительного просмотра
         self.preview_button.setEnabled(True)
         
+        # NEW: Активируем кнопки новой системы плагинов
+        if hasattr(self, 'validate_button'):
+            self.validate_button.setEnabled(True)
+        if hasattr(self, 'view_data_button'):
+            self.view_data_button.setEnabled(True)
+        if hasattr(self, 'plugin_export_button'):
+            self.plugin_export_button.setEnabled(True)
+        
         # Скрываем индикатор прогресса
         self.progress_bar.setVisible(False)
         self.status_bar.showMessage("Обработка завершена")
@@ -810,7 +1206,8 @@ class MainWindow(QMainWindow):
         
         else: # Обработка одного файла
             # Используем старую логику для одиночного файла
-            if not hasattr(self.processing_thread, 'result') or not self.processing_thread.result:
+            if not hasattr(self, 'processing_thread') or not self.processing_thread or \
+               not hasattr(self.processing_thread, 'result') or not self.processing_thread.result:
                 utils.show_info_message(
                     self, "Информация", "Нет результатов для сохранения. Сначала обработайте файл."
                 )
@@ -1175,23 +1572,103 @@ class MainWindow(QMainWindow):
             if header_item:
                 column_mapping[header_item.text()] = col
 
-        # Заполняем данные по display_name
+        # Создаем расширенное сопоставление полей для гибкого поиска
+        field_aliases = self._create_field_aliases_mapping(column_mapping)
+        
+        # Заполняем данные по display_name или алиасам
+        processed_fields = 0
         for field_name, value in result.items():
+            # Пропускаем служебные поля
+            if field_name.startswith('_'):
+                continue
+                
+            column_index = None
+            
+            # Сначала пытаемся точное совпадение
             if field_name in column_mapping:
                 column_index = column_mapping[field_name]
+            else:
+                # Затем ищем по алиасам (нечувствительно к регистру)
+                field_name_lower = field_name.lower()
+                for alias, col_idx in field_aliases.items():
+                    if field_name_lower == alias.lower():
+                        column_index = col_idx
+                        break
+            
+            if column_index is not None:
                 item = QTableWidgetItem(str(value))
                 
-                # Выравнивание для числовых колонок (опционально)
-                if any(word in field_name for word in ["Amount", "Total", "VAT", "Сумма", "НДС"]):
+                # Выравнивание для числовых колонок
+                if any(word in field_name for word in ["Amount", "Total", "VAT", "Сумма", "НДС", "№", "номер", "%"]):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 
                 self.results_table.setItem(row_position, column_index, item)
+                processed_fields += 1
             else:
                 # Логируем неизвестные поля для отладки
                 print(f"ОТЛАДКА: Неизвестное поле '{field_name}' со значением '{value}' не добавлено в таблицу")
 
         self.results_table.resizeRowsToContents()
-        print(f"ОТЛАДКА: Добавлена строка в таблицу. Полей обработано: {len([k for k in result.keys() if k in column_mapping])}/{len(result)}")
+        print(f"ОТЛАДКА: Добавлена строка в таблицу. Полей обработано: {processed_fields}/{len([k for k in result.keys() if not k.startswith('_')])}")
+    
+    def _create_field_aliases_mapping(self, column_mapping):
+        """Создает расширенное сопоставление полей с алиасами для гибкого поиска"""
+        field_aliases = {}
+        
+        # Определяем алиасы для каждого типа поля
+        field_patterns = {
+            # Номер счета
+            "№ счета": ["№ Счета", "номер счета", "invoice_number", "счет №", "invoice number", "№счета"],
+            "№ Invoice": ["№ Счета", "номер счета", "invoice_number", "счет №", "invoice number", "№счета"],
+            
+            # НДС
+            "% НДС": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%"],
+            "VAT %": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%"],
+            
+            # Поставщик
+            "Поставщик": ["Sender", "поставщик", "company", "supplier", "vendor", "организация"],
+            "Sender": ["Поставщик", "поставщик", "company", "supplier", "vendor", "организация"],
+            
+            # Сумма
+            "Сумма с НДС": ["Total", "total", "итого", "к оплате", "сумма с ндс"],
+            "Total": ["Сумма с НДС", "total", "итого", "к оплате", "сумма с ндс"],
+            
+            # Сумма без НДС
+            "Сумма без НДС": ["Amount (0% VAT)", "amount_no_vat", "net_amount", "сумма без ндс"],
+            "Amount (0% VAT)": ["Сумма без НДС", "amount_no_vat", "net_amount", "сумма без ндс"],
+            
+            # Дата
+            "Дата счета": ["Invoice Date", "invoice_date", "date", "дата"],
+            "Invoice Date": ["Дата счета", "invoice_date", "date", "дата"],
+            
+            # Валюта
+            "Валюта": ["Currency", "currency"],
+            "Currency": ["Валюта", "currency"],
+            
+            # Категория
+            "Категория": ["Category", "category"],
+            "Category": ["Категория", "category"],
+            
+            # Описание/товары
+            "Товары": ["Description", "description", "items", "услуги"],
+            "Description": ["Товары", "description", "items", "услуги"],
+            
+            # Примечание
+            "Примечание": ["Note", "note", "Комментарии", "комментарии", "comments"],
+            "Note": ["Примечание", "note", "Комментарии", "комментарии", "comments"]
+        }
+        
+        # Создаем обратное сопоставление: алиас -> column_index
+        for column_name, column_index in column_mapping.items():
+            # Добавляем само название колонки
+            field_aliases[column_name] = column_index
+            
+            # Добавляем алиасы для этой колонки
+            if column_name in field_patterns:
+                for alias in field_patterns[column_name]:
+                    field_aliases[alias] = column_index
+        
+        return field_aliases
 
     # NEW: Слот для обработки завершения всего процесса
     def processing_finished(self, result_or_none):
@@ -1754,6 +2231,12 @@ class MainWindow(QMainWindow):
                 # Для одного файла
                 result = self.current_llm_plugin.extract_invoice_data(input_path)
                 if result:
+                    # Создаем фиктивный объект processing_thread для совместимости
+                    class FakeThread:
+                        def __init__(self, result):
+                            self.result = result
+                    
+                    self.processing_thread = FakeThread(result)
                     self.show_results(result)
                 else:
                     self.show_processing_error("LLM плагин не вернул результат")
@@ -1866,7 +2349,8 @@ class MainWindow(QMainWindow):
                 
             else:
                 # Одиночная обработка
-                if not hasattr(self.processing_thread, 'result') or not self.processing_thread.result:
+                if not hasattr(self, 'processing_thread') or not self.processing_thread or \
+                   not hasattr(self.processing_thread, 'result') or not self.processing_thread.result:
                     utils.show_info_message(
                         self, "Информация", 
                         "Нет результатов для предварительного просмотра. Сначала обработайте файл."
@@ -1922,7 +2406,8 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage("Результаты пакетной обработки обновлены")
             else:
                 # Single mode - обновляем processing_thread.result и таблицу
-                if hasattr(self.processing_thread, 'result'):
+                if hasattr(self, 'processing_thread') and self.processing_thread and \
+                   hasattr(self.processing_thread, 'result'):
                     self.processing_thread.result = edited_results
                 
                 # Обновляем отображение в таблице

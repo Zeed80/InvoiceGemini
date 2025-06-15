@@ -52,52 +52,52 @@ class FieldManager:
         default_fields = [
             TableField(
                 id="sender",
-                display_name="Sender",
+                display_name="Поставщик",
                 description="Название компании-поставщика или продавца",
                 data_type="text",
                 required=True,
                 priority=1,
                 position=1,
-                gemini_keywords=["Поставщик", "поставщик", "company", "supplier", "vendor", "организация"],
+                gemini_keywords=["Поставщик", "поставщик", "company", "supplier", "vendor", "организация", "Sender"],
                 layoutlm_labels=["SELLER", "VENDOR", "COMPANY"],
                 ocr_patterns=[r"ООО.*", r"ИП.*", r"АО.*", r"ПАО.*"],
                 enabled=True
             ),
             TableField(
                 id="invoice_number",
-                display_name="№ Invoice",
+                display_name="№ счета",
                 description="Номер счета, инвойса или фактуры",
                 data_type="text",
                 required=True,
                 priority=1,
                 position=2,
-                gemini_keywords=["№ Счета", "№ счета", "номер счета", "invoice_number", "счет №"],
+                gemini_keywords=["№ Счета", "№ счета", "номер счета", "invoice_number", "счет №", "invoice number", "№счета"],
                 layoutlm_labels=["INVOICE_NUMBER", "DOC_NUMBER"],
                 ocr_patterns=[r"№\s*\d+", r"счет\s*№?\s*\d+", r"инвойс\s*№?\s*\d+"],
                 enabled=True
             ),
             TableField(
                 id="invoice_date",
-                display_name="Invoice Date",
+                display_name="Дата счета",
                 description="Дата выставления счета или инвойса",
                 data_type="date",
                 required=True,
                 priority=1,
                 position=3,
-                gemini_keywords=["Дата счета", "дата счета", "invoice_date", "date", "дата"],
+                gemini_keywords=["Дата счета", "дата счета", "invoice_date", "date", "дата", "Invoice Date"],
                 layoutlm_labels=["DATE", "INVOICE_DATE"],
                 ocr_patterns=[r"\d{1,2}\.\d{1,2}\.\d{4}", r"\d{1,2}\s+\w+\s+\d{4}"],
                 enabled=True
             ),
             TableField(
                 id="total",
-                display_name="Total",
+                display_name="Сумма с НДС",
                 description="Общая сумма к оплате с учетом НДС",
                 data_type="currency",
                 required=True,
                 priority=1,
                 position=4,
-                gemini_keywords=["Сумма с НДС", "сумма с ндс", "total", "итого", "к оплате"],
+                gemini_keywords=["Сумма с НДС", "сумма с ндс", "total", "итого", "к оплате", "Total"],
                 layoutlm_labels=["TOTAL", "AMOUNT", "TOTAL_AMOUNT"],
                 ocr_patterns=[r"\d+[,\.\s]\d+\s*руб", r"итого.*\d+"],
                 enabled=True
@@ -117,13 +117,13 @@ class FieldManager:
             ),
             TableField(
                 id="vat_percent",
-                display_name="VAT %",
+                display_name="% НДС",
                 description="Ставка НДС в процентах",
                 data_type="number",
                 required=False,
                 priority=2,
                 position=6,
-                gemini_keywords=["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс"],
+                gemini_keywords=["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% НДС"],
                 layoutlm_labels=["VAT_RATE", "TAX_RATE"],
                 ocr_patterns=[r"НДС\s*\d+%", r"\d+%\s*НДС"],
                 enabled=True
@@ -195,13 +195,13 @@ class FieldManager:
             ),
             TableField(
                 id="note",
-                display_name="Note",
+                display_name="Примечание",
                 description="Дополнительные примечания и комментарии",
                 data_type="text",
                 required=False,
                 priority=5,
                 position=12,
-                gemini_keywords=["Комментарии", "комментарии", "note", "comment", "примечание"],
+                gemini_keywords=["Примечание", "примечание", "note", "comment", "Комментарии", "комментарии", "comments"],
                 layoutlm_labels=["NOTE", "COMMENT"],
                 ocr_patterns=[r"примечание.*", r"комментарий.*"],
                 enabled=True
@@ -304,17 +304,29 @@ class FieldManager:
             ""
         ]
         
-        # Добавляем описание каждого поля
+        # Добавляем описание каждого поля с использованием display_name
         for field in enabled_fields:
             keywords_str = ", ".join(field.gemini_keywords[:3])  # Первые 3 ключевых слова
-            prompt_parts.append(f"- {field.gemini_keywords[0]}: {field.description} (варианты: {keywords_str})")
+            prompt_parts.append(f"- {field.display_name}: {field.description} (варианты: {keywords_str})")
         
         prompt_parts.extend([
             "",
-            "ВАЖНО: Возвращай ответ ТОЛЬКО в формате JSON. Используй точные названия полей как показано выше.",
+            "ВАЖНО: Возвращай ответ ТОЛЬКО в формате JSON.",
+            "Используй ТОЧНЫЕ названия полей как показано выше (первое название перед двоеточием).",
             "Если поле не найдено в документе, используй \"N/A\".",
-            "Не добавляй никаких дополнительных объяснений или текста вне JSON."
+            "Не добавляй никаких дополнительных объяснений или текста вне JSON.",
+            "",
+            "Пример правильного формата ответа:",
+            "{"
         ])
+        
+        # Добавляем пример JSON с правильными названиями полей
+        example_fields = []
+        for field in enabled_fields[:4]:  # Показываем первые 4 поля как пример
+            example_fields.append(f'  "{field.display_name}": "значение"')
+        
+        prompt_parts.extend(example_fields)
+        prompt_parts.append("}")
         
         if base_prompt:
             return f"{base_prompt}\n\n{chr(10).join(prompt_parts)}"

@@ -59,6 +59,13 @@ class PluginManager:
     def _load_builtin_plugins(self):
         """Загружает встроенные плагины."""
         builtin_plugins = [
+            # Специализированные плагины для основных провайдеров
+            ("gemini_plugin", "GeminiPlugin"),
+            ("openai_plugin", "OpenAIPlugin"),
+            ("anthropic_plugin", "AnthropicPlugin"),
+            # Универсальный плагин
+            ("universal_llm_plugin", "UniversalLLMPlugin"),
+            # Старые плагины (для совместимости)
             ("llama_plugin", "LlamaPlugin"),
             ("mistral_plugin", "MistralPlugin"),
             ("codellama_plugin", "CodeLlamaPlugin"),
@@ -193,6 +200,21 @@ class PluginManager:
     def _get_default_params(self, plugin_id: str) -> Dict[str, Any]:
         """Возвращает параметры по умолчанию для плагина."""
         defaults = {
+            # Специализированные плагины для основных провайдеров
+            "gemini": {
+                "model_name": "models/gemini-2.0-flash-exp"
+            },
+            "openai": {
+                "model_name": "gpt-4o"
+            },
+            "anthropic": {
+                "model_name": "claude-3-5-sonnet-20241022"
+            },
+            "universalllm": {
+                "provider_name": "google",  # По умолчанию Google
+                "model_name": "models/gemini-2.0-flash-exp"
+            },
+            # Старые плагины (для совместимости)
             "llama": {
                 "model_name": "llama-7b-chat",
                 "model_path": "meta-llama/Llama-2-7b-chat-hf"
@@ -482,4 +504,90 @@ class {plugin_name.title()}Plugin(BaseLLMPlugin):
             "loaded_plugins": list(self.plugin_instances.keys()),
             "builtin_plugins_dir": self.builtin_plugins_dir,
             "user_plugins_dir": self.user_plugins_dir
-        } 
+        }
+    
+    def create_plugin_by_provider(self, provider_name: str, model_name: str = None, 
+                                api_key: str = None, **kwargs) -> Optional[BaseLLMPlugin]:
+        """
+        Создает плагин по названию провайдера.
+        
+        Args:
+            provider_name: Название провайдера (google, openai, anthropic, etc.)
+            model_name: Название модели
+            api_key: API ключ
+            **kwargs: Дополнительные параметры
+            
+        Returns:
+            BaseLLMPlugin: Экземпляр плагина или None
+        """
+        # Маппинг провайдеров на плагины
+        provider_mapping = {
+            "google": "gemini",
+            "openai": "openai", 
+            "anthropic": "anthropic",
+            "mistral": "universalllm",
+            "deepseek": "universalllm",
+            "xai": "universalllm",
+            "ollama": "universalllm"
+        }
+        
+        plugin_id = provider_mapping.get(provider_name.lower())
+        if not plugin_id:
+            print(f"❌ Неподдерживаемый провайдер: {provider_name}")
+            return None
+        
+        # Для универсального плагина передаем название провайдера
+        if plugin_id == "universalllm":
+            kwargs["provider_name"] = provider_name
+        
+        if model_name:
+            kwargs["model_name"] = model_name
+        if api_key:
+            kwargs["api_key"] = api_key
+        
+        return self.create_plugin_instance(plugin_id, **kwargs)
+    
+    def get_providers_info(self) -> Dict[str, Dict]:
+        """
+        Возвращает информацию о поддерживаемых провайдерах.
+        
+        Returns:
+            Dict: Информация о провайдерах
+        """
+        from .base_llm_plugin import LLM_PROVIDERS
+        
+        providers_info = {}
+        for provider_id, config in LLM_PROVIDERS.items():
+            providers_info[provider_id] = {
+                "name": config.name,
+                "display_name": config.display_name,
+                "models": config.models,
+                "default_model": config.default_model,
+                "requires_api_key": config.requires_api_key,
+                "api_key_name": config.api_key_name,
+                "supports_vision": config.supports_vision
+            }
+        
+        return providers_info
+    
+    def get_recommended_plugin(self, provider_name: str) -> Optional[str]:
+        """
+        Возвращает рекомендуемый плагин для провайдера.
+        
+        Args:
+            provider_name: Название провайдера
+            
+        Returns:
+            str: ID рекомендуемого плагина или None
+        """
+        recommendations = {
+            "google": "gemini",     # Специализированный плагин для Google
+            "openai": "openai",     # Специализированный плагин для OpenAI  
+            "anthropic": "anthropic", # Специализированный плагин для Anthropic
+            "mistral": "universalllm",  # Универсальный плагин
+            "deepseek": "universalllm", # Универсальный плагин
+            "xai": "universalllm",      # Универсальный плагин
+            "ollama": "universalllm"    # Универсальный плагин
+        }
+        
+        return recommendations.get(provider_name.lower()) 
