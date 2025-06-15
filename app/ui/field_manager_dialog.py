@@ -430,6 +430,8 @@ class FieldManagerDialog(QDialog):
             layoutlm_labels = [lb.strip() for lb in self.layoutlm_labels_edit.toPlainText().split(',') if lb.strip()]
             ocr_patterns = [pt.strip() for pt in self.ocr_patterns_edit.toPlainText().split('\n') if pt.strip()]
             
+            print(f"💾 Автосохранение поля '{field_id}': {self.display_name_edit.text().strip()}")
+            
             # Обновляем поле
             field_manager.update_field(
                 field_id,
@@ -445,11 +447,25 @@ class FieldManagerDialog(QDialog):
                 ocr_patterns=ocr_patterns
             )
             
+            # НОВОЕ: Автоматически синхронизируем промпты при изменении
+            try:
+                field_manager.sync_prompts_for_all_models()
+                print(f"🔄 Промпты автоматически синхронизированы для поля '{field_id}'")
+            except Exception as sync_error:
+                print(f"⚠️ Ошибка автосинхронизации промптов: {sync_error}")
+            
             # Обновляем таблицу
             self._load_fields()
             
+            # Обновляем предварительный просмотр
+            self._update_preview()
+            
+            # Уведомляем об изменениях
+            self.fields_updated.emit()
+            
         except Exception as e:
             QMessageBox.warning(self, "Ошибка", f"Ошибка сохранения поля: {str(e)}")
+            print(f"❌ Ошибка сохранения поля '{field_id}': {e}")
     
     def _on_table_cell_changed(self, row, column):
         """Обработчик изменения ячейки таблицы."""
@@ -458,7 +474,23 @@ class FieldManagerDialog(QDialog):
             if item:
                 field_id = item.data(Qt.ItemDataRole.UserRole)
                 enabled = item.checkState() == Qt.CheckState.Checked
+                
+                print(f"🔄 Изменение состояния поля '{field_id}': {'включено' if enabled else 'отключено'}")
+                
                 field_manager.update_field(field_id, enabled=enabled)
+                
+                # Автоматически синхронизируем промпты при изменении включенности
+                try:
+                    field_manager.sync_prompts_for_all_models()
+                    print(f"🔄 Промпты автоматически синхронизированы после изменения включенности поля '{field_id}'")
+                except Exception as sync_error:
+                    print(f"⚠️ Ошибка автосинхронизации промптов: {sync_error}")
+                
+                # Обновляем предварительный просмотр
+                self._update_preview()
+                
+                # Уведомляем об изменениях
+                self.fields_updated.emit()
     
     def _add_field(self):
         """Добавляет новое поле."""
@@ -544,14 +576,25 @@ class FieldManagerDialog(QDialog):
     def _sync_prompts(self):
         """Синхронизирует промпты всех моделей."""
         try:
-            field_manager.sync_prompts_for_all_models()
-            QMessageBox.information(
-                self, "Синхронизация завершена", 
-                "Промпты всех моделей успешно синхронизированы с полями таблицы!"
-            )
-            self.fields_updated.emit()
+            success = field_manager.sync_prompts_for_all_models()
+            if success:
+                QMessageBox.information(
+                    self, "Синхронизация завершена", 
+                    "✅ Промпты всех моделей успешно синхронизированы с полями таблицы!\n\n"
+                    "Обновлены промпты для:\n"
+                    "• Gemini API\n"
+                    "• LLM плагинов (Llama, Mistral, CodeLlama)"
+                )
+                self.fields_updated.emit()
+                # Обновляем предварительный просмотр
+                self._update_preview()
+            else:
+                QMessageBox.warning(
+                    self, "Ошибка синхронизации", 
+                    "❌ Произошла ошибка при синхронизации промптов.\nПроверьте консоль для подробностей."
+                )
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка синхронизации", f"Ошибка: {str(e)}")
+            QMessageBox.critical(self, "Ошибка синхронизации", f"❌ Ошибка: {str(e)}")
     
     def _update_preview(self):
         """Обновляет предварительный просмотр промптов."""

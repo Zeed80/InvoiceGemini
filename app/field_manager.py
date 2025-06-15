@@ -36,8 +36,16 @@ class FieldManager:
         """Инициализация менеджера полей."""
         self.fields_config_path = os.path.join(config.APP_DATA_PATH, 'table_fields.json')
         self._fields: Dict[str, TableField] = {}
-        self._load_default_fields()
-        self._load_custom_fields()
+        
+        # НОВАЯ ЛОГИКА: Если есть сохраненные поля - загружаем только их
+        if os.path.exists(self.fields_config_path):
+            print("📂 Найден файл пользовательских настроек - загружаем только их")
+            self._load_custom_fields()
+        else:
+            print("📂 Файл пользовательских настроек не найден - создаем поля по умолчанию")
+            self._load_default_fields()
+            # Сразу сохраняем дефолты как пользовательские настройки
+            self.save_fields_config()
     
     def _load_default_fields(self):
         """Загружает конфигурацию полей по умолчанию."""
@@ -205,44 +213,71 @@ class FieldManager:
     
     def _load_custom_fields(self):
         """Загружает пользовательские настройки полей из файла."""
-        if os.path.exists(self.fields_config_path):
-            try:
-                with open(self.fields_config_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+        try:
+            print(f"📄 Загрузка пользовательских полей из: {self.fields_config_path}")
+            
+            with open(self.fields_config_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            print(f"📄 Найдено {len(data)} полей в файле конфигурации")
+            
+            # Очищаем текущие поля
+            self._fields.clear()
+                
+            for field_id, field_data in data.items():
+                print(f"  📥 Загрузка поля '{field_id}': {field_data.get('display_name', 'НЕТ НАЗВАНИЯ')}")
+                
+                # Убеждаемся, что все обязательные поля присутствуют
+                if 'position' not in field_data:
+                    field_data['position'] = field_data.get('priority', 1)
+                
+                # Создаем объект поля из сохраненных данных
+                self._fields[field_id] = TableField(**field_data)
+            
+            print(f"✅ Успешно загружены пользовательские поля")
                     
-                for field_id, field_data in data.items():
-                    if field_id in self._fields:
-                        # Обновляем существующие поля
-                        for key, value in field_data.items():
-                            if hasattr(self._fields[field_id], key):
-                                setattr(self._fields[field_id], key, value)
-                        
-                        # Если поле position отсутствует, используем текущую позицию
-                        if not hasattr(self._fields[field_id], 'position') or not field_data.get('position'):
-                            self._fields[field_id].position = self._fields[field_id].priority
-                    else:
-                        # Добавляем новые поля
-                        # Если position отсутствует, устанавливаем на основе priority
-                        if 'position' not in field_data:
-                            field_data['position'] = field_data.get('priority', 1)
-                        self._fields[field_id] = TableField(**field_data)
-                        
-            except Exception as e:
-                print(f"Ошибка загрузки пользовательских полей: {e}")
+        except Exception as e:
+            print(f"❌ Ошибка загрузки пользовательских полей: {e}")
+            import traceback
+            traceback.print_exc()
+            # Если ошибка загрузки - создаем поля по умолчанию
+            print("🔄 Создание полей по умолчанию из-за ошибки")
+            self._load_default_fields()
+        
+        # Отладочная информация
+        print(f"📊 Итого загружено полей: {len(self._fields)}")
+        print(f"📊 Включенных полей: {len([f for f in self._fields.values() if f.enabled])}")
+        
+        # Проверяем несколько ключевых полей
+        test_fields = ['invoice_number', 'total', 'sender']
+        for test_field in test_fields:
+            if test_field in self._fields:
+                field = self._fields[test_field]
+                print(f"📊 Поле '{test_field}': '{field.display_name}' (позиция: {field.position}, включено: {field.enabled})")
+            else:
+                print(f"⚠️ Поле '{test_field}' НЕ НАЙДЕНО")
     
     def save_fields_config(self):
         """Сохраняет текущую конфигурацию полей в файл."""
         try:
+            print(f"💾 СОХРАНЕНИЕ КОНФИГУРАЦИИ ПОЛЕЙ...")
+            
             data = {}
             for field_id, field in self._fields.items():
                 data[field_id] = asdict(field)
+                print(f"   💾 {field_id}: '{field.display_name}' (включено: {field.enabled})")
             
             os.makedirs(os.path.dirname(self.fields_config_path), exist_ok=True)
             with open(self.fields_config_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            
+            print(f"✅ КОНФИГУРАЦИЯ СОХРАНЕНА: {self.fields_config_path}")
+            print(f"   Всего полей: {len(data)}")
                 
         except Exception as e:
-            print(f"Ошибка сохранения конфигурации полей: {e}")
+            print(f"❌ ОШИБКА СОХРАНЕНИЯ КОНФИГУРАЦИИ ПОЛЕЙ: {e}")
+            import traceback
+            traceback.print_exc()
     
     def get_enabled_fields(self) -> List[TableField]:
         """Возвращает список включенных полей, отсортированных по позиции."""
@@ -403,16 +438,25 @@ class FieldManager:
     
     def sync_prompts_for_all_models(self):
         """Синхронизирует промпты для всех моделей с текущими полями."""
-        # Обновляем промпт для Gemini
-        gemini_prompt = self.get_gemini_prompt()
-        settings_manager.set_string('Prompts', 'gemini_extract_prompt', gemini_prompt)
-        
-        # Обновляем промпты для LLM плагинов
-        for plugin_name in ['llama', 'mistral', 'codellama']:
-            plugin_prompt = self._generate_llm_plugin_prompt()
-            settings_manager.set_string('Prompts', f'{plugin_name}_prompt', plugin_prompt)
-        
-        print("Промпты всех моделей синхронизированы с полями таблицы")
+        try:
+            # Обновляем промпт для Gemini
+            gemini_prompt = self.get_gemini_prompt()
+            settings_manager.set_value('Prompts', 'gemini_extract_prompt', gemini_prompt)
+            
+            # Обновляем промпты для LLM плагинов
+            for plugin_name in ['llama', 'mistral', 'codellama']:
+                plugin_prompt = self._generate_llm_plugin_prompt()
+                settings_manager.set_value('Prompts', f'{plugin_name}_prompt', plugin_prompt)
+            
+            # Сохраняем настройки
+            settings_manager.save_settings()
+            
+            print("✅ Промпты всех моделей синхронизированы с полями таблицы")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Ошибка синхронизации промптов: {e}")
+            return False
     
     def _generate_llm_plugin_prompt(self) -> str:
         """Генерирует промпт для LLM плагинов."""

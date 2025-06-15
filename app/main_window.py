@@ -25,13 +25,14 @@ from .threads import ProcessingThread
 from .settings_manager import settings_manager
 from .processing_engine import ModelManager
 from .training_dialog import TrainingDialog
-from .table_fields_dialog import TableFieldsDialog
+
 
 # NEW: Import LLM Plugin Manager
 from .plugins.plugin_manager import PluginManager
 from .ui.preview_dialog import PreviewDialog
 from .ui.export_template_designer import ExportTemplateDesigner
 from .ui.field_manager_dialog import FieldManagerDialog
+from .field_manager import field_manager
 from .ui.llm_providers_dialog import LLMProvidersDialog
 
 
@@ -307,9 +308,10 @@ class MainWindow(QMainWindow):
         table_header_label = QLabel("Извлечённые данные:")
         table_header_layout.addWidget(table_header_label)
         
-        # Кнопка редактирования полей
-        self.edit_fields_button = QPushButton("Редактировать поля")
-        self.edit_fields_button.clicked.connect(self.show_table_fields_dialog)
+        # Кнопка управления полями (обновлена)
+        self.edit_fields_button = QPushButton("🔧 Управление полями")
+        self.edit_fields_button.clicked.connect(self.show_field_manager_dialog)
+        self.edit_fields_button.setToolTip("Управление полями таблицы и синхронизация промптов")
         table_header_layout.addWidget(self.edit_fields_button)
         
         results_layout.addLayout(table_header_layout)
@@ -1400,9 +1402,6 @@ class MainWindow(QMainWindow):
     def setup_results_table(self):
         """Настраивает таблицу результатов на основе полей из FieldManager."""
         try:
-            # Импортируем field_manager
-            from .field_manager import field_manager
-            
             # Получаем колонки из FieldManager
             columns = field_manager.get_table_columns()
             
@@ -1490,18 +1489,8 @@ class MainWindow(QMainWindow):
         
         print("Базовая таблица создана с 5 колонками")
 
-    def show_table_fields_dialog(self):
-        """Открывает диалог настройки полей таблицы."""
-        dialog = TableFieldsDialog(self)
-        dialog.fieldsChanged.connect(self.on_table_fields_changed)
-        dialog.exec()
-
-    def on_table_fields_changed(self, fields):
-        """Обработчик изменения выбранных полей таблицы."""
-        print(f"Поля таблицы изменены: {fields}")
-        
-        # Заново создаем таблицу с выбранными полями
-        self.setup_results_table()
+    # Метод show_table_fields_dialog удален - заменен на show_field_manager_dialog
+    # Метод on_table_fields_changed удален - заменен на on_fields_updated
     
     # NEW: LLM Plugin Integration Methods
     

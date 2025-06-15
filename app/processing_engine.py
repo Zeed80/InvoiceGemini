@@ -1594,7 +1594,8 @@ class InvoiceFormatter:
     @staticmethod
     def format_description(items):
         """
-        Форматирует список товаров в одну строку описания.
+        Форматирует список товаров в многострочное описание.
+        Каждый товар с новой строки и заканчивается точкой с запятой.
         """
         if not items or not isinstance(items, list):
             return "N/A"
@@ -1616,11 +1617,19 @@ class InvoiceFormatter:
                 elif price: # Если нет суммы, но есть цена за единицу
                     price_formatted = InvoiceFormatter.format_number_with_comma(price)
                     item_str += f", {price_formatted} руб/шт"
+                
+                # Добавляем точку с запятой в конце каждого товара
+                item_str += ";"
                 descriptions.append(item_str)
             elif isinstance(item, str):
-                 descriptions.append(item)
+                # Для строковых элементов тоже добавляем точку с запятой
+                item_str = item.strip()
+                if not item_str.endswith(';'):
+                    item_str += ";"
+                descriptions.append(item_str)
                  
-        return "; ".join(descriptions) if descriptions else "N/A"
+        # Объединяем товары через перенос строки вместо "; "
+        return "\n".join(descriptions) if descriptions else "N/A"
     
     @staticmethod
     def calculate_vat_rate(total_amount, amount_without_vat):
