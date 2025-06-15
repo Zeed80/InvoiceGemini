@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QSpacerItem, QSizePolicy, QFrame, QMessageBox
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QUrl, QTimer, QThread
-from PyQt6.QtGui import QPixmap, QImage, QAction, QIcon
+from PyQt6.QtGui import QPixmap, QImage, QAction, QIcon, QFont
 from PIL import Image, ImageQt
 import pdf2image
 import tempfile
@@ -1403,29 +1403,101 @@ class MainWindow(QMainWindow):
         Отображает диалог с полным запросом для выбранной модели.
         
         Args:
-            model_type (str): Тип модели ('layoutlm', 'donut' или 'gemini')
+            model_type (str): Тип модели ('layoutlm', 'donut', 'gemini', 'cloud_llm', 'local_llm')
         """
-        # Получаем экземпляр процессора для указанного типа модели
-        processor = self.model_manager.get_model(model_type)
+        full_prompt = ""
+        model_display_name = ""
         
-        # Получаем полный запрос к модели
-        full_prompt = processor.get_full_prompt()
+        try:
+            if model_type in ['layoutlm', 'donut', 'gemini']:
+                # Старые модели через model_manager
+                processor = self.model_manager.get_model(model_type)
+                if processor:
+                    full_prompt = processor.get_full_prompt()
+                    model_display_name = model_type.upper()
+                else:
+                    utils.show_error_message(self, "Ошибка", f"Процессор {model_type} не найден")
+                    return
+                    
+            elif model_type == 'cloud_llm':
+                # Облачные LLM модели
+                provider_data = self.cloud_provider_selector.currentData()
+                model_data = self.cloud_model_selector.currentData()
+                
+                if not provider_data or not model_data:
+                    utils.show_error_message(self, "Ошибка", "Выберите провайдера и модель")
+                    return
+                
+                provider_name = provider_data.get('provider')
+                model_name = model_data.get('model')
+                model_display_name = f"{provider_name.upper()} - {model_name}"
+                
+                # Получаем промпт из настроек или создаем базовый
+                prompt_key = f"cloud_llm_{provider_name}_prompt"
+                full_prompt = settings_manager.get_setting(prompt_key, "")
+                
+                if not full_prompt:
+                    # Создаем базовый промпт для облачной модели
+                    full_prompt = self._create_default_llm_prompt(provider_name)
+                    
+            elif model_type == 'local_llm':
+                # Локальные LLM модели
+                provider_data = self.local_provider_selector.currentData()
+                model_data = self.local_model_selector.currentData()
+                
+                if not provider_data or not model_data:
+                    utils.show_error_message(self, "Ошибка", "Выберите провайдера и модель")
+                    return
+                
+                provider_name = provider_data.get('provider')
+                model_name = model_data.get('model')
+                model_display_name = f"{provider_name.upper()} - {model_name}"
+                
+                # Получаем промпт из настроек или создаем базовый
+                prompt_key = f"local_llm_{provider_name}_prompt"
+                full_prompt = settings_manager.get_setting(prompt_key, "")
+                
+                if not full_prompt:
+                    # Создаем базовый промпт для локальной модели
+                    full_prompt = self._create_default_llm_prompt(provider_name)
+                    
+            else:
+                utils.show_error_message(self, "Ошибка", f"Неподдерживаемый тип модели: {model_type}")
+                return
+                
+        except Exception as e:
+            utils.show_error_message(self, "Ошибка", f"Ошибка получения промпта: {str(e)}")
+            return
+        
+        if not full_prompt:
+            utils.show_error_message(self, "Ошибка", "Не удалось получить промпт для модели")
+            return
         
         # Создаем диалог с текстом запроса
         prompt_dialog = QDialog(self)
-        prompt_dialog.setWindowTitle(f"Полный запрос к модели {model_type.upper()}")
-        prompt_dialog.resize(700, 600)
+        prompt_dialog.setWindowTitle(f"Промпт для {model_display_name}")
+        prompt_dialog.resize(800, 700)
         
         layout = QVBoxLayout(prompt_dialog)
+        
+        # Информация о модели
+        info_label = QLabel(f"<b>Модель:</b> {model_display_name}")
+        info_label.setStyleSheet("padding: 5px; background-color: #f0f0f0; border-radius: 3px;")
+        layout.addWidget(info_label)
         
         # Добавляем текстовое поле с запросом (с возможностью редактирования)
         text_edit = QTextEdit()
         text_edit.setPlainText(full_prompt)
         text_edit.setReadOnly(False)  # Разрешаем редактирование
+        text_edit.setFont(QFont("Consolas", 10))  # Моноширинный шрифт для лучшей читаемости
         layout.addWidget(text_edit)
         
         # Кнопки
         button_layout = QHBoxLayout()
+        
+        # Кнопка сброса к умолчанию
+        reset_button = QPushButton("Сбросить к умолчанию")
+        reset_button.clicked.connect(lambda: self._reset_prompt_to_default(model_type, text_edit))
         
         # Кнопка сохранения промпта
         save_button = QPushButton("Сохранить")
@@ -1435,6 +1507,7 @@ class MainWindow(QMainWindow):
         close_button = QPushButton("Закрыть")
         close_button.clicked.connect(prompt_dialog.accept)
         
+        button_layout.addWidget(reset_button)
         button_layout.addStretch()
         button_layout.addWidget(save_button)
         button_layout.addWidget(close_button)
@@ -1442,34 +1515,228 @@ class MainWindow(QMainWindow):
         
         # Отображаем диалог
         prompt_dialog.exec()
+    
+    def _create_default_llm_prompt(self, provider_name: str) -> str:
+        """
+        Создает базовый промпт для LLM провайдера.
+        
+        Args:
+            provider_name: Имя провайдера (openai, anthropic, google, etc.)
+            
+        Returns:
+            str: Базовый промпт для извлечения данных из инвойсов
+        """
+        # Получаем поля таблицы для включения в промпт
+        table_fields = []
+        try:
+            from .field_manager import FieldManager
+            field_manager = FieldManager()
+            enabled_fields = field_manager.get_enabled_fields()
+            table_fields = [f"- {field.display_name}: {field.description}" for field in enabled_fields]
+        except:
+            # Базовые поля если не удалось получить из настроек
+            table_fields = [
+                "- Номер счета: Номер документа/инвойса",
+                "- Дата: Дата выставления счета",
+                "- Поставщик: Название компании-поставщика",
+                "- Сумма: Общая сумма к оплате",
+                "- НДС: Сумма налога на добавленную стоимость",
+                "- Валюта: Валюта документа"
+            ]
+        
+        # Базовый промпт с учетом особенностей провайдера
+        if provider_name == "anthropic":
+            # Claude предпочитает более структурированные инструкции
+            prompt = """Ты эксперт по анализу финансовых документов. Проанализируй предоставленное изображение счета-фактуры или инвойса и извлеки из него структурированные данные.
+
+<instructions>
+Извлеки следующие поля из документа:
+
+{fields}
+
+Требования к ответу:
+1. Верни результат ТОЛЬКО в формате JSON
+2. Используй точные названия полей как указано выше
+3. Если поле не найдено, используй значение "N/A"
+4. Все суммы указывай числами без символов валют
+5. Даты в формате DD.MM.YYYY
+6. Будь точным и внимательным к деталям
+</instructions>
+
+Проанализируй документ и верни JSON с извлеченными данными:"""
+            
+        elif provider_name == "google":
+            # Gemini хорошо работает с четкими инструкциями
+            prompt = """Действуй как эксперт по распознаванию счетов-фактур и финансовых документов. 
+
+Твоя задача: проанализировать изображение документа и извлечь из него ключевые данные в формате JSON.
+
+Поля для извлечения:
+{fields}
+
+Правила:
+• Возвращай ТОЛЬКО валидный JSON без дополнительного текста
+• Используй точные названия полей как указано
+• Для отсутствующих полей используй "N/A"
+• Числовые значения без символов валют
+• Даты в формате DD.MM.YYYY
+• Будь максимально точным
+
+Проанализируй документ:"""
+            
+        elif provider_name in ["openai", "deepseek", "xai"]:
+            # OpenAI-совместимые модели
+            prompt = """You are an expert in invoice and financial document analysis. Analyze the provided document image and extract structured data in JSON format.
+
+Extract the following fields:
+{fields}
+
+Requirements:
+- Return ONLY valid JSON format
+- Use exact field names as specified
+- Use "N/A" for missing fields  
+- Numeric values without currency symbols
+- Dates in DD.MM.YYYY format
+- Be precise and thorough
+
+Analyze the document and return JSON:"""
+            
+        elif provider_name == "mistral":
+            # Mistral предпочитает краткие четкие инструкции
+            prompt = """Analyse ce document financier et extrais les données en JSON.
+
+Champs à extraire:
+{fields}
+
+Format: JSON uniquement, "N/A" si absent, dates DD.MM.YYYY
+
+Analyse:"""
+            
+        elif provider_name == "ollama":
+            # Для локальных моделей более простые инструкции
+            prompt = """Extract data from this invoice/document in JSON format.
+
+Fields to extract:
+{fields}
+
+Rules:
+- JSON format only
+- Use "N/A" if field not found
+- Dates as DD.MM.YYYY
+- Numbers without currency symbols
+
+Extract the data:"""
+            
+        else:
+            # Универсальный промпт для других провайдеров
+            prompt = """Analyze this financial document and extract structured data in JSON format.
+
+Extract these fields:
+{fields}
+
+Return only valid JSON. Use "N/A" for missing fields. Dates in DD.MM.YYYY format.
+
+Analyze:"""
+        
+        return prompt.format(fields="\n".join(table_fields))
+    
+    def _reset_prompt_to_default(self, model_type: str, text_edit):
+        """
+        Сбрасывает промпт к значению по умолчанию.
+        
+        Args:
+            model_type: Тип модели
+            text_edit: Виджет текстового редактора
+        """
+        try:
+            if model_type in ['layoutlm', 'donut', 'gemini']:
+                # Для старых моделей получаем из процессора
+                processor = self.model_manager.get_model(model_type)
+                if processor:
+                    default_prompt = processor.get_full_prompt()
+                    text_edit.setPlainText(default_prompt)
+                    
+            elif model_type == 'cloud_llm':
+                provider_data = self.cloud_provider_selector.currentData()
+                if provider_data:
+                    provider_name = provider_data.get('provider')
+                    default_prompt = self._create_default_llm_prompt(provider_name)
+                    text_edit.setPlainText(default_prompt)
+                    
+            elif model_type == 'local_llm':
+                provider_data = self.local_provider_selector.currentData()
+                if provider_data:
+                    provider_name = provider_data.get('provider')
+                    default_prompt = self._create_default_llm_prompt(provider_name)
+                    text_edit.setPlainText(default_prompt)
+                    
+        except Exception as e:
+            utils.show_error_message(self, "Ошибка", f"Не удалось сбросить промпт: {str(e)}")
         
     def save_prompt(self, model_type, prompt_text):
         """
         Сохраняет промпт для указанной модели.
         
         Args:
-            model_type (str): Тип модели ('layoutlm', 'donut' или 'gemini')
+            model_type (str): Тип модели ('layoutlm', 'donut', 'gemini', 'cloud_llm', 'local_llm')
             prompt_text (str): Текст промпта
         """
         # Проверяем, что текст не пустой
         if not prompt_text.strip():
             utils.show_warning_message(self, "Предупреждение", "Промпт не может быть пустым")
             return
-            
-        # Формируем ключ для настроек
-        prompt_key = f"{model_type}_prompt"
         
-        # Сохраняем промпт в настройках
-        settings_manager.set_value('Prompts', prompt_key, prompt_text)
-        settings_manager.save_settings()
-        
-        # Обновляем промпт в процессоре
-        processor = self.model_manager.get_model(model_type)
-        if processor:
-            processor.set_prompt(prompt_text)
+        try:
+            if model_type in ['layoutlm', 'donut', 'gemini']:
+                # Старые модели - сохраняем как раньше
+                prompt_key = f"{model_type}_prompt"
+                settings_manager.set_setting(prompt_key, prompt_text)
+                
+                # Обновляем промпт в процессоре
+                processor = self.model_manager.get_model(model_type)
+                if processor:
+                    processor.set_prompt(prompt_text)
+                    
+                model_display_name = model_type.upper()
+                
+            elif model_type == 'cloud_llm':
+                # Облачные LLM модели
+                provider_data = self.cloud_provider_selector.currentData()
+                if not provider_data:
+                    utils.show_error_message(self, "Ошибка", "Провайдер не выбран")
+                    return
+                
+                provider_name = provider_data.get('provider')
+                prompt_key = f"cloud_llm_{provider_name}_prompt"
+                settings_manager.set_setting(prompt_key, prompt_text)
+                
+                model_display_name = f"Cloud LLM ({provider_name.upper()})"
+                
+            elif model_type == 'local_llm':
+                # Локальные LLM модели
+                provider_data = self.local_provider_selector.currentData()
+                if not provider_data:
+                    utils.show_error_message(self, "Ошибка", "Провайдер не выбран")
+                    return
+                
+                provider_name = provider_data.get('provider')
+                prompt_key = f"local_llm_{provider_name}_prompt"
+                settings_manager.set_setting(prompt_key, prompt_text)
+                
+                model_display_name = f"Local LLM ({provider_name.upper()})"
+                
+            else:
+                utils.show_error_message(self, "Ошибка", f"Неподдерживаемый тип модели: {model_type}")
+                return
             
-        # Выводим сообщение об успешном сохранении
-        utils.show_info_message(self, "Сохранение промпта", f"Промпт для модели {model_type.upper()} успешно сохранен")
+            # Сохраняем настройки
+            settings_manager.save_settings()
+            
+            # Выводим сообщение об успешном сохранении
+            utils.show_info_message(self, "Сохранение промпта", f"Промпт для {model_display_name} успешно сохранен")
+            
+        except Exception as e:
+            utils.show_error_message(self, "Ошибка", f"Ошибка сохранения промпта: {str(e)}")
     
     # NEW: Метод для обновления видимости селектора под-модели Gemini
     def update_gemini_selector_visibility(self):
@@ -1643,31 +1910,36 @@ class MainWindow(QMainWindow):
         """Создает расширенное сопоставление полей с алиасами для гибкого поиска"""
         field_aliases = {}
         
-        # Определяем алиасы для каждого типа поля
+        # Определяем алиасы для каждого типа поля - ЗНАЧИТЕЛЬНО РАСШИРЕННЫЙ СПИСОК
         field_patterns = {
             # Номер счета
-            "№ счета": ["№ Счета", "номер счета", "invoice_number", "счет №", "invoice number", "№счета"],
-            "№ Invoice": ["№ Счета", "номер счета", "invoice_number", "счет №", "invoice number", "№счета"],
+            "№ счета": ["№ Invoice", "номер счета", "invoice_number", "счет №", "invoice number", "№счета", "invoice №", "invoice_id", "invoice no"],
+            "№ Invoice": ["№ счета", "номер счета", "invoice_number", "счет №", "invoice number", "№счета", "invoice №", "invoice_id", "invoice no"],
             
             # НДС
-            "% НДС": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%"],
-            "VAT %": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%"],
+            "% НДС": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка"],
+            "VAT %": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка"],
+            "НДС %": ["VAT %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка"],
             
             # Поставщик
-            "Поставщик": ["Sender", "поставщик", "company", "supplier", "vendor", "организация"],
-            "Sender": ["Поставщик", "поставщик", "company", "supplier", "vendor", "организация"],
+            "Поставщик": ["Sender", "поставщик", "company", "supplier", "vendor", "организация", "название компании"],
+            "Sender": ["Поставщик", "поставщик", "company", "supplier", "vendor", "организация", "название компании"],
             
-            # Сумма
-            "Сумма с НДС": ["Total", "total", "итого", "к оплате", "сумма с ндс"],
-            "Total": ["Сумма с НДС", "total", "итого", "к оплате", "сумма с ндс"],
+            # Сумма с НДС (Total)
+            "Сумма с НДС": ["Total", "total", "итого", "к оплате", "сумма с ндс", "total_amount", "amount", "всего", "общая сумма"],
+            "Total": ["Сумма с НДС", "total", "итого", "к оплате", "сумма с ндс", "total_amount", "amount", "всего", "общая сумма"],
             
             # Сумма без НДС
-            "Сумма без НДС": ["Amount (0% VAT)", "amount_no_vat", "net_amount", "сумма без ндс"],
-            "Amount (0% VAT)": ["Сумма без НДС", "amount_no_vat", "net_amount", "сумма без ндс"],
+            "Сумма без НДС": ["Amount (0% VAT)", "amount_no_vat", "net_amount", "сумма без ндс", "amount without vat", "сумма без налога"],
+            "Amount (0% VAT)": ["Сумма без НДС", "amount_no_vat", "net_amount", "сумма без ндс", "amount without vat", "сумма без налога"],
             
-            # Дата
-            "Дата счета": ["Invoice Date", "invoice_date", "date", "дата"],
-            "Invoice Date": ["Дата счета", "invoice_date", "date", "дата"],
+            # Сумма НДС
+            "Сумма НДС": ["VAT Amount", "vat_amount", "tax amount", "сумма ндс", "ндс", "налог"],
+            "VAT Amount": ["Сумма НДС", "vat_amount", "tax amount", "сумма ндс", "ндс", "налог"],
+            
+            # Дата счета
+            "Дата счета": ["Invoice Date", "invoice_date", "date", "дата", "invoice date"],
+            "Invoice Date": ["Дата счета", "invoice_date", "date", "дата", "invoice date"],
             
             # Валюта
             "Валюта": ["Currency", "currency"],
@@ -1678,12 +1950,52 @@ class MainWindow(QMainWindow):
             "Category": ["Категория", "category"],
             
             # Описание/товары
-            "Товары": ["Description", "description", "items", "услуги"],
-            "Description": ["Товары", "description", "items", "услуги"],
+            "Товары": ["Description", "description", "items", "услуги", "продукция", "наименование"],
+            "Description": ["Товары", "description", "items", "услуги", "продукция", "наименование"],
+            
+            # ИНН
+            "ИНН": ["INN", "inn", "tax_id", "supplier_inn", "инн поставщика"],
+            "INN": ["ИНН", "inn", "tax_id", "supplier_inn", "инн поставщика"],
+            "ИНН Поставщика": ["INN Поставщика", "инн поставщика", "inn", "tax_id", "supplier_inn"],
+            "INN Поставщика": ["ИНН Поставщика", "инн поставщика", "inn", "tax_id", "supplier_inn"],
+            
+            # КПП
+            "КПП": ["KPP", "kpp", "supplier_kpp", "кпп поставщика"],
+            "KPP": ["КПП", "kpp", "supplier_kpp", "кпп поставщика"],
+            "КПП Поставщика": ["KPP Поставщика", "кпп поставщика", "kpp", "supplier_kpp"],
+            "KPP Поставщика": ["КПП Поставщика", "кпп поставщика", "kpp", "supplier_kpp"],
+            
+            # Адрес поставщика
+            "Адрес Поставщика": ["адрес поставщика", "address", "supplier_address", "адрес"],
+            
+            # Покупатель
+            "Покупатель": ["buyer", "customer", "заказчик"],
+            
+            # ИНН покупателя
+            "ИНН Покупателя": ["инн покупателя", "buyer_inn", "customer_inn"],
+            
+            # КПП покупателя  
+            "КПП Покупателя": ["кпп покупателя", "buyer_kpp", "customer_kpp"],
+            
+            # Адрес покупателя
+            "Адрес Покупателя": ["адрес покупателя", "buyer_address", "customer_address"],
+            
+            # Дата оплаты
+            "Дата Оплаты": ["дата оплаты", "payment_date", "due_date", "срок оплаты"],
+            
+            # Банковские реквизиты
+            "Банк": ["bank", "банк"],
+            "БИК": ["bik", "бик"],
+            "Р/С": ["р/с", "расчетный счет", "account"],
+            "К/С": ["к/с", "корреспондентский счет", "correspondent_account"],
             
             # Примечание
-            "Примечание": ["Note", "note", "Комментарии", "комментарии", "comments"],
-            "Note": ["Примечание", "note", "Комментарии", "комментарии", "comments"]
+            "Примечание": ["Note", "note", "Комментарии", "комментарии", "comments", "комментарий", "comment", "замечания"],
+            "Note": ["Примечание", "note", "Комментарии", "комментарии", "comments", "комментарий", "comment", "замечания"],
+            "Комментарии": ["Note", "note", "Примечание", "комментарии", "comments", "комментарий", "comment", "замечания"],
+            
+            # Файл (для пакетной обработки)
+            "Файл": ["file", "filename", "source_file"]
         }
         
         # Создаем обратное сопоставление: алиас -> column_index
@@ -2244,6 +2556,193 @@ class MainWindow(QMainWindow):
             f"Не удалось загрузить облачный LLM плагин:\n{error_message}"
         )
     
+    def _map_llm_plugin_fields(self, result):
+        """
+        Универсальный маппинг полей для всех LLM плагинов.
+        Преобразует названия полей в стандартные названия колонок таблицы.
+        
+        Args:
+            result (dict): Результат от LLM плагина
+            
+        Returns:
+            dict: Результат с нормализованными названиями полей
+        """
+        if not result:
+            return result
+        
+        # Маппинг различных вариантов названий полей в стандартные названия колонок
+        field_mapping = {
+            # Поставщик
+            'поставщик': 'Поставщик',
+            'sender': 'Поставщик',
+            'supplier': 'Поставщик',  
+            'vendor': 'Поставщик',
+            'company': 'Поставщик',
+            'название компании': 'Поставщик',
+            'организация': 'Поставщик',
+            
+            # Номер счета
+            '№ счета': '№ Invoice',
+            'номер счета': '№ Invoice', 
+            'invoice_number': '№ Invoice',
+            'invoice number': '№ Invoice',
+            'счет №': '№ Invoice',
+            'invoice_id': '№ Invoice',
+            'invoice no': '№ Invoice',
+            '№счета': '№ Invoice',
+            'invoice №': '№ Invoice',
+            
+            # Дата счета
+            'дата счета': 'Invoice Date',
+            'invoice_date': 'Invoice Date',
+            'invoice date': 'Invoice Date',
+            'дата': 'Invoice Date',
+            'date': 'Invoice Date',
+            
+            # Категория
+            'категория': 'Category',
+            'category': 'Category',
+            
+            # Товары/Описание
+            'товары': 'Description',
+            'description': 'Description',
+            'услуги': 'Description',
+            'items': 'Description',
+            'продукция': 'Description',
+            'наименование': 'Description',
+            
+            # Сумма без НДС
+            'сумма без ндс': 'Amount (0% VAT)',
+            'amount_no_vat': 'Amount (0% VAT)',
+            'amount (0% vat)': 'Amount (0% VAT)',
+            'net_amount': 'Amount (0% VAT)',
+            'amount without vat': 'Amount (0% VAT)',
+            'сумма без налога': 'Amount (0% VAT)',
+            
+            # НДС %
+            '% ндс': 'VAT %',
+            'ндс %': 'VAT %',
+            'vat %': 'VAT %',
+            'tax_rate': 'VAT %',
+            'vat_rate': 'VAT %',
+            'ставка ндс': 'VAT %',
+            'налоговая ставка': 'VAT %',
+            
+            # Сумма НДС
+            'сумма ндс': 'VAT Amount',
+            'ндс': 'VAT Amount',
+            'vat amount': 'VAT Amount',
+            'vat_amount': 'VAT Amount',
+            'tax amount': 'VAT Amount',
+            'налог': 'VAT Amount',
+            
+            # Сумма с НДС (Итого)
+            'сумма с ндс': 'Total',
+            'total': 'Total',
+            'итого': 'Total',
+            'total_amount': 'Total',
+            'amount': 'Total',
+            'к оплате': 'Total',
+            'всего': 'Total',
+            'общая сумма': 'Total',
+            
+            # Валюта
+            'валюта': 'Currency',
+            'currency': 'Currency',
+            
+            # ИНН
+            'инн поставщика': 'INN Поставщика',
+            'инн': 'INN Поставщика',
+            'inn': 'INN Поставщика',
+            'tax_id': 'INN Поставщика',
+            'supplier_inn': 'INN Поставщика',
+            
+            # КПП  
+            'кпп поставщика': 'KPP Поставщика',
+            'кпп': 'KPP Поставщика',
+            'kpp': 'KPP Поставщика',
+            'supplier_kpp': 'KPP Поставщика',
+            
+            # Адрес
+            'адрес поставщика': 'Адрес Поставщика',
+            'адрес': 'Адрес Поставщика',
+            'address': 'Адрес Поставщика',
+            'supplier_address': 'Адрес Поставщика',
+            
+            # Покупатель
+            'покупатель': 'Покупатель',
+            'buyer': 'Покупатель',
+            'customer': 'Покупатель',
+            'заказчик': 'Покупатель',
+            
+            # ИНН покупателя
+            'инн покупателя': 'INN Покупателя',
+            'buyer_inn': 'INN Покупателя',
+            'customer_inn': 'INN Покупателя',
+            
+            # КПП покупателя
+            'кпп покупателя': 'KPP Покупателя', 
+            'buyer_kpp': 'KPP Покупателя',
+            'customer_kpp': 'KPP Покупателя',
+            
+            # Адрес покупателя
+            'адрес покупателя': 'Адрес Покупателя',
+            'buyer_address': 'Адрес Покупателя',
+            'customer_address': 'Адрес Покупателя',
+            
+            # Дата оплаты
+            'дата оплаты': 'Дата Оплаты',
+            'payment_date': 'Дата Оплаты',
+            'due_date': 'Дата Оплаты',
+            'срок оплаты': 'Дата Оплаты',
+            
+            # Банковские реквизиты
+            'банк': 'Банк',
+            'bank': 'Банк',
+            'бик': 'БИК',
+            'bik': 'БИК',
+            'р/с': 'Р/С',
+            'расчетный счет': 'Р/С',
+            'account': 'Р/С',
+            'к/с': 'К/С',
+            'корреспондентский счет': 'К/С',
+            'correspondent_account': 'К/С',
+            
+            # Комментарии
+            'комментарии': 'Note',
+            'комментарий': 'Note',
+            'примечание': 'Note',
+            'note': 'Note',
+            'notes': 'Note',
+            'comment': 'Note',
+            'comments': 'Note',
+            'замечания': 'Note',
+        }
+        
+        mapped_result = {}
+        
+        for field_name, value in result.items():
+            # Пропускаем пустые значения
+            if value is None or value == "":
+                continue
+            
+            # Пропускаем служебные поля
+            if field_name.startswith('_') or field_name in ['source_image', 'processed_at', 'raw_response']:
+                mapped_result[field_name] = value
+                continue
+            
+            # Ищем соответствие в маппинге (регистронезависимо)
+            field_name_lower = field_name.lower().strip()
+            mapped_field = field_mapping.get(field_name_lower, field_name)
+            
+            # Добавляем в результат
+            mapped_result[mapped_field] = value
+        
+        print(f"ОТЛАДКА: LLM маппинг полей завершен. Исходные поля: {list(result.keys())}")
+        print(f"ОТЛАДКА: Результирующие поля: {list(mapped_result.keys())}")
+        
+        return mapped_result
+
     def process_with_llm_plugin(self, input_path, is_folder):
         """Обработка файла/папки с использованием LLM плагина"""
         try:
@@ -2259,6 +2758,15 @@ class MainWindow(QMainWindow):
                 # Для одного файла
                 result = self.current_llm_plugin.extract_invoice_data(input_path)
                 if result:
+                    # Проверяем, не содержит ли результат ошибку
+                    if "error" in result:
+                        error_msg = result.get("error", "Неизвестная ошибка")
+                        self.show_processing_error(f"Ошибка LLM плагина: {error_msg}")
+                        return
+                    
+                    # Применяем маппинг полей для LLM плагинов
+                    result = self._map_llm_plugin_fields(result)
+                    
                     # Создаем фиктивный объект processing_thread для совместимости
                     class FakeThread:
                         def __init__(self, result):
@@ -2299,9 +2807,21 @@ class MainWindow(QMainWindow):
                     result = self.current_llm_plugin.process_image(file_path)
                     
                     if result:
-                        # Добавляем имя файла к результату
-                        result['Файл'] = os.path.basename(file_path)
-                        self.append_result_to_table(result)
+                        # Проверяем, не содержит ли результат ошибку
+                        if "error" in result:
+                            error_msg = result.get("error", "Неизвестная ошибка")
+                            error_result = {
+                                'Файл': os.path.basename(file_path),
+                                'Ошибка': f'LLM ошибка: {error_msg}'
+                            }
+                            self.append_result_to_table(error_result)
+                        else:
+                            # Применяем маппинг полей для LLM плагинов
+                            result = self._map_llm_plugin_fields(result)
+                            
+                            # Добавляем имя файла к результату
+                            result['Файл'] = os.path.basename(file_path)
+                            self.append_result_to_table(result)
                     else:
                         # Добавляем запись о пустом результате
                         error_result = {

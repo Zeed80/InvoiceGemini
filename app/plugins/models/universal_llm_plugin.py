@@ -546,6 +546,46 @@ class UniversalLLMPlugin(BaseLLMPlugin):
                 print(f"❌ Ошибка удаления временного файла {temp_file}: {e}")
         self.temp_files.clear()
     
+    def get_saved_prompt(self) -> str:
+        """
+        Получает сохраненный промпт для текущего провайдера.
+        
+        Returns:
+            str: Сохраненный промпт или базовый промпт по умолчанию
+        """
+        try:
+            from ...settings_manager import settings_manager
+            
+            # Определяем тип модели (облачная или локальная)
+            model_type = "cloud_llm" if self.provider_name in ["openai", "anthropic", "google", "mistral", "deepseek", "xai"] else "local_llm"
+            
+            # Формируем ключ для настроек
+            prompt_key = f"{model_type}_{self.provider_name}_prompt"
+            
+            # Получаем сохраненный промпт
+            saved_prompt = settings_manager.get_setting(prompt_key, "")
+            
+            if saved_prompt:
+                print(f"✅ Использую сохраненный промпт для {self.provider_name}")
+                return saved_prompt
+            else:
+                print(f"ℹ️ Сохраненный промпт не найден, использую базовый для {self.provider_name}")
+                return self.create_invoice_prompt()
+                
+        except Exception as e:
+            print(f"⚠️ Ошибка получения сохраненного промпта: {e}")
+            return self.create_invoice_prompt()
+    
+    def get_full_prompt(self) -> str:
+        """
+        Возвращает полный промпт для модели.
+        Совместимый метод для интеграции с UI.
+        
+        Returns:
+            str: Полный промпт модели
+        """
+        return self.get_saved_prompt()
+    
     def extract_invoice_data(self, image_path: str, prompt: str = None) -> Dict[str, Any]:
         """
         Извлекает данные из счета-фактуры.
@@ -559,6 +599,10 @@ class UniversalLLMPlugin(BaseLLMPlugin):
             Dict[str, Any]: Извлеченные данные счета
         """
         try:
+            # Используем сохраненный промпт если не передан пользовательский
+            if not prompt:
+                prompt = self.get_saved_prompt()
+            
             # Используем основной метод process_image
             result = self.process_image(image_path, custom_prompt=prompt)
             

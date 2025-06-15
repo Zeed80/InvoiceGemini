@@ -138,7 +138,7 @@ class OpenAIPlugin(BaseLLMPlugin):
             
             if image_path and os.path.exists(image_path):
                 # Проверяем, поддерживает ли модель изображения
-                vision_models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4-vision-preview"]
+                vision_models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4"]
                 if not any(vm in self.model_name for vm in vision_models):
                     return f"Модель {self.model_name} не поддерживает анализ изображений"
                 
@@ -259,6 +259,116 @@ class OpenAIPlugin(BaseLLMPlugin):
         
         result = self.process_image(image_path, custom_prompt=prompt)
         return result if result else {}
+    
+    def get_available_models(self):
+        """
+        Возвращает список доступных моделей OpenAI через API.
+        
+        Returns:
+            list: Список доступных моделей с их характеристиками
+        """
+        if not self.api_key:
+            return [{"error": "API ключ не настроен"}]
+            
+        try:
+            import openai
+            
+            # Создаем временный клиент для получения списка моделей
+            temp_client = openai.OpenAI(api_key=self.api_key)
+            
+            # Получаем список моделей
+            models_response = temp_client.models.list()
+            
+            # Фильтруем и форматируем информацию о моделях
+            available_models = []
+            
+            # Определяем модели, которые поддерживают chat completions
+            chat_models = []
+            vision_models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4"]
+            
+            for model in models_response.data:
+                model_id = model.id
+                
+                # Фильтруем только GPT модели для chat completions
+                if any(gpt_prefix in model_id for gpt_prefix in ["gpt-4", "gpt-3.5"]):
+                    # Определяем поддержку vision
+                    supports_vision = any(vm in model_id for vm in vision_models)
+                    
+                    # Определяем тип модели
+                    model_type = "chat"
+                    if "instruct" in model_id:
+                        model_type = "instruct"
+                    elif "embedding" in model_id:
+                        model_type = "embedding"
+                        continue  # Пропускаем embedding модели
+                    
+                    model_info = {
+                        "id": model_id,
+                        "name": model_id,
+                        "display_name": self._format_model_display_name(model_id),
+                        "object": model.object,
+                        "created": getattr(model, "created", None),
+                        "owned_by": getattr(model, "owned_by", "openai"),
+                        "supports_vision": supports_vision,
+                        "supports_chat": model_type == "chat",
+                        "model_type": model_type,
+                        "deprecated": self._is_model_deprecated(model_id)
+                    }
+                    
+                    # Добавляем техническую информацию если доступна
+                    if hasattr(model, 'context_length'):
+                        model_info["context_length"] = model.context_length
+                    
+                    available_models.append(model_info)
+            
+            # Сортируем модели: сначала актуальные, потом по названию
+            available_models.sort(key=lambda x: (x.get("deprecated", False), x["id"]))
+            
+            return available_models
+            
+        except Exception as e:
+            print(f"❌ Ошибка при получении списка моделей OpenAI: {str(e)}")
+            return [{"error": f"Ошибка получения списка моделей: {str(e)}"}]
+    
+    def _format_model_display_name(self, model_id: str) -> str:
+        """Форматирует название модели для отображения."""
+        # Убираем префиксы и делаем более читаемым
+        display_name = model_id
+        
+        # Заменяем общие паттерны
+        replacements = {
+            "gpt-4o-mini": "GPT-4o Mini",
+            "gpt-4o": "GPT-4o", 
+            "gpt-4-turbo": "GPT-4 Turbo",
+            "gpt-4": "GPT-4",
+            "gpt-3.5-turbo": "GPT-3.5 Turbo"
+        }
+        
+        for pattern, replacement in replacements.items():
+            if pattern in model_id:
+                display_name = replacement
+                # Добавляем дату если есть
+                if len(model_id) > len(pattern):
+                    suffix = model_id[len(pattern):].strip('-')
+                    if suffix:
+                        display_name += f" ({suffix})"
+                break
+        
+        return display_name
+    
+    def _is_model_deprecated(self, model_id: str) -> bool:
+        """Проверяет, является ли модель устаревшей."""
+        deprecated_models = [
+            "gpt-4-vision-preview",
+            "gpt-4-0314",
+            "gpt-4-32k-0314",
+            "gpt-3.5-turbo-0301",
+            "text-davinci-003",
+            "text-davinci-002",
+            "code-davinci-002"
+        ]
+        
+        return model_id in deprecated_models
     
     def get_model_info(self) -> dict:
         """

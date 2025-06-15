@@ -57,6 +57,30 @@ class LLMProviderTestThread(QThread):
             self.test_completed.emit(self.provider_name, False, f"Ошибка: {str(e)}")
 
 
+class ModelRefreshThread(QThread):
+    """Поток для обновления списка моделей провайдера"""
+    refresh_completed = pyqtSignal(str, list, str)  # provider_name, models, error
+    
+    def __init__(self, provider_name: str, api_key: str):
+        super().__init__()
+        self.provider_name = provider_name
+        self.api_key = api_key
+    
+    def run(self):
+        """Выполняет обновление списка моделей"""
+        try:
+            # Получаем актуальный список моделей
+            models = BaseLLMPlugin.refresh_provider_models(self.provider_name, self.api_key)
+            
+            if models:
+                self.refresh_completed.emit(self.provider_name, models, "")
+            else:
+                self.refresh_completed.emit(self.provider_name, [], "Не удалось получить список моделей")
+                
+        except Exception as e:
+            self.refresh_completed.emit(self.provider_name, [], str(e))
+
+
 class LLMProvidersDialog(QDialog):
     """Диалог для настройки LLM провайдеров"""
     
@@ -203,12 +227,23 @@ class LLMProvidersDialog(QDialog):
             self.provider_widgets[provider_name]['api_key_edit'] = api_key_edit
         
         # Выбор модели
+        model_layout = QHBoxLayout()
         model_combo = QComboBox()
         model_combo.addItems(config.models)
         if config.default_model in config.models:
             model_combo.setCurrentText(config.default_model)
+        model_layout.addWidget(model_combo)
         
-        api_layout.addRow(self.tr("Модель:"), model_combo)
+        # Кнопка обновления списка моделей
+        refresh_models_btn = QPushButton("🔄")
+        refresh_models_btn.setToolTip(self.tr("Обновить список доступных моделей"))
+        refresh_models_btn.setMaximumWidth(30)
+        refresh_models_btn.clicked.connect(lambda: self.refresh_models(provider_name))
+        model_layout.addWidget(refresh_models_btn)
+        
+        model_widget = QWidget()
+        model_widget.setLayout(model_layout)
+        api_layout.addRow(self.tr("Модель:"), model_widget)
         
         # Дополнительные настройки для Ollama
         if provider_name == "ollama":
@@ -223,6 +258,7 @@ class LLMProvidersDialog(QDialog):
         
         # Сохраняем ссылки на виджеты
         self.provider_widgets[provider_name]['model_combo'] = model_combo
+        self.provider_widgets[provider_name]['refresh_models_btn'] = refresh_models_btn
         
         # Параметры генерации
         gen_group = QGroupBox(self.tr("⚙️ Параметры генерации"))
@@ -434,7 +470,7 @@ class LLMProvidersDialog(QDialog):
                     api_key = widgets['api_key_edit'].text().strip()
                     if api_key:
                         # Сохраняем зашифрованный ключ
-                        settings_manager.set_encrypted_setting(f'{provider_name}_api_key', api_key)
+                        settings_manager.save_encrypted_setting(f'{provider_name}_api_key', api_key)
                 
                 # Модель
                 if 'model_combo' in widgets:
@@ -455,7 +491,7 @@ class LLMProvidersDialog(QDialog):
                 llm_settings[provider_name] = provider_settings
             
             # Сохраняем в settings_manager
-            settings_manager.set_setting('llm_providers', llm_settings)
+            settings_manager.save_setting('llm_providers', llm_settings)
             settings_manager.save_settings()
             
             QMessageBox.information(self, self.tr("Успех"), 
@@ -518,6 +554,85 @@ class LLMProvidersDialog(QDialog):
         
         return settings
     
+    def refresh_models(self, provider_name: str):
+        """Обновляет список доступных моделей для провайдера"""
+        widgets = self.provider_widgets.get(provider_name, {})
+        config = LLM_PROVIDERS[provider_name]
+        
+        # Получаем API ключ если требуется
+        api_key = None
+        if config.requires_api_key:
+            api_key_edit = widgets.get('api_key_edit')
+            if api_key_edit:
+                api_key = api_key_edit.text().strip()
+                if not api_key:
+                    QMessageBox.warning(self, self.tr("Ошибка"), 
+                                      self.tr("Введите API ключ для обновления списка моделей"))
+                    return
+        
+        # Получаем виджеты
+        model_combo = widgets.get('model_combo')
+        refresh_btn = widgets.get('refresh_models_btn')
+        
+        if not model_combo:
+            return
+        
+        # Отключаем кнопку и показываем процесс
+        if refresh_btn:
+            refresh_btn.setEnabled(False)
+            refresh_btn.setText("⏳")
+        
+        # Сохраняем текущую выбранную модель
+        current_model = model_combo.currentText()
+        
+        # Запускаем обновление в отдельном потоке
+        refresh_thread = ModelRefreshThread(provider_name, api_key)
+        refresh_thread.refresh_completed.connect(
+            lambda pn, models, error: self._on_models_refreshed(pn, models, error, current_model)
+        )
+        refresh_thread.start()
+        
+        # Сохраняем поток
+        self.refresh_threads = getattr(self, 'refresh_threads', {})
+        self.refresh_threads[provider_name] = refresh_thread
+    
+    def _on_models_refreshed(self, provider_name: str, models: list, error: str, previous_model: str):
+        """Обработчик завершения обновления моделей"""
+        widgets = self.provider_widgets.get(provider_name, {})
+        model_combo = widgets.get('model_combo')
+        refresh_btn = widgets.get('refresh_models_btn')
+        
+        # Восстанавливаем кнопку
+        if refresh_btn:
+            refresh_btn.setEnabled(True)
+            refresh_btn.setText("🔄")
+        
+        if error:
+            QMessageBox.warning(self, self.tr("Ошибка"), 
+                              self.tr(f"Не удалось обновить список моделей: {error}"))
+            return
+        
+        if not model_combo or not models:
+            return
+        
+        # Обновляем список моделей
+        model_combo.clear()
+        model_combo.addItems(models)
+        
+        # Восстанавливаем выбранную модель или выбираем первую
+        if previous_model in models:
+            model_combo.setCurrentText(previous_model)
+        elif models:
+            model_combo.setCurrentIndex(0)
+        
+        # Показываем сообщение об успехе
+        QMessageBox.information(self, self.tr("Успех"), 
+                              self.tr(f"Список моделей обновлен! Найдено {len(models)} моделей."))
+        
+        # Очищаем поток
+        if hasattr(self, 'refresh_threads') and provider_name in self.refresh_threads:
+            del self.refresh_threads[provider_name]
+    
     def closeEvent(self, event):
         """Обработчик закрытия диалога"""
         # Останавливаем все активные тесты
@@ -525,5 +640,12 @@ class LLMProvidersDialog(QDialog):
             if thread.isRunning():
                 thread.terminate()
                 thread.wait(1000)
+        
+        # Останавливаем потоки обновления моделей
+        if hasattr(self, 'refresh_threads'):
+            for thread in self.refresh_threads.values():
+                if thread.isRunning():
+                    thread.terminate()
+                    thread.wait(1000)
         
         event.accept() 

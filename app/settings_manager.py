@@ -22,7 +22,8 @@ class SettingsManager:
         else:
             self.settings_file_path = settings_file
             
-        self.config = configparser.ConfigParser()
+        # Отключаем интерполяцию для поддержки символов % в промптах
+        self.config = configparser.ConfigParser(interpolation=None)
         self._ensure_data_dir_exists() # Убедимся, что директория APP_DATA_PATH существует
         self.load_settings()
     
@@ -853,6 +854,16 @@ class SettingsManager:
             print(f"Ошибка сохранения настройки {key}: {e}")
             return False
     
+    def set_setting(self, key: str, value):
+        """
+        Алиас для save_setting - для обратной совместимости.
+        
+        Args:
+            key: Ключ настройки
+            value: Значение для сохранения
+        """
+        return self.save_setting(key, value)
+    
     def get_encrypted_setting(self, key: str, default=None):
         """
         Получает зашифрованную настройку через систему секретов.
@@ -884,6 +895,16 @@ class SettingsManager:
         except Exception as e:
             print(f"Ошибка сохранения зашифрованной настройки {key}: {e}")
             return False
+    
+    def set_encrypted_setting(self, key: str, value: str):
+        """
+        Алиас для save_encrypted_setting - для обратной совместимости.
+        
+        Args:
+            key: Ключ секрета
+            value: Значение для сохранения
+        """
+        return self.save_encrypted_setting(key, value)
     
     def get_company_receiver_name(self) -> str:
         """
