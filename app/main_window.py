@@ -903,6 +903,11 @@ class MainWindow(QMainWindow):
         universal_plugins_action.triggered.connect(self.get_plugin_statistics)
         settings_menu.addAction(universal_plugins_action)
         
+        # Редактор плагинов
+        plugin_editor_action = QAction("🔌 Редактор плагинов...", self)
+        plugin_editor_action.triggered.connect(self.show_plugin_editor)
+        settings_menu.addAction(plugin_editor_action)
+        
         # Меню Обучение
         training_menu = menu_bar.addMenu("Обучение")
         open_training_action = QAction("Обучение моделей", self)
@@ -1319,7 +1324,30 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Ошибка обновления LLM провайдеров: {e}")
 
-
+    def show_plugin_editor(self):
+        """Показывает диалог редактора плагинов."""
+        try:
+            from .plugins.plugin_editor_dialog import PluginManagerDialog
+            from .plugins.advanced_plugin_manager import AdvancedPluginManager
+            
+            # Инициализируем продвинутый менеджер плагинов
+            if not hasattr(self, 'advanced_plugin_manager'):
+                self.advanced_plugin_manager = AdvancedPluginManager()
+            
+            dialog = PluginManagerDialog(parent=self)
+            dialog.exec()
+        except ImportError as e:
+            utils.show_error_message(
+                self, 
+                "Ошибка",
+                f"Не удалось открыть редактор плагинов: {e}"
+            )
+        except Exception as e:
+            utils.show_error_message(
+                self, 
+                "Ошибка",
+                f"Ошибка инициализации редактора плагинов: {e}"
+            )
 
     def show_poppler_settings(self):
         """Открывает диалог настроек Poppler."""

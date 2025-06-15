@@ -1,9 +1,9 @@
 """
 Базовые классы для системы плагинов InvoiceGemini
-Поддержка различных типов плагинов: LLM, обработка, просмотр, экспорт
+Поддержка различных типов плагинов: LLM, обработка, просмотр, экспорт, импорт, интеграции
 """
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Callable
 from enum import Enum
 import json
 from pathlib import Path
@@ -14,8 +14,12 @@ class PluginType(Enum):
     PROCESSOR = "processor"        # Обработка документов (OCR, предобработка)
     VIEWER = "viewer"             # Просмотр и редактирование результатов
     EXPORTER = "exporter"         # Экспорт в различные форматы
+    IMPORTER = "importer"         # Импорт из различных источников
     VALIDATOR = "validator"       # Валидация данных
     TRANSFORMER = "transformer"   # Трансформация данных
+    INTEGRATION = "integration"   # Интеграции с внешними системами
+    WORKFLOW = "workflow"         # Обработка рабочих процессов
+    NOTIFICATION = "notification" # Уведомления и алерты
 
 class PluginCapability(Enum):
     """Возможности плагинов"""
@@ -25,6 +29,28 @@ class PluginCapability(Enum):
     STREAMING = "streaming"       # Потоковая обработка
     BATCH = "batch"              # Пакетная обработка
     ASYNC = "async"              # Асинхронная обработка
+    REALTIME = "realtime"        # Реального времени
+    API = "api"                  # API интеграции
+    DATABASE = "database"        # Работа с БД
+    CLOUD = "cloud"              # Облачные возможности
+
+class PluginPriority(Enum):
+    """Приоритеты плагинов"""
+    LOWEST = 0
+    LOW = 1
+    NORMAL = 2
+    HIGH = 3
+    HIGHEST = 4
+    CRITICAL = 5
+
+class PluginStatus(Enum):
+    """Статусы плагинов"""
+    UNLOADED = "unloaded"
+    LOADING = "loading" 
+    LOADED = "loaded"
+    ACTIVE = "active"
+    ERROR = "error"
+    DISABLED = "disabled"
 
 class PluginMetadata:
     """Метаданные плагина"""
@@ -37,7 +63,13 @@ class PluginMetadata:
                  plugin_type: PluginType,
                  capabilities: List[PluginCapability] = None,
                  dependencies: List[str] = None,
-                 config_schema: Dict[str, Any] = None):
+                 config_schema: Dict[str, Any] = None,
+                 priority: PluginPriority = PluginPriority.NORMAL,
+                 supported_formats: List[str] = None,
+                 min_python_version: str = "3.8",
+                 website: str = None,
+                 license: str = "MIT",
+                 keywords: List[str] = None):
         self.name = name
         self.version = version
         self.description = description
@@ -46,6 +78,12 @@ class PluginMetadata:
         self.capabilities = capabilities or []
         self.dependencies = dependencies or []
         self.config_schema = config_schema or {}
+        self.priority = priority
+        self.supported_formats = supported_formats or []
+        self.min_python_version = min_python_version
+        self.website = website
+        self.license = license
+        self.keywords = keywords or []
     
     def to_dict(self) -> Dict[str, Any]:
         """Преобразует метаданные в словарь"""
@@ -57,7 +95,13 @@ class PluginMetadata:
             "type": self.plugin_type.value,
             "capabilities": [cap.value for cap in self.capabilities],
             "dependencies": self.dependencies,
-            "config_schema": self.config_schema
+            "config_schema": self.config_schema,
+            "priority": self.priority.value,
+            "supported_formats": self.supported_formats,
+            "min_python_version": self.min_python_version,
+            "website": self.website,
+            "license": self.license,
+            "keywords": self.keywords
         }
 
 class BasePlugin(ABC):
@@ -73,9 +117,11 @@ class BasePlugin(ABC):
             config: Конфигурация плагина
         """
         self.config = config or {}
-        self.is_loaded = False
+        self.status = PluginStatus.UNLOADED
         self.is_enabled = True
         self._metadata = None
+        self._progress_callback: Optional[Callable] = None
+        self._last_error: Optional[str] = None
     
     @property
     @abstractmethod
@@ -98,6 +144,24 @@ class BasePlugin(ABC):
         """Очищает ресурсы плагина"""
         pass
     
+    def set_progress_callback(self, callback: Callable[[int, str], None]):
+        """Устанавливает callback для отслеживания прогресса"""
+        self._progress_callback = callback
+    
+    def report_progress(self, progress: int, message: str = ""):
+        """Сообщает о прогрессе выполнения"""
+        if self._progress_callback:
+            self._progress_callback(progress, message)
+    
+    def get_last_error(self) -> Optional[str]:
+        """Возвращает последнюю ошибку"""
+        return self._last_error
+    
+    def set_error(self, error: str):
+        """Устанавливает ошибку"""
+        self._last_error = error
+        self.status = PluginStatus.ERROR
+    
     def validate_config(self, config: Dict[str, Any]) -> bool:
         """
         Валидирует конфигурацию плагина
@@ -108,7 +172,6 @@ class BasePlugin(ABC):
         Returns:
             bool: True если конфигурация валидна
         """
-        # Базовая валидация по схеме
         schema = self.metadata.config_schema
         if not schema:
             return True
@@ -117,7 +180,16 @@ class BasePlugin(ABC):
         required_fields = schema.get("required", [])
         for field in required_fields:
             if field not in config:
+                self.set_error(f"Отсутствует обязательное поле: {field}")
                 return False
+        
+        # Валидация типов
+        field_types = schema.get("types", {})
+        for field, expected_type in field_types.items():
+            if field in config:
+                if not isinstance(config[field], expected_type):
+                    self.set_error(f"Неверный тип поля {field}")
+                    return False
         
         return True
     
@@ -126,9 +198,11 @@ class BasePlugin(ABC):
         return {
             "name": self.metadata.name,
             "type": self.metadata.plugin_type.value,
-            "is_loaded": self.is_loaded,
+            "status": self.status.value,
             "is_enabled": self.is_enabled,
-            "version": self.metadata.version
+            "version": self.metadata.version,
+            "priority": self.metadata.priority.value,
+            "last_error": self._last_error
         }
 
 class ProcessorPlugin(BasePlugin):
@@ -300,6 +374,178 @@ class TransformerPlugin(BasePlugin):
             Dict[str, List[str]]: Словарь {входной_формат: [выходные_форматы]}
         """
         pass
+
+class ImporterPlugin(BasePlugin):
+    """Базовый класс для плагинов импорта"""
+    
+    @abstractmethod
+    def import_data(self, source: str, **kwargs) -> Dict[str, Any]:
+        """
+        Импортирует данные из источника
+        
+        Args:
+            source: Источник данных
+            **kwargs: Дополнительные параметры
+            
+        Returns:
+            Dict[str, Any]: Импортированные данные
+        """
+        pass
+    
+    @abstractmethod
+    def get_supported_sources(self) -> List[str]:
+        """
+        Возвращает поддерживаемые источники данных
+        
+        Returns:
+            List[str]: Список поддерживаемых источников
+        """
+        pass
+    
+    def validate_source(self, source: str) -> bool:
+        """
+        Проверяет доступность источника
+        
+        Args:
+            source: Источник для проверки
+            
+        Returns:
+            bool: True если источник доступен
+        """
+        return True
+
+class IntegrationPlugin(BasePlugin):
+    """Базовый класс для плагинов интеграции с внешними системами"""
+    
+    @abstractmethod
+    def connect(self, **kwargs) -> bool:
+        """
+        Устанавливает соединение с внешней системой
+        
+        Returns:
+            bool: True если соединение установлено
+        """
+        pass
+    
+    @abstractmethod
+    def disconnect(self):
+        """Разрывает соединение с внешней системой"""
+        pass
+    
+    @abstractmethod
+    def test_connection(self) -> bool:
+        """
+        Тестирует соединение
+        
+        Returns:
+            bool: True если соединение работает
+        """
+        pass
+    
+    @abstractmethod
+    def sync_data(self, data: Any, direction: str = "export") -> Dict[str, Any]:
+        """
+        Синхронизирует данные с внешней системой
+        
+        Args:
+            data: Данные для синхронизации
+            direction: Направление синхронизации ("export", "import", "both")
+            
+        Returns:
+            Dict[str, Any]: Результат синхронизации
+        """
+        pass
+    
+    def get_connection_status(self) -> Dict[str, Any]:
+        """Возвращает статус соединения"""
+        return {
+            "connected": self.test_connection(),
+            "last_sync": getattr(self, '_last_sync', None),
+            "sync_status": getattr(self, '_sync_status', 'unknown')
+        }
+
+class WorkflowPlugin(BasePlugin):
+    """Базовый класс для плагинов рабочих процессов"""
+    
+    @abstractmethod
+    def execute_workflow(self, workflow_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """
+        Выполняет рабочий процесс
+        
+        Args:
+            workflow_data: Данные для обработки
+            **kwargs: Дополнительные параметры
+            
+        Returns:
+            Dict[str, Any]: Результат выполнения
+        """
+        pass
+    
+    @abstractmethod
+    def get_workflow_steps(self) -> List[Dict[str, Any]]:
+        """
+        Возвращает шаги рабочего процесса
+        
+        Returns:
+            List[Dict[str, Any]]: Список шагов
+        """
+        pass
+    
+    def validate_workflow_data(self, workflow_data: Dict[str, Any]) -> bool:
+        """
+        Валидирует данные рабочего процесса
+        
+        Args:
+            workflow_data: Данные для валидации
+            
+        Returns:
+            bool: True если данные валидны
+        """
+        return True
+
+class NotificationPlugin(BasePlugin):
+    """Базовый класс для плагинов уведомлений"""
+    
+    @abstractmethod
+    def send_notification(self, message: str, **kwargs) -> bool:
+        """
+        Отправляет уведомление
+        
+        Args:
+            message: Сообщение для отправки
+            **kwargs: Дополнительные параметры
+            
+        Returns:
+            bool: True если уведомление отправлено
+        """
+        pass
+    
+    @abstractmethod
+    def get_notification_channels(self) -> List[str]:
+        """
+        Возвращает доступные каналы уведомлений
+        
+        Returns:
+            List[str]: Список каналов
+        """
+        pass
+    
+    def format_message(self, template: str, data: Dict[str, Any]) -> str:
+        """
+        Форматирует сообщение по шаблону
+        
+        Args:
+            template: Шаблон сообщения
+            data: Данные для подстановки
+            
+        Returns:
+            str: Отформатированное сообщение
+        """
+        try:
+            return template.format(**data)
+        except KeyError as e:
+            self.set_error(f"Ошибка форматирования: отсутствует ключ {e}")
+            return template
 
 # Утилитарные функции для работы с плагинами
 def create_plugin_metadata(name: str, version: str, description: str, 
