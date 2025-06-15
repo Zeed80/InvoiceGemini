@@ -540,12 +540,6 @@ class MainWindow(QMainWindow):
         llm_plugins_action = QAction("🔌 Управление LLM плагинами...", self)
         llm_plugins_action.triggered.connect(self.show_llm_plugins_dialog)
         settings_menu.addAction(llm_plugins_action)
-
-        # Настройки Tesseract
-        if hasattr(self, 'show_tesseract_settings'):
-            tesseract_action = QAction("Настройки Tesseract OCR...", self)
-            tesseract_action.triggered.connect(self.show_tesseract_settings)
-            settings_menu.addAction(tesseract_action)
         
         # Меню Обучение
         training_menu = menu_bar.addMenu("Обучение")
@@ -926,12 +920,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Ошибка обновления LLM провайдеров: {e}")
 
-    def show_tesseract_settings(self):
-        """Открывает диалог настроек Tesseract OCR."""
-        # dialog = TesseractSettingsDialog(settings_manager, self) 
-        # dialog.exec()
-        # ПОКА ПРОСТО ВЫЗЫВАЕМ ОБЩИЙ ДИАЛОГ УПРАВЛЕНИЯ МОДЕЛЯМИ
-        self.show_model_management_dialog()
+
 
     def show_poppler_settings(self):
         """Открывает диалог настроек Poppler."""

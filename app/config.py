@@ -25,6 +25,9 @@ APP_VERSION = "0.9.6"
 ORGANIZATION_NAME = "ТехноИнновации"
 SETTINGS_FILE = "settings.ini"
 
+# Настройки компании-получателя по умолчанию
+DEFAULT_COMPANY_RECEIVER_NAME = 'ООО "Рога и копыта"'
+
 # Загружаем переменные окружения из .env файла безопасно
 app_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 env_path = os.path.join(app_dir, ".env")

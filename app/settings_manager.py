@@ -181,6 +181,9 @@ class SettingsManager:
                 },
                 'Invoice': {
                     'default_vat_rate': str(config.DEFAULT_VAT_RATE)
+                },
+                'Company': {
+                    'receiver_name': config.DEFAULT_COMPANY_RECEIVER_NAME  # Название компании-получателя по умолчанию
                 }
             }.items():
                 if section not in self.config:
@@ -227,7 +230,7 @@ class SettingsManager:
         return default
     
     def get_prompt(self, key, default=""):
-        """Специальный метод для чтения промтов из отдельных файлов."""
+        """Специальный метод для чтения промтов из отдельных файлов с заменой шаблонов."""
         # Промты хранятся в отдельных файлах в папке prompts
         prompts_dir = os.path.join(os.path.dirname(self.settings_file_path), "prompts")
         os.makedirs(prompts_dir, exist_ok=True)
@@ -241,7 +244,12 @@ class SettingsManager:
         try:
             # Читаем файл с промтом
             with open(prompt_file, 'r', encoding='utf-8') as f:
-                return f.read()
+                prompt_content = f.read()
+            
+            # Заменяем шаблоны в промпте
+            prompt_content = self._replace_prompt_templates(prompt_content)
+            
+            return prompt_content
         except Exception as e:
             print(f"Ошибка при чтении промта {key}: {str(e)}")
             return default
@@ -876,6 +884,50 @@ class SettingsManager:
         except Exception as e:
             print(f"Ошибка сохранения зашифрованной настройки {key}: {e}")
             return False
+    
+    def get_company_receiver_name(self) -> str:
+        """
+        Получает название компании-получателя счетов.
+        
+        Returns:
+            str: Название компании-получателя
+        """
+        return self.get_string('Company', 'receiver_name', config.DEFAULT_COMPANY_RECEIVER_NAME)
+    
+    def set_company_receiver_name(self, name: str):
+        """
+        Устанавливает название компании-получателя счетов.
+        
+        Args:
+            name: Новое название компании-получателя
+        """
+        self.set_value('Company', 'receiver_name', name)
+        print(f"✅ Название компании-получателя обновлено: {name}")
+    
+    def _replace_prompt_templates(self, prompt_content: str) -> str:
+        """
+        Заменяет шаблоны в промпте на реальные значения.
+        
+        Args:
+            prompt_content: Исходный текст промпта с шаблонами
+            
+        Returns:
+            str: Промпт с замененными шаблонами
+        """
+        # Получаем название компании-получателя
+        company_name = self.get_company_receiver_name()
+        
+        # Заменяем шаблоны
+        replacements = {
+            '{COMPANY_NAME}': company_name,
+            '{RECEIVER_COMPANY}': company_name,
+            '{COMPANY_RECEIVER}': company_name
+        }
+        
+        for template, value in replacements.items():
+            prompt_content = prompt_content.replace(template, value)
+        
+        return prompt_content
 
 # Создаем глобальный экземпляр менеджера настроек
 settings_manager = SettingsManager() 

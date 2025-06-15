@@ -632,6 +632,11 @@ class ModelManagementDialog(QDialog):
             vat_rate = settings_manager.get_default_vat_rate()
             self.vat_rate_spinner.setValue(vat_rate)
 
+        # Название компании-получателя
+        if hasattr(self, 'company_receiver_name_edit'):
+            company_name = settings_manager.get_company_receiver_name()
+            self.company_receiver_name_edit.setText(company_name)
+
         # Сетевые настройки
         if hasattr(self, 'offline_mode_checkbox'):
             offline_mode = settings_manager.get_bool('Network', 'offline_mode', app_config.OFFLINE_MODE)
@@ -815,6 +820,11 @@ class ModelManagementDialog(QDialog):
         """Обработчик изменения значения ставки НДС по умолчанию."""
         settings_manager.set_default_vat_rate(value)
         print(f"Ставка НДС по умолчанию обновлена: {value}%")
+    
+    def update_company_receiver_name(self, name):
+        """Обработчик изменения названия компании-получателя."""
+        settings_manager.set_company_receiver_name(name)
+        print(f"Название компании-получателя обновлено: {name}")
         
     def save_hf_token_action(self):
         """Действие: Сохраняет токен Hugging Face."""
@@ -1590,6 +1600,10 @@ class ModelManagementDialog(QDialog):
         # NEW: Сохраняем ставку НДС по умолчанию, если элемент существует
         if hasattr(self, 'vat_rate_spinner'):
             settings_manager.set_default_vat_rate(self.vat_rate_spinner.value())
+            
+        # NEW: Сохраняем название компании-получателя, если элемент существует
+        if hasattr(self, 'company_receiver_name_edit'):
+            settings_manager.set_company_receiver_name(self.company_receiver_name_edit.text())
 
         # Сохраняем пути (если эти элементы есть)
         if hasattr(self, 'tesseract_path_edit') and hasattr(self.tesseract_path_edit, 'line_edit'):
@@ -2605,6 +2619,29 @@ class ModelManagementDialog(QDialog):
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
         
+        # Основные настройки организации (в самом верху)
+        company_group = QGroupBox("🏢 Настройки организации")
+        company_layout = QFormLayout()
+        
+        # Название компании-получателя (главная настройка)
+        self.company_receiver_name_edit = QLineEdit()
+        self.company_receiver_name_edit.setPlaceholderText(app_config.DEFAULT_COMPANY_RECEIVER_NAME)
+        self.company_receiver_name_edit.textChanged.connect(self.update_company_receiver_name)
+        self.company_receiver_name_edit.setStyleSheet("font-weight: bold; font-size: 14px; padding: 8px;")
+        company_layout.addRow("📋 Название компании-получателя:", self.company_receiver_name_edit)
+        
+        # Ставка НДС по умолчанию  
+        self.vat_rate_spinner = QDoubleSpinBox()
+        self.vat_rate_spinner.setRange(0, 100)
+        self.vat_rate_spinner.setSingleStep(0.1)
+        self.vat_rate_spinner.setDecimals(1)
+        self.vat_rate_spinner.setSuffix(" %")
+        self.vat_rate_spinner.valueChanged.connect(self.update_default_vat_rate)
+        company_layout.addRow("💰 Ставка НДС по умолчанию:", self.vat_rate_spinner)
+        
+        company_group.setLayout(company_layout)
+        scroll_layout.addWidget(company_group)
+        
         # Пути к внешним инструментам
         paths_group = QGroupBox("📁 Пути к внешним инструментам")
         paths_layout = QFormLayout()
@@ -2656,31 +2693,6 @@ class ModelManagementDialog(QDialog):
         prompts_group.setLayout(prompts_layout)
         scroll_layout.addWidget(prompts_group)
         
-        # Параметры обучения
-        training_group = QGroupBox("🎓 Параметры обучения")
-        training_layout = QFormLayout()
-        
-        self.layoutlm_base_model_edit = QLineEdit()
-        self.layoutlm_base_model_edit.setPlaceholderText("microsoft/layoutlmv3-base")
-        training_layout.addRow("Базовая модель LayoutLM:", self.layoutlm_base_model_edit)
-        
-        self.epochs_spinbox = QSpinBox()
-        self.epochs_spinbox.setRange(1, 100)
-        training_layout.addRow("Эпохи обучения:", self.epochs_spinbox)
-        
-        self.batch_size_spinbox = QSpinBox()
-        self.batch_size_spinbox.setRange(1, 64)
-        training_layout.addRow("Размер батча:", self.batch_size_spinbox)
-        
-        self.learning_rate_dspinbox = QDoubleSpinBox()
-        self.learning_rate_dspinbox.setDecimals(6)
-        self.learning_rate_dspinbox.setRange(0.000001, 0.1)
-        self.learning_rate_dspinbox.setSingleStep(0.00001)
-        training_layout.addRow("Скорость обучения:", self.learning_rate_dspinbox)
-        
-        training_group.setLayout(training_layout)
-        scroll_layout.addWidget(training_group)
-        
         # Общие параметры
         general_params_group = QGroupBox("🔧 Общие параметры")
         general_params_layout = QFormLayout()
@@ -2689,15 +2701,7 @@ class ModelManagementDialog(QDialog):
         self.batch_delay_spinner.setRange(0, 60)
         self.batch_delay_spinner.setSuffix(" сек")
         self.batch_delay_spinner.valueChanged.connect(self.update_batch_delay)
-        general_params_layout.addRow("Задержка между файлами:", self.batch_delay_spinner)
-        
-        self.vat_rate_spinner = QDoubleSpinBox()
-        self.vat_rate_spinner.setRange(0, 100)
-        self.vat_rate_spinner.setSingleStep(0.1)
-        self.vat_rate_spinner.setDecimals(1)
-        self.vat_rate_spinner.setSuffix(" %")
-        self.vat_rate_spinner.valueChanged.connect(self.update_default_vat_rate)
-        general_params_layout.addRow("Ставка НДС по умолчанию:", self.vat_rate_spinner)
+        general_params_layout.addRow("⏱️ Задержка между файлами:", self.batch_delay_spinner)
         
         general_params_group.setLayout(general_params_layout)
         scroll_layout.addWidget(general_params_group)
