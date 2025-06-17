@@ -21,6 +21,14 @@ from .invoice_formatter import InvoiceFormatter
 # Настройка логирования
 logger = logging.getLogger(__name__)
 
+# Импортируем retry manager если доступен
+try:
+    from .core.retry_manager import with_retry, RetryProfiles
+    RETRY_AVAILABLE = True
+except ImportError:
+    RETRY_AVAILABLE = False
+    logger.warning("RetryManager недоступен, повторные попытки отключены")
+
 # Глобальная функция для логирования
 def log_message(message):
     """Простая функция логирования для GeminiProcessor"""
@@ -247,28 +255,55 @@ class GeminiProcessor(BaseProcessor):
             
             # Попытка вызова API с повторами при необходимости
             response = None
-            max_retries = 3
-            retry_delay = 2
             
-            for attempt in range(max_retries):
+            if RETRY_AVAILABLE:
+                # Используем новый retry механизм
                 try:
-                    # Создаем и выполняем запрос с явным указанием JSON формата ответа
-                    log_message("Отправка запроса к Gemini API с response_mime_type='application/json'")
-                    response = self.model.generate_content(
-                        [prompt, image],
-                        safety_settings=safety_settings,
-                        generation_config=generation_config
+                    log_message("Отправка запроса к Gemini API с использованием retry механизма")
+                    
+                    @with_retry(
+                        max_attempts=5,
+                        initial_delay=1.0,
+                        max_delay=30.0,
+                        exponential_base=2.0,
+                        jitter=True
                     )
-                    break
+                    def _make_api_call():
+                        return self.model.generate_content(
+                            [prompt, image],
+                            safety_settings=safety_settings,
+                            generation_config=generation_config
+                        )
+                    
+                    response = _make_api_call()
+                    
                 except Exception as e:
-                    log_message(f"Ошибка при вызове API (попытка {attempt+1}/{max_retries}): {str(e)}")
-                    if attempt < max_retries - 1:
-                        log_message(f"Повторная попытка через {retry_delay} сек...")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Увеличиваем задержку для следующей попытки
-                    else:
-                        log_message("Все попытки вызова API завершились неудачно")
-                        return None
+                    log_message(f"Все попытки вызова API завершились неудачно: {str(e)}")
+                    return None
+            else:
+                # Fallback на старый механизм
+                max_retries = 3
+                retry_delay = 2
+                
+                for attempt in range(max_retries):
+                    try:
+                        # Создаем и выполняем запрос с явным указанием JSON формата ответа
+                        log_message("Отправка запроса к Gemini API с response_mime_type='application/json'")
+                        response = self.model.generate_content(
+                            [prompt, image],
+                            safety_settings=safety_settings,
+                            generation_config=generation_config
+                        )
+                        break
+                    except Exception as e:
+                        log_message(f"Ошибка при вызове API (попытка {attempt+1}/{max_retries}): {str(e)}")
+                        if attempt < max_retries - 1:
+                            log_message(f"Повторная попытка через {retry_delay} сек...")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2  # Увеличиваем задержку для следующей попытки
+                        else:
+                            log_message("Все попытки вызова API завершились неудачно")
+                            return None
             
             if not response:
                 log_message("Не удалось получить ответ от API")
