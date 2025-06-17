@@ -1,137 +1,141 @@
 #!/usr/bin/env python3
 """
-Скрипт для автоматической миграции секретов InvoiceGemini в безопасную систему.
-Выполняет миграцию из старых незащищенных файлов в зашифрованное хранилище.
+Скрипт для миграции секретов в новую систему безопасного хранения.
 
 Использование:
     python scripts/migrate_secrets.py
 """
 
-import os
 import sys
-import logging
+import os
 from pathlib import Path
 
-# Добавляем корень проекта в sys.path
+# Добавляем корневую директорию проекта в путь Python
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-def setup_logging():
-    """Настройка логирования для скрипта миграции."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-    return logging.getLogger(__name__)
+import logging
+from typing import Dict
+
+# Настраиваем логирование
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 
 def main():
-    """Основная функция миграции."""
-    logger = setup_logging()
-    
-    print("🔒 InvoiceGemini Security Migration Tool")
-    print("=" * 50)
+    """Основная функция миграции секретов."""
+    print("\n╔════════════════════════════════════════════════╗")
+    print("║      Миграция секретов InvoiceGemini          ║")
+    print("╚════════════════════════════════════════════════╝\n")
     
     try:
-        # Импортируем менеджер секретов
-        from config.secrets import SecretsManager
+        # Импортируем менеджеры
+        from app.settings_manager import settings_manager
+        from app.security.secrets_manager import get_secrets_manager
         
-        # Создаем экземпляр менеджера
-        secrets_manager = SecretsManager(project_root=str(project_root))
+        secrets_manager = get_secrets_manager()
         
-        logger.info(f"Корень проекта: {secrets_manager.project_root}")
-        logger.info(f"Директория секретов: {secrets_manager.secrets_dir}")
+        logger.info(f"Корень проекта: {project_root}")
+        logger.info(f"Директория секретов: {secrets_manager.secrets_file.parent}")
         
         # Проверяем текущий статус секретов
-        logger.info("Проверка текущего статуса секретов...")
-        status_before = secrets_manager.get_all_secret_status()
-        
-        print("\n📊 Статус секретов ДО миграции:")
-        for secret, is_valid in status_before.items():
+        print("\n📊 Текущий статус секретов:")
+        status_before = {}
+        for secret in secrets_manager.KNOWN_SECRETS:
+            value = secrets_manager.get_secret(secret)
+            is_valid = bool(value) and secrets_manager.validate_secret(secret, value)
+            status_before[secret] = is_valid
             status_icon = "✅" if is_valid else "❌"
             print(f"  {status_icon} {secret}: {'Валиден' if is_valid else 'Отсутствует/Невалиден'}")
         
-        # Создаем .env файл из шаблона если его нет
-        print("\n📁 Проверка .env файла...")
-        if secrets_manager.create_env_template():
-            print("  ✅ Создан .env файл на основе env.example")
-            print("  ⚠️  ВНИМАНИЕ: Заполните .env файл реальными API ключами!")
-        else:
-            print("  ℹ️  Файл .env уже существует")
+        # Создаем шаблон .env файла
+        print("\n� Создание шаблона .env файла...")
+        env_template_path = secrets_manager.export_env_template()
+        print(f"   Шаблон создан: {env_template_path}")
         
-        # Выполняем миграцию старых секретов
-        print("\n🔄 Миграция старых секретов...")
-        secrets_manager.cleanup_legacy_secrets()
+        # Выполняем миграцию из старых настроек
+        print("\n🔄 Миграция из старых настроек...")
+        migration_results = secrets_manager.migrate_from_settings(settings_manager)
         
-        # Проверяем статус после миграции
-        print("\n🔍 Проверка статуса после миграции...")
-        status_after = secrets_manager.get_all_secret_status()
+        for key, success in migration_results.items():
+            icon = "✅" if success else "❌"
+            print(f"  {icon} {key}: {'Успешно' if success else 'Не найден/невалиден'}")
         
-        print("\n📊 Статус секретов ПОСЛЕ миграции:")
+        # Проверяем финальный статус
+        print("\n� Финальный статус секретов:")
+        status_after = {}
         improved_secrets = []
-        for secret, is_valid in status_after.items():
+        for secret in secrets_manager.KNOWN_SECRETS:
+            value = secrets_manager.get_secret(secret)
+            is_valid = bool(value) and secrets_manager.validate_secret(secret, value)
+            status_after[secret] = is_valid
             status_icon = "✅" if is_valid else "❌"
             print(f"  {status_icon} {secret}: {'Валиден' if is_valid else 'Отсутствует/Невалиден'}")
             
-            # Проверяем улучшения
+            # Отслеживаем улучшения
             if status_before.get(secret, False) != is_valid and is_valid:
                 improved_secrets.append(secret)
         
-        # Отчет об улучшениях
+        # Создаем резервную копию если есть секреты
+        if any(status_after.values()):
+            print("\n💾 Создание резервной копии...")
+            backup_path = secrets_manager.create_backup()
+            print(f"   Резервная копия создана: {backup_path}")
+        
+        # Проверяем .gitignore
+        print("\n🔒 Проверка .gitignore...")
+        gitignore_path = project_root / ".gitignore"
+        if gitignore_path.exists():
+            gitignore_content = gitignore_path.read_text()
+            security_patterns = ["data/security/", ".encryption.key", ".secrets.enc", "*.enc"]
+            missing_patterns = [p for p in security_patterns if p not in gitignore_content]
+            
+            if missing_patterns:
+                print("   ⚠️  Добавьте в .gitignore следующие паттерны:")
+                for pattern in missing_patterns:
+                    print(f"      {pattern}")
+            else:
+                print("   ✅ Все паттерны безопасности присутствуют в .gitignore")
+        
+        # Итоговая статистика
+        print("\n📈 Итоговая статистика:")
+        total_secrets = len(secrets_manager.KNOWN_SECRETS)
+        valid_secrets = sum(1 for v in status_after.values() if v)
+        print(f"   Всего секретов: {total_secrets}")
+        print(f"   Валидных секретов: {valid_secrets}")
+        
         if improved_secrets:
             print(f"\n🎉 Улучшены секреты: {', '.join(improved_secrets)}")
         
-        # Финальная сводка
-        valid_count = sum(status_after.values())
-        total_count = len(status_after)
-        
-        print(f"\n📈 Итоговая статистика:")
-        print(f"  Валидных секретов: {valid_count}/{total_count}")
-        print(f"  Процент готовности: {(valid_count/total_count)*100:.1f}%")
-        
         # Рекомендации
-        print(f"\n💡 Рекомендации:")
-        
         missing_secrets = [secret for secret, valid in status_after.items() if not valid]
         if missing_secrets:
+            print("\n📌 Рекомендации:")
             print(f"  📝 Необходимо настроить секреты: {', '.join(missing_secrets)}")
-            print(f"  📁 Отредактируйте файл .env в корне проекта")
-            
-            if "GOOGLE_API_KEY" in missing_secrets:
-                print(f"  🔑 Google API Key: https://makersuite.google.com/app/apikey")
-            if "HF_TOKEN" in missing_secrets:
+            print(f"  � Используйте файл {env_template_path} как образец")
+            print("\n  🔑 Где получить ключи:")
+            if "google_api_key" in missing_secrets:
+                print(f"  🌐 Google API Key: https://console.cloud.google.com/apis/credentials")
+            if "hf_token" in missing_secrets:
                 print(f"  🤗 Hugging Face Token: https://huggingface.co/settings/tokens")
-        else:
-            print(f"  ✅ Все секреты настроены корректно!")
+            if "openai_api_key" in missing_secrets:
+                print(f"  🤖 OpenAI API Key: https://platform.openai.com/api-keys")
+            if "anthropic_api_key" in missing_secrets:
+                print(f"  🧠 Anthropic API Key: https://console.anthropic.com/account/keys")
         
-        # Проверка безопасности .gitignore
-        gitignore_path = project_root / ".gitignore"
-        if gitignore_path.exists():
-            with open(gitignore_path, 'r', encoding='utf-8') as f:
-                gitignore_content = f.read()
-            
-            if ".env" in gitignore_content and "data/secrets/" in gitignore_content:
-                print(f"  🔒 .gitignore настроен безопасно")
-            else:
-                print(f"  ⚠️  Проверьте .gitignore на предмет исключения секретов")
-        
-        print(f"\n🚀 Миграция завершена!")
-        print(f"📖 Подробности см. в документации: config/secrets.py")
-        
-        return 0
-        
-    except ImportError as e:
-        logger.error(f"Ошибка импорта: {e}")
-        logger.error("Убедитесь что установлены все зависимости: pip install -r requirements.txt")
-        return 1
+        print("\n✅ Миграция завершена!")
         
     except Exception as e:
-        logger.error(f"Ошибка миграции: {e}")
+        logger.error(f"Ошибка при миграции: {e}")
         import traceback
-        logger.error(traceback.format_exc())
+        traceback.print_exc()
         return 1
+    
+    return 0
+
 
 if __name__ == "__main__":
     sys.exit(main()) 
