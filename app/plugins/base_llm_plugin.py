@@ -6,7 +6,11 @@ from typing import Dict, List, Optional, Any, Union
 import os
 import json
 import re
+import logging
 from PIL import Image
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 # Пытаемся импортировать torch, но делаем это опционально
 try:
@@ -14,7 +18,15 @@ try:
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
-    print("⚠️ PyTorch не установлен. LLM плагины будут работать в ограниченном режиме.")
+    logger.warning("PyTorch не установлен. LLM плагины будут работать в ограниченном режиме.")
+
+# Пытаемся импортировать SecretsManager для защиты API ключей
+try:
+    from ..security.secrets_manager import get_secrets_manager
+    SECRETS_MANAGER_AVAILABLE = True
+except ImportError:
+    SECRETS_MANAGER_AVAILABLE = False
+    logger.warning("SecretsManager недоступен. API ключи будут храниться в незашифрованном виде.")
 
 from ..base_processor import BaseProcessor
 
@@ -144,7 +156,7 @@ class BaseLLMPlugin(BaseProcessor):
             raise ValueError(f"Неподдерживаемый провайдер LLM: {provider_name}")
         
         self.model_name = model_name or self.provider_config.default_model
-        self.api_key = api_key
+        self.api_key = self._get_secure_api_key(api_key)
         self.client = None
         self.is_loaded = False
         
@@ -158,7 +170,72 @@ class BaseLLMPlugin(BaseProcessor):
         # Обновляем конфигурацию пользовательскими параметрами
         self.generation_config.update(kwargs.get("generation_config", {}))
         
-        print(f"🔧 Инициализирован LLM плагин: {self.provider_config.display_name} - {self.model_name}")
+        logger.info(f"Инициализирован LLM плагин: {self.provider_config.display_name} - {self.model_name}")
+    
+    def _get_secure_api_key(self, api_key: str = None) -> Optional[str]:
+        """
+        Получает API ключ безопасным способом
+        
+        Args:
+            api_key: Переданный API ключ
+            
+        Returns:
+            Optional[str]: API ключ или None
+        """
+        if not self.provider_config.requires_api_key:
+            return None
+        
+        # Если ключ передан напрямую, используем его
+        if api_key:
+            return api_key
+        
+        # Пытаемся получить из SecretsManager
+        if SECRETS_MANAGER_AVAILABLE:
+            try:
+                secrets_manager = get_secrets_manager()
+                secret_key = f"{self.provider_name}_api_key"
+                stored_key = secrets_manager.get_secret(secret_key)
+                if stored_key:
+                    logger.debug(f"API ключ для {self.provider_name} получен из SecretsManager")
+                    return stored_key
+            except Exception as e:
+                logger.warning(f"Ошибка получения ключа из SecretsManager: {e}")
+        
+        # Пытаемся получить из переменных окружения
+        env_key = self.provider_config.api_key_name
+        api_key = os.environ.get(env_key)
+        if api_key:
+            logger.debug(f"API ключ для {self.provider_name} получен из переменной окружения {env_key}")
+            # Сохраняем в SecretsManager для будущего использования
+            if SECRETS_MANAGER_AVAILABLE:
+                try:
+                    secrets_manager = get_secrets_manager()
+                    secrets_manager.store_secret(f"{self.provider_name}_api_key", api_key)
+                except Exception as e:
+                    logger.warning(f"Не удалось сохранить ключ в SecretsManager: {e}")
+        
+        return api_key
+    
+    def validate_api_key(self) -> bool:
+        """
+        Проверяет наличие и валидность API ключа
+        
+        Returns:
+            bool: True если ключ есть и валиден
+        """
+        if not self.provider_config.requires_api_key:
+            return True
+        
+        if not self.api_key:
+            logger.error(f"API ключ для {self.provider_name} не найден")
+            return False
+        
+        # Базовая проверка формата ключа
+        if len(self.api_key) < 10:
+            logger.error(f"API ключ для {self.provider_name} слишком короткий")
+            return False
+        
+        return True
     
     # Обязательные методы от BaseProcessor
     @abstractmethod
@@ -176,7 +253,7 @@ class BaseLLMPlugin(BaseProcessor):
             from .llm_trainer import LLMTrainer
             return LLMTrainer
         except ImportError:
-            print("⚠️ LLMTrainer еще не реализован")
+            logger.warning("LLMTrainer еще не реализован")
             return None
     
     def get_model_type(self) -> str:
@@ -244,7 +321,7 @@ class BaseLLMPlugin(BaseProcessor):
                 image = image.convert('RGB')
             return image
         except Exception as e:
-            print(f"Ошибка загрузки изображения {image_path}: {e}")
+            logger.error(f"Ошибка загрузки изображения {image_path}: {e}")
             # Возвращаем пустое изображение
             return Image.new('RGB', (100, 100), color='white')
     
@@ -265,10 +342,10 @@ class BaseLLMPlugin(BaseProcessor):
             text = pytesseract.image_to_string(image, lang=ocr_lang)
             return text.strip()
         except ImportError:
-            print("⚠️ pytesseract не установлен. OCR недоступен.")
+            logger.warning("pytesseract не установлен. OCR недоступен.")
             return "OCR недоступен - установите pytesseract"
         except Exception as e:
-            print(f"Ошибка OCR: {e}")
+            logger.error(f"Ошибка OCR: {e}")
             return "Не удалось извлечь текст из изображения"
     
     def create_invoice_prompt(self, custom_prompt: Optional[str] = None, include_context_fields: bool = True) -> str:
@@ -363,7 +440,7 @@ class BaseLLMPlugin(BaseProcessor):
             # Проверяем, не содержит ли ответ сообщение об ошибке API
             if self._is_error_response(response):
                 error_msg = self._extract_error_message(response)
-                print(f"❌ Ответ содержит ошибку API: {error_msg}")
+                logger.error(f"Ответ содержит ошибку API: {error_msg}")
                 return {"error": error_msg, "note_gemini": f"Ошибка API {self.provider_name}: {error_msg}"}
             
             # Очищаем ответ от лишнего текста
@@ -376,16 +453,16 @@ class BaseLLMPlugin(BaseProcessor):
                 data = json.loads(json_str)
                 return self._normalize_invoice_data(data)
             else:
-                print("⚠️ JSON не найден в ответе LLM")
-                print(f"Ответ LLM: {response[:300]}...")
+                logger.warning("JSON не найден в ответе LLM")
+                logger.debug(f"Ответ LLM: {response[:300]}...")
                 return {"error": "JSON не найден в ответе", "raw_response": response[:500]}
                 
         except json.JSONDecodeError as e:
-            print(f"❌ Ошибка парсинга JSON: {e}")
-            print(f"Ответ LLM: {response[:500]}...")
+            logger.error(f"Ошибка парсинга JSON: {e}")
+            logger.debug(f"Ответ LLM: {response[:500]}...")
             return {"error": f"Ошибка парсинга JSON: {e}", "raw_response": response[:500]}
         except Exception as e:
-            print(f"❌ Ошибка обработки ответа LLM: {e}")
+            logger.error(f"Ошибка обработки ответа LLM: {e}")
             return {"error": f"Ошибка обработки: {e}", "raw_response": response[:500] if response else "Пустой ответ"}
     
     def _is_error_response(self, response: str) -> bool:
@@ -485,7 +562,8 @@ class BaseLLMPlugin(BaseProcessor):
             "model": self.model_name,
             "supports_vision": self.provider_config.supports_vision,
             "requires_api_key": self.provider_config.requires_api_key,
-            "is_loaded": self.is_loaded
+            "is_loaded": self.is_loaded,
+            "has_api_key": bool(self.api_key) if self.provider_config.requires_api_key else True
         }
     
     @staticmethod
@@ -503,141 +581,109 @@ class BaseLLMPlugin(BaseProcessor):
     def update_provider_models(provider_name: str, models: List[str]) -> bool:
         """
         Обновляет список моделей для провайдера.
+        Используется для динамического обновления после получения из API.
         
         Args:
-            provider_name: Название провайдера
+            provider_name: Имя провайдера
             models: Новый список моделей
             
         Returns:
             bool: True если обновление успешно
         """
-        if provider_name not in LLM_PROVIDERS:
-            print(f"❌ Провайдер {provider_name} не найден")
-            return False
-        
-        try:
-            # Обновляем список моделей
+        if provider_name in LLM_PROVIDERS:
             LLM_PROVIDERS[provider_name].models = models
-            print(f"✅ Обновлен список моделей для {provider_name}: {len(models)} моделей")
+            logger.info(f"Обновлен список моделей для {provider_name}: {len(models)} моделей")
             return True
-        except Exception as e:
-            print(f"❌ Ошибка обновления моделей для {provider_name}: {e}")
-            return False
+        return False
     
     @staticmethod
     def refresh_provider_models(provider_name: str, api_key: str = None) -> List[str]:
         """
-        Получает актуальный список моделей от провайдера и обновляет конфигурацию.
+        Обновляет список моделей из API провайдера.
         
         Args:
-            provider_name: Название провайдера
-            api_key: API ключ для доступа к провайдеру
+            provider_name: Имя провайдера
+            api_key: API ключ для доступа
             
         Returns:
-            List[str]: Список актуальных моделей
+            List[str]: Обновленный список моделей
         """
-        if provider_name not in LLM_PROVIDERS:
-            print(f"❌ Провайдер {provider_name} не поддерживается")
-            return []
-        
-        try:
-            if provider_name == "openai":
-                return BaseLLMPlugin._refresh_openai_models(api_key)
-            elif provider_name == "google":
-                return BaseLLMPlugin._refresh_google_models(api_key)
-            elif provider_name == "anthropic":
-                return BaseLLMPlugin._refresh_anthropic_models(api_key)
-            else:
-                print(f"⚠️ Автоматическое обновление моделей для {provider_name} пока не поддерживается")
-                return LLM_PROVIDERS[provider_name].models
-                
-        except Exception as e:
-            print(f"❌ Ошибка получения моделей для {provider_name}: {e}")
-            return LLM_PROVIDERS[provider_name].models
+        if provider_name == "openai":
+            return BaseLLMPlugin._refresh_openai_models(api_key)
+        elif provider_name == "google":
+            return BaseLLMPlugin._refresh_google_models(api_key)
+        elif provider_name == "anthropic":
+            return BaseLLMPlugin._refresh_anthropic_models(api_key)
+        else:
+            logger.warning(f"Обновление моделей для {provider_name} не поддерживается")
+            return LLM_PROVIDERS.get(provider_name, LLMProviderConfig("", "", [])).models
     
     @staticmethod
     def _refresh_openai_models(api_key: str) -> List[str]:
-        """Получает актуальный список моделей OpenAI."""
-        if not api_key:
-            print("❌ API ключ OpenAI не предоставлен")
-            return LLM_PROVIDERS["openai"].models
-        
+        """Получает список моделей OpenAI через API."""
         try:
             import openai
             client = openai.OpenAI(api_key=api_key)
-            models_response = client.models.list()
+            models = client.models.list()
             
-            # Фильтруем только GPT модели для chat completions
-            chat_models = []
-            for model in models_response.data:
-                model_id = model.id
-                if any(gpt_prefix in model_id for gpt_prefix in ["gpt-4", "gpt-3.5"]):
-                    # Исключаем embedding и deprecated модели
-                    if "embedding" not in model_id and not BaseLLMPlugin._is_openai_model_deprecated(model_id):
-                        chat_models.append(model_id)
+            # Фильтруем только релевантные модели
+            relevant_models = []
+            for model in models.data:
+                if any(prefix in model.id for prefix in ['gpt-', 'dall-e', 'whisper']):
+                    if not BaseLLMPlugin._is_openai_model_deprecated(model.id):
+                        relevant_models.append(model.id)
             
             # Сортируем модели
-            chat_models.sort()
+            relevant_models.sort(reverse=True)
             
-            # Обновляем конфигурацию
-            if chat_models:
-                BaseLLMPlugin.update_provider_models("openai", chat_models)
+            # Обновляем глобальный список
+            if relevant_models:
+                BaseLLMPlugin.update_provider_models("openai", relevant_models)
             
-            return chat_models
+            return relevant_models
             
         except Exception as e:
-            print(f"❌ Ошибка получения моделей OpenAI: {e}")
+            logger.error(f"Ошибка получения моделей OpenAI: {e}")
             return LLM_PROVIDERS["openai"].models
     
     @staticmethod
     def _refresh_google_models(api_key: str) -> List[str]:
-        """Получает актуальный список моделей Google Gemini."""
-        if not api_key:
-            print("❌ API ключ Google не предоставлен")
-            return LLM_PROVIDERS["google"].models
-        
+        """Получает список моделей Google через API."""
         try:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            models_list = genai.list_models()
             
-            # Фильтруем только Gemini модели
-            gemini_models = []
-            for model in models_list:
-                if "gemini" in model.name.lower() and "generateContent" in model.supported_generation_methods:
-                    gemini_models.append(model.name)
+            models = []
+            for model in genai.list_models():
+                if 'generateContent' in model.supported_generation_methods:
+                    models.append(model.name)
             
             # Сортируем модели
-            gemini_models.sort()
+            models.sort(reverse=True)
             
-            # Обновляем конфигурацию
-            if gemini_models:
-                BaseLLMPlugin.update_provider_models("google", gemini_models)
+            # Обновляем глобальный список
+            if models:
+                BaseLLMPlugin.update_provider_models("google", models)
             
-            return gemini_models
+            return models
             
         except Exception as e:
-            print(f"❌ Ошибка получения моделей Google: {e}")
+            logger.error(f"Ошибка получения моделей Google: {e}")
             return LLM_PROVIDERS["google"].models
     
     @staticmethod
     def _refresh_anthropic_models(api_key: str) -> List[str]:
-        """Получает актуальный список моделей Anthropic (статический список)."""
+        """Получает список моделей Anthropic."""
         # Anthropic не предоставляет API для получения списка моделей
-        # Возвращаем текущий статический список
-        print("ℹ️ Anthropic не предоставляет API для получения списка моделей")
+        # Возвращаем предопределенный список
         return LLM_PROVIDERS["anthropic"].models
     
     @staticmethod
     def _is_openai_model_deprecated(model_id: str) -> bool:
         """Проверяет, является ли модель OpenAI устаревшей."""
-        deprecated_models = [
-            "gpt-4-vision-preview",
-            "gpt-4-0314",
-            "gpt-4-32k-0314", 
-            "gpt-3.5-turbo-0301",
-            "text-davinci-003",
-            "text-davinci-002",
-            "code-davinci-002"
+        deprecated_patterns = [
+            'davinci', 'curie', 'babbage', 'ada',
+            'text-', 'code-', 'edit-', 'if-',
+            '-001', '-002', '-003'
         ]
-        return model_id in deprecated_models 
+        return any(pattern in model_id for pattern in deprecated_patterns) 

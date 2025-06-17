@@ -78,7 +78,7 @@ class ModelManager:
         if self.resource_manager:
             logger.info("Менеджер ресурсов инициализирован")
         
-        print("DEBUG: ModelManager.__init__ completed") 
+        logger.debug("ModelManager.__init__ completed") 
         
     def get_model(self, model_type):
         model_type_lower = model_type.lower()
@@ -102,7 +102,7 @@ class ModelManager:
                 # Формируем путь к модели в каталоге trained_models
                 model_identifier_to_load = os.path.join(app_config.TRAINED_MODELS_PATH, custom_model_name)
                 is_custom_model = True  
-                print(f"DEBUG: ModelManager: Загрузка кастомной LayoutLM модели: {model_identifier_to_load}, is_custom={is_custom_model}")
+                logger.debug(f"ModelManager: Загрузка кастомной LayoutLM модели: {model_identifier_to_load}, is_custom={is_custom_model}")
             else:
                 # Загружаем модель с Hugging Face
                 model_identifier_to_load = settings_manager.get_string('Models', 'layoutlm_id', app_config.LAYOUTLM_MODEL_ID)

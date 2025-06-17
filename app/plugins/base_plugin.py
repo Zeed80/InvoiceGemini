@@ -7,6 +7,13 @@ from typing import Dict, Any, List, Optional, Union, Callable
 from enum import Enum
 import json
 from pathlib import Path
+import logging
+import importlib
+import subprocess
+import sys
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 class PluginType(Enum):
     """Типы плагинов в системе"""
@@ -122,6 +129,7 @@ class BasePlugin(ABC):
         self._metadata = None
         self._progress_callback: Optional[Callable] = None
         self._last_error: Optional[str] = None
+        self._missing_dependencies: List[str] = []
     
     @property
     @abstractmethod
@@ -143,6 +151,129 @@ class BasePlugin(ABC):
     def cleanup(self):
         """Очищает ресурсы плагина"""
         pass
+    
+    def check_dependencies(self) -> Dict[str, Any]:
+        """
+        Проверяет наличие всех зависимостей плагина
+        
+        Returns:
+            Dict[str, Any]: {
+                "satisfied": bool,
+                "missing": List[str],
+                "errors": List[str],
+                "install_commands": List[str]
+            }
+        """
+        result = {
+            "satisfied": True,
+            "missing": [],
+            "errors": [],
+            "install_commands": []
+        }
+        
+        dependencies = self.metadata.dependencies or []
+        
+        for dep in dependencies:
+            try:
+                # Простая проверка для модулей Python
+                if '==' in dep or '>=' in dep or '<=' in dep:
+                    # Это pip пакет с версией
+                    package_name = dep.split('==')[0].split('>=')[0].split('<=')[0].strip()
+                else:
+                    package_name = dep.strip()
+                
+                # Пробуем импортировать
+                try:
+                    importlib.import_module(package_name)
+                    logger.debug(f"Зависимость {package_name} найдена")
+                except ImportError:
+                    # Некоторые пакеты имеют другое имя при импорте
+                    import_mapping = {
+                        'google-generativeai': 'google.generativeai',
+                        'python-dotenv': 'dotenv',
+                        'Pillow': 'PIL',
+                        'beautifulsoup4': 'bs4',
+                        'PyQt6-sip': 'PyQt6.sip',
+                        'scikit-learn': 'sklearn',
+                        'pyqt6': 'PyQt6',
+                        'pyqt6-qt6': 'PyQt6.Qt6',
+                        'nvidia-ml-py': 'pynvml',
+                    }
+                    
+                    actual_import = import_mapping.get(package_name, package_name.replace('-', '_'))
+                    try:
+                        importlib.import_module(actual_import)
+                        logger.debug(f"Зависимость {package_name} найдена как {actual_import}")
+                    except ImportError:
+                        result["satisfied"] = False
+                        result["missing"].append(dep)
+                        result["install_commands"].append(f"pip install {dep}")
+                        logger.warning(f"Зависимость {dep} не найдена")
+                        
+            except Exception as e:
+                result["errors"].append(f"Ошибка проверки {dep}: {str(e)}")
+                logger.error(f"Ошибка проверки зависимости {dep}: {e}")
+        
+        # Проверка версии Python
+        try:
+            import sys
+            current_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+            min_version = self.metadata.min_python_version
+            
+            if current_version < min_version:
+                result["satisfied"] = False
+                result["errors"].append(
+                    f"Требуется Python {min_version} или выше, текущая версия {current_version}"
+                )
+        except Exception as e:
+            result["errors"].append(f"Ошибка проверки версии Python: {str(e)}")
+        
+        # Сохраняем результат для использования в других методах
+        self._missing_dependencies = result["missing"]
+        
+        return result
+    
+    def install_dependencies(self) -> bool:
+        """
+        Пытается установить недостающие зависимости
+        
+        Returns:
+            bool: True если все зависимости установлены успешно
+        """
+        dep_check = self.check_dependencies()
+        
+        if dep_check["satisfied"]:
+            logger.info(f"Все зависимости плагина {self.metadata.name} удовлетворены")
+            return True
+        
+        if not dep_check["install_commands"]:
+            logger.warning(f"Нет команд установки для плагина {self.metadata.name}")
+            return False
+        
+        logger.info(f"Установка зависимостей для плагина {self.metadata.name}...")
+        
+        for cmd in dep_check["install_commands"]:
+            try:
+                logger.info(f"Выполнение: {cmd}")
+                result = subprocess.run(
+                    cmd.split(),
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                logger.info(f"Успешно: {cmd}")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Ошибка установки: {cmd}\n{e.stderr}")
+                self.set_error(f"Не удалось установить зависимости: {e.stderr}")
+                return False
+            except Exception as e:
+                logger.error(f"Неожиданная ошибка при установке: {e}")
+                self.set_error(f"Ошибка установки зависимостей: {str(e)}")
+                return False
+        
+        # Проверяем еще раз после установки
+        final_check = self.check_dependencies()
+        return final_check["satisfied"]
     
     def set_progress_callback(self, callback: Callable[[int, str], None]):
         """Устанавливает callback для отслеживания прогресса"""
@@ -202,7 +333,8 @@ class BasePlugin(ABC):
             "is_enabled": self.is_enabled,
             "version": self.metadata.version,
             "priority": self.metadata.priority.value,
-            "last_error": self._last_error
+            "last_error": self._last_error,
+            "missing_dependencies": self._missing_dependencies
         }
 
 class ProcessorPlugin(BasePlugin):
@@ -512,8 +644,8 @@ class NotificationPlugin(BasePlugin):
         Отправляет уведомление
         
         Args:
-            message: Сообщение для отправки
-            **kwargs: Дополнительные параметры
+            message: Текст уведомления
+            **kwargs: Дополнительные параметры (recipient, priority, etc.)
             
         Returns:
             bool: True если уведомление отправлено
@@ -526,7 +658,7 @@ class NotificationPlugin(BasePlugin):
         Возвращает доступные каналы уведомлений
         
         Returns:
-            List[str]: Список каналов
+            List[str]: Список каналов (email, sms, push, etc.)
         """
         pass
     
@@ -543,8 +675,8 @@ class NotificationPlugin(BasePlugin):
         """
         try:
             return template.format(**data)
-        except KeyError as e:
-            self.set_error(f"Ошибка форматирования: отсутствует ключ {e}")
+        except Exception as e:
+            logger.error(f"Ошибка форматирования сообщения: {e}")
             return template
 
 # Утилитарные функции для работы с плагинами
