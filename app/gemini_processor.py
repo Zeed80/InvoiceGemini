@@ -9,11 +9,17 @@ import time
 from PIL import Image
 from typing import Optional, Dict
 from datetime import datetime
+import tempfile
+import shutil
+import logging
 
 from .base_processor import BaseProcessor
 from . import config as app_config
 from .settings_manager import settings_manager
 from .invoice_formatter import InvoiceFormatter
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 # Глобальная функция для логирования
 def log_message(message):
@@ -31,18 +37,34 @@ class GeminiProcessor(BaseProcessor):
     Процессор для модели Google Gemini.
     Взаимодействует с Gemini API для извлечения данных из документов.
     """
-    def __init__(self):
-        print("DEBUG: GeminiProcessor.__init__ called")
-        self.model_id = settings_manager.get_string('Models', 'gemini_id', app_config.GEMINI_MODEL_ID)
+    def __init__(self, model_id: Optional[str] = None):
+        """
+        Инициализация процессора Gemini.
+        
+        Args:
+            model_id: ID модели Gemini (если не указан, используется из настроек)
+        """
+        super().__init__()
+        self.model_id = model_id or settings_manager.get_string('Gemini', 'sub_model_id', 'models/gemini-2.0-flash')
         self.model = None
         self.is_loaded = False
         self._full_prompt_sent = None
         self.temp_files = []  # Список для хранения путей к временным файлам
+        self.temp_dirs = []  # Список для хранения путей к временным директориям
+        
+        # Инициализируем менеджер ресурсов если доступен
+        try:
+            from .core.resource_manager import get_resource_manager
+            self.resource_manager = get_resource_manager()
+        except ImportError:
+            self.resource_manager = None
+            logger.warning("Менеджер ресурсов недоступен, используется старая система")
         
         # Создаем подпапку для временных файлов Gemini, если её нет
         self.temp_folder = os.path.join(app_config.TEMP_PATH, "gemini_temp")
         os.makedirs(self.temp_folder, exist_ok=True)
-
+        self._custom_prompt_override = None  # Для временного переопределения промпта
+        
         if GENAI_AVAILABLE:
             # Получаем API ключ через безопасную систему с fallback
             try:
@@ -89,6 +111,7 @@ class GeminiProcessor(BaseProcessor):
         if not current_api_key:
             print("Ошибка: API ключ Google не установлен в настройках.")
             self.is_loaded = False
+            self.model = None
             return False
         
         try:
@@ -107,22 +130,36 @@ class GeminiProcessor(BaseProcessor):
         """
         Очищает все временные файлы, созданные во время обработки.
         """
-        print(f"Запускаем очистку временных файлов Gemini...")
-        print(f"Начинаем очистку {len(self.temp_files)} временных файлов...")
-        for temp_path in self.temp_files:
-            if os.path.exists(temp_path):
-                try:
-                    if os.path.isfile(temp_path):
-                        os.unlink(temp_path)
-                        print(f"Удален временный файл: {temp_path}")
-                    elif os.path.isdir(temp_path):
-                        import shutil
-                        shutil.rmtree(temp_path)
-                        print(f"Удалена временная директория: {temp_path}")
-                except Exception as e:
-                    print(f"Не удалось удалить временный путь {temp_path}: {e}")
+        if self.resource_manager:
+            # Новая система автоматически очищает ресурсы
+            logger.info("Очистка временных файлов выполняется автоматически менеджером ресурсов")
+            return
+            
+        # Fallback на старую систему
+        print("Очистка временных файлов Gemini...")
         
-        self.temp_files = []  # Очищаем список после удаления
+        # Удаляем временные файлы
+        for temp_file in self.temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                    print(f"  Удален временный файл: {temp_file}")
+            except Exception as e:
+                print(f"  Ошибка при удалении файла {temp_file}: {e}")
+        
+        # Удаляем временные директории
+        for temp_dir in self.temp_dirs:
+            try:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                    print(f"  Удалена временная директория: {temp_dir}")
+            except Exception as e:
+                print(f"  Ошибка при удалении директории {temp_dir}: {e}")
+        
+        # Очищаем списки
+        self.temp_files.clear()
+        self.temp_dirs.clear()
+        
         print("Очистка временных файлов завершена")
 
     def process(self, image_path: str) -> Optional[Dict]:
@@ -179,7 +216,7 @@ class GeminiProcessor(BaseProcessor):
                         temp_image_path = os.path.join(temp_dir, "temp_gemini_pdf.jpg")
                         image.save(temp_image_path, "JPEG")
                         self.temp_files.append(temp_image_path)
-                        self.temp_files.append(temp_dir)
+                        self.temp_dirs.append(temp_dir)
                         
                     except ImportError:
                         log_message("ОШИБКА: pdf2image не установлен. Установите: pip install pdf2image")
@@ -1001,3 +1038,62 @@ class GeminiProcessor(BaseProcessor):
         finally:
             # Очищаем временный промпт после обработки
             self._custom_prompt_override = None
+
+    def _get_api_key(self):
+        """Получение API ключа из настроек безопасным способом."""
+        # Используем новую систему безопасности через SettingsManager
+        api_key = settings_manager.get_encrypted_setting('google_api_key')
+        
+        if not api_key:
+            # Fallback на переменную окружения
+            api_key = os.environ.get('GOOGLE_API_KEY')
+        
+        if not api_key:
+            print("❌ Google API ключ не найден. Установите его через настройки или переменную окружения GOOGLE_API_KEY")
+        
+        return api_key
+    
+    def _get_model_id_from_settings(self):
+        """Получает ID модели из настроек."""
+        return settings_manager.get_string('Gemini', 'sub_model_id', 'models/gemini-2.0-flash')
+
+    def _convert_pdf_to_images(self, pdf_path):
+        """Конвертирует PDF в изображения."""
+        try:
+            print(f"Конвертация PDF в изображения: {pdf_path}")
+            
+            # Используем менеджер ресурсов для временной директории
+            if self.resource_manager:
+                with self.resource_manager.temp_directory(prefix="pdf_images_") as temp_dir:
+                    images = self._convert_pdf_internal(pdf_path, temp_dir)
+                    return images
+            else:
+                # Fallback на старую систему
+                temp_dir = tempfile.mkdtemp(prefix="pdf_images_", dir=app_config.TEMP_PATH)
+                self.temp_dirs.append(temp_dir)
+                return self._convert_pdf_internal(pdf_path, temp_dir)
+                
+        except Exception as e:
+            print(f"Ошибка при конвертации PDF: {e}")
+            return []
+    
+    def _convert_pdf_internal(self, pdf_path, temp_dir):
+        """Внутренняя логика конвертации PDF."""
+        # Проверяем настройки poppler
+        poppler_path = settings_manager.get_poppler_path() if hasattr(settings_manager, 'get_poppler_path') else app_config.POPPLER_PATH
+        
+        # Конвертируем PDF в изображения с правильным DPI
+        dpi = app_config.GEMINI_PDF_DPI if hasattr(app_config, 'GEMINI_PDF_DPI') else 200
+        images = convert_from_path(pdf_path, dpi=dpi, poppler_path=poppler_path)
+        
+        # Сохраняем изображения
+        image_paths = []
+        for i, image in enumerate(images):
+            image_path = os.path.join(temp_dir, f"page_{i+1}.jpg")
+            image.save(image_path, "JPEG", quality=95)
+            if not self.resource_manager:
+                self.temp_files.append(image_path)
+            image_paths.append(image_path)
+            print(f"  Страница {i+1} сохранена: {image_path}")
+        
+        return image_paths

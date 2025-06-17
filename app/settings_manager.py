@@ -8,6 +8,14 @@ from pathlib import Path
 
 from . import config
 
+# Импортируем новую систему безопасности
+try:
+    from .security.secrets_manager import get_secrets_manager
+    SECURITY_AVAILABLE = True
+except ImportError:
+    SECURITY_AVAILABLE = False
+    print("⚠️ Модуль безопасности недоступен, используется старая система хранения")
+
 class SettingsManager:
     """
     Класс для управления настройками приложения.
@@ -26,6 +34,16 @@ class SettingsManager:
         self.config = configparser.ConfigParser(interpolation=None)
         self._ensure_data_dir_exists() # Убедимся, что директория APP_DATA_PATH существует
         self.load_settings()
+        
+        # Инициализируем менеджер секретов если доступен
+        self._secrets_manager = None
+        if SECURITY_AVAILABLE:
+            try:
+                self._secrets_manager = get_secrets_manager()
+                # Мигрируем существующие незашифрованные ключи
+                self._migrate_to_secure_storage()
+            except Exception as e:
+                print(f"⚠️ Не удалось инициализировать менеджер секретов: {e}")
     
     def _ensure_data_dir_exists(self):
         # Создаем директорию для файла настроек, если ее нет
@@ -866,45 +884,116 @@ class SettingsManager:
     
     def get_encrypted_setting(self, key: str, default=None):
         """
-        Получает зашифрованную настройку через систему секретов.
+        Получает зашифрованное значение настройки.
         
         Args:
-            key: Ключ секрета
+            key: Ключ настройки (например, 'google_api_key')
             default: Значение по умолчанию
+            
+        Returns:
+            Расшифрованное значение или default
         """
-        try:
-            from config.secrets import SecretsManager
-            secrets = SecretsManager()
-            return secrets.get_secret(key, default)
-        except Exception as e:
-            print(f"Ошибка получения зашифрованной настройки {key}: {e}")
-            return default
+        # Если доступен менеджер секретов, используем его
+        if self._secrets_manager:
+            return self._secrets_manager.get_secret(key, default)
+        
+        # Fallback на старую систему
+        # ВНИМАНИЕ: Это небезопасно и используется только для обратной совместимости
+        if 'Secrets' in self.config and key in self.config['Secrets']:
+            print(f"⚠️ ПРЕДУПРЕЖДЕНИЕ: Используется небезопасное хранение для '{key}'. "
+                  f"Пожалуйста, обновите приложение для использования системы шифрования.")
+            return self.config['Secrets'][key]
+            
+        # Проверяем старые места хранения для обратной совместимости
+        legacy_mappings = {
+            'google_api_key': ('Gemini', 'api_key'),
+            'hf_token': ('Network', 'hf_token'),
+            'openai_api_key': ('CloudLLM', 'openai_api_key'),
+            'anthropic_api_key': ('CloudLLM', 'anthropic_api_key'),
+        }
+        
+        if key in legacy_mappings:
+            section, old_key = legacy_mappings[key]
+            if section in self.config and old_key in self.config[section]:
+                value = self.config[section][old_key]
+                if value:
+                    print(f"⚠️ Мигрирую '{key}' из старого расположения")
+                    # Сохраняем в новую систему и удаляем из старой
+                    self.save_encrypted_setting(key, value)
+                    self.config[section][old_key] = ''
+                    self.save_settings()
+                    return value
+        
+        return default
     
     def save_encrypted_setting(self, key: str, value: str):
         """
-        Сохраняет зашифрованную настройку через систему секретов.
+        Сохраняет значение в зашифрованном виде.
         
         Args:
-            key: Ключ секрета
+            key: Ключ настройки
             value: Значение для сохранения
         """
-        try:
-            from config.secrets import SecretsManager
-            secrets = SecretsManager()
-            return secrets.set_secret(key, value)
-        except Exception as e:
-            print(f"Ошибка сохранения зашифрованной настройки {key}: {e}")
-            return False
+        # Если доступен менеджер секретов, используем его
+        if self._secrets_manager:
+            self._secrets_manager.set_secret(key, value)
+            return
+        
+        # Fallback на старую систему (НЕ РЕКОМЕНДУЕТСЯ)
+        print(f"⚠️ КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: Сохранение '{key}' в небезопасном виде!")
+        if 'Secrets' not in self.config:
+            self.config['Secrets'] = {}
+        self.config['Secrets'][key] = value
+        self.save_settings()
     
     def set_encrypted_setting(self, key: str, value: str):
-        """
-        Алиас для save_encrypted_setting - для обратной совместимости.
+        """Псевдоним для save_encrypted_setting для обратной совместимости."""
+        self.save_encrypted_setting(key, value)
+    
+    def _migrate_to_secure_storage(self):
+        """Мигрирует существующие незашифрованные секреты в безопасное хранилище."""
+        if not self._secrets_manager:
+            return
+            
+        migration_count = 0
         
-        Args:
-            key: Ключ секрета
-            value: Значение для сохранения
-        """
-        return self.save_encrypted_setting(key, value)
+        # Проверяем старые места хранения
+        legacy_mappings = {
+            'google_api_key': ('Gemini', 'api_key'),
+            'hf_token': ('Network', 'hf_token'),
+            'openai_api_key': ('CloudLLM', 'openai_api_key'),
+            'anthropic_api_key': ('CloudLLM', 'anthropic_api_key'),
+            'mistral_api_key': ('CloudLLM', 'mistral_api_key'),
+            'deepseek_api_key': ('CloudLLM', 'deepseek_api_key'),
+            'xai_api_key': ('CloudLLM', 'xai_api_key'),
+        }
+        
+        for secret_key, (section, old_key) in legacy_mappings.items():
+            if section in self.config and old_key in self.config[section]:
+                old_value = self.config[section][old_key]
+                if old_value and self._secrets_manager.validate_secret(secret_key, old_value):
+                    # Мигрируем в безопасное хранилище
+                    self._secrets_manager.set_secret(secret_key, old_value)
+                    # Удаляем из старого места
+                    self.config[section][old_key] = ''
+                    migration_count += 1
+                    print(f"✅ Мигрирован секрет: {secret_key}")
+        
+        # Проверяем раздел Secrets (если есть)
+        if 'Secrets' in self.config:
+            for key, value in dict(self.config['Secrets']).items():
+                if value and self._secrets_manager.validate_secret(key, value):
+                    self._secrets_manager.set_secret(key, value)
+                    self.config['Secrets'][key] = ''
+                    migration_count += 1
+                    print(f"✅ Мигрирован секрет: {key}")
+        
+        if migration_count > 0:
+            self.save_settings()
+            print(f"✅ Успешно мигрировано {migration_count} секретов в безопасное хранилище")
+            # Создаем резервную копию
+            if hasattr(self._secrets_manager, 'create_backup'):
+                self._secrets_manager.create_backup()
     
     def get_company_receiver_name(self) -> str:
         """

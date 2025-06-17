@@ -45,6 +45,15 @@ from .base_processor import BaseProcessor  # Импортируем BaseProcesso
 from .invoice_formatter import InvoiceFormatter  # Импортируем InvoiceFormatter из нового файла
 from app.processing.table_extractor import extract_table_items_from_layoutlm
 
+# Импортируем новые компоненты безопасности и управления ресурсами
+try:
+    from .core.memory_manager import get_memory_manager
+    from .core.resource_manager import get_resource_manager
+    MEMORY_MANAGEMENT_AVAILABLE = True
+except ImportError:
+    MEMORY_MANAGEMENT_AVAILABLE = False
+    logger.warning("Модули управления памятью недоступны")
+
 class ModelManager:
     """
     Класс для управления моделями машинного обучения.
@@ -60,10 +69,27 @@ class ModelManager:
         self.plugin_manager = None
         self._init_llm_plugins()
         
+        # Инициализируем менеджеры ресурсов если доступны
+        self.memory_manager = get_memory_manager() if MEMORY_MANAGEMENT_AVAILABLE else None
+        self.resource_manager = get_resource_manager() if MEMORY_MANAGEMENT_AVAILABLE else None
+        
+        if self.memory_manager:
+            logger.info("Менеджер памяти инициализирован")
+        if self.resource_manager:
+            logger.info("Менеджер ресурсов инициализирован")
+        
         print("DEBUG: ModelManager.__init__ completed") 
         
     def get_model(self, model_type):
         model_type_lower = model_type.lower()
+        
+        # Проверяем доступность памяти перед загрузкой
+        if self.memory_manager:
+            can_load, message = self.memory_manager.can_load_model(model_type_lower)
+            if not can_load:
+                logger.error(f"Недостаточно памяти для загрузки модели: {message}")
+                raise MemoryError(message)
+        
         if model_type_lower == 'layoutlm':
             # NEW: Логика для определения, какую модель LayoutLM загружать
             active_type = settings_manager.get_active_layoutlm_model_type()
