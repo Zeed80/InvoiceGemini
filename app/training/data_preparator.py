@@ -3562,20 +3562,21 @@ class TrainingDataPreparator:
             # Форматируем для Donut в зависимости от типа задачи
             self._log(f"      🔄 Форматирование для Donut...")
             if task_type == "document_parsing":
-                target_text = self._format_donut_parsing_target_modern(fields)
+                target_text = self._create_donut_parsing_target(fields)
                 self._log(f"      ✅ Создан parsing target: {target_text[:100]}...")
             elif task_type == "document_vqa":
-                target_text = self._format_donut_vqa_target_modern(fields)
-                self._log(f"      ✅ Создан VQA target: {target_text[:100]}...")
+                # Для VQA используем старый метод, но с правильным форматом
+                target_text = self._create_donut_parsing_target(fields)  # Используем parsing формат для лучшего качества
+                self._log(f"      ✅ Создан parsing target (вместо VQA): {target_text[:100]}...")
             else:
-                target_text = json.dumps(fields, ensure_ascii=False)
-                self._log(f"      ✅ Создан JSON target: {target_text[:100]}...")
+                target_text = self._create_donut_parsing_target(fields)
+                self._log(f"      ✅ Создан parsing target: {target_text[:100]}...")
                 
             annotation = {
                 'image': image_name,
                 'text': target_text,
                 'fields': fields,  # Сохраняем исходные поля для анализа
-                'task_type': task_type
+                'task_type': "document_parsing"  # Всегда используем parsing для лучшего качества Donut
             }
             
             self._log(f"      🎉 Аннотация создана успешно")
@@ -4948,3 +4949,42 @@ class TrainingDataPreparator:
         except Exception as e:
             self._log(f"⚠️ Ошибка загрузки метаданных датасета: {e}")
             return None
+
+    def _create_donut_parsing_target(self, extracted_fields: dict) -> str:
+        """Создает parsing target в правильном формате для Donut document parsing"""
+        
+        # Создаем правильный формат для document parsing
+        parsing_target = "<s_document>"
+        
+        # Добавляем все извлеченные поля в специальном формате
+        for field_name, field_value in extracted_fields.items():
+            if field_value and str(field_value).strip():
+                # Конвертируем имена полей в правильные теги
+                tag_name = self._get_donut_tag_name(field_name)
+                clean_value = str(field_value).strip()
+                parsing_target += f"<s_{tag_name}>{clean_value}</s_{tag_name}>"
+        
+        parsing_target += "</s_document>"
+        
+        return parsing_target
+    
+    def _get_donut_tag_name(self, field_name: str) -> str:
+        """Конвертирует имя поля в правильное имя тега для Donut"""
+        
+        # Маппинг полей на стандартные теги Donut
+        field_mapping = {
+            'invoice_number': 'invoice_number',
+            'invoice_date': 'invoice_date', 
+            'company_name': 'company_name',
+            'company_inn': 'company_inn',
+            'total': 'total_amount',
+            'sender': 'sender',
+            'amount_no_vat': 'amount_no_vat',
+            'vat_percent': 'vat_rate',
+            'currency': 'currency',
+            'category': 'category',
+            'description': 'description',
+            'note': 'note'
+        }
+        
+        return field_mapping.get(field_name, field_name)
