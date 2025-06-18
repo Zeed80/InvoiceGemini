@@ -1,0 +1,42 @@
+Extract ALL fields from the invoice/document and return them in a structured format.
+
+MANDATORY FIELDS TO EXTRACT:
+1. Invoice Number (номер счета)
+2. Invoice Date (дата счета)
+3. Company Name (название компании поставщика)
+4. Company INN (ИНН поставщика)
+5. Company KPP (КПП поставщика)
+6. Company Address (адрес поставщика)
+7. Client Name (название клиента/покупателя)
+8. Client INN (ИНН клиента)
+9. Client KPP (КПП клиента)
+10. Client Address (адрес клиента)
+11. Total Amount (итого к оплате)
+12. VAT Amount (сумма НДС)
+13. Payment Terms (условия оплаты)
+14. Bank Account (банковский счет)
+15. Bank Name (название банка)
+
+ADDITIONAL FIELDS (if present):
+- Contract Number (номер договора)
+- Delivery Date (дата доставки)
+- Payment Due Date (срок оплаты)
+- Currency (валюта)
+- Items/Services (товары/услуги) with quantities and prices
+
+FORMAT:
+Use structured tags for each field: <s_field_name>value</s_field_name>
+
+IMPORTANT:
+- Extract EXACT values as they appear in the document
+- Do not make assumptions or fill in missing data
+- For dates, preserve the original format
+- For amounts, include decimal points and currency symbols
+- If a field is not found, omit it completely
+
+Example output:
+<s_invoice_number>СЧ-123456</s_invoice_number>
+<s_invoice_date>25.11.2024</s_invoice_date>
+<s_company_name>ООО "Рога и Копыта"</s_company_name>
+<s_company_inn>7707083893</s_company_inn>
+<s_total_amount>118000.00</s_total_amount> 

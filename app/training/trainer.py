@@ -32,6 +32,10 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import time
 
+# Импорт для обучения Donut
+from .enhanced_donut_trainer import EnhancedDonutTrainer
+from .donut_model_tester import DonutModelTester
+
 logger = logging.getLogger(__name__)
 
 class ModelTrainer:
@@ -2148,6 +2152,100 @@ class ModelTrainer:
             self.logger.error(f"Ошибка при обучении модели: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
+            return None
+
+    def train_donut_high_accuracy(self,
+                                 dataset_path: str,
+                                 base_model_id: str,
+                                 training_args: dict,
+                                 output_model_name: str,
+                                 ocr_processor=None,
+                                 gemini_processor=None) -> Optional[str]:
+        """
+        Обучает модель Donut с высокой точностью (> 98%)
+        
+        Args:
+            dataset_path: Путь к папке с документами для обучения
+            base_model_id: ID базовой модели Donut
+            training_args: Аргументы обучения
+            output_model_name: Имя выходной модели
+            ocr_processor: OCR процессор для извлечения текста
+            gemini_processor: Gemini процессор для интеллектуального извлечения
+            
+        Returns:
+            str: Путь к обученной модели или None при ошибке
+        """
+        try:
+            self._log("🎯 ========== ОБУЧЕНИЕ DONUT С ВЫСОКОЙ ТОЧНОСТЬЮ ==========")
+            self._log(f"🎯 Целевая точность: > 98%")
+            
+            # Создаем улучшенный тренер
+            enhanced_trainer = EnhancedDonutTrainer(self.app_config)
+            
+            # Передаем callbacks
+            enhanced_trainer.set_callbacks(
+                log_callback=self.log_callback,
+                progress_callback=self.progress_callback
+            )
+            
+            # Подготавливаем высококачественный датасет
+            self._log("📊 Подготовка высококачественного датасета...")
+            
+            dataset = enhanced_trainer.prepare_high_quality_dataset(
+                source_folder=dataset_path,
+                ocr_processor=ocr_processor,
+                gemini_processor=gemini_processor
+            )
+            
+            if self.stop_requested:
+                self._log("⏹️ Обучение остановлено пользователем")
+                return None
+                
+            # Обучаем с оптимальными параметрами
+            self._log("🚀 Запуск обучения с оптимизированными параметрами...")
+            
+            output_path = enhanced_trainer.train_high_accuracy_donut(
+                dataset=dataset,
+                base_model_id=base_model_id,
+                output_model_name=output_model_name,
+                training_args=training_args
+            )
+            
+            if output_path and not self.stop_requested:
+                # Тестируем модель
+                self._log("\n🧪 Тестирование обученной модели...")
+                
+                tester = DonutModelTester(output_path)
+                tester.load_model()
+                
+                # Если есть тестовые данные, проводим валидацию
+                test_data_path = os.path.join(self.app_config.TEST_DATA_PATH, "invoices")
+                if os.path.exists(test_data_path):
+                    self._log(f"📁 Найдена папка с тестовыми данными: {test_data_path}")
+                    
+                    ground_truth_path = os.path.join(test_data_path, "ground_truth.json")
+                    if not os.path.exists(ground_truth_path):
+                        ground_truth_path = None
+                        
+                    results = tester.test_on_dataset(test_data_path, ground_truth_path)
+                    passed = tester.validate_model_quality()
+                    
+                    if passed:
+                        self._log("🎉 Модель успешно прошла валидацию! Точность > 98%")
+                    else:
+                        self._log("⚠️ Модель не достигла целевой точности 98%")
+                else:
+                    self._log("ℹ️ Папка с тестовыми данными не найдена, пропускаем валидацию")
+                    
+                self._log(f"\n✅ Обучение завершено! Модель сохранена в: {output_path}")
+                return output_path
+            else:
+                return None
+                
+        except Exception as e:
+            self._log(f"❌ Ошибка при обучении Donut: {str(e)}")
+            import traceback
+            self._log(traceback.format_exc())
             return None
 
 class TrainingMetricsCallback(TrainerCallback):

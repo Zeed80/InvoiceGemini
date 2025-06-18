@@ -24,8 +24,8 @@ from PIL import Image
 import numpy as np
 
 # Evaluation imports
-from nltk.translate.bleu_score import sentence_bleu
-from rouge_score import rouge_scorer
+from collections import defaultdict
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,100 @@ class DonutDataCollator:
             'labels': labels
         }
 
+class DonutFieldExtractionMetrics:
+    """Метрики для оценки извлечения полей из документов"""
+    
+    def __init__(self):
+        self.reset()
+        
+    def reset(self):
+        self.true_positives = defaultdict(int)
+        self.false_positives = defaultdict(int)
+        self.false_negatives = defaultdict(int)
+        self.exact_matches = 0
+        self.partial_matches = 0
+        self.total_documents = 0
+        self.perfect_documents = 0
+        
+    def add_document(self, predicted_fields: Dict, ground_truth_fields: Dict):
+        """Добавляет результаты одного документа"""
+        self.total_documents += 1
+        
+        all_fields = set(predicted_fields.keys()) | set(ground_truth_fields.keys())
+        document_perfect = True
+        
+        for field_name in all_fields:
+            pred_value = predicted_fields.get(field_name, "").strip()
+            true_value = ground_truth_fields.get(field_name, "").strip()
+            
+            if pred_value and true_value:
+                if self._normalize_value(pred_value) == self._normalize_value(true_value):
+                    self.true_positives[field_name] += 1
+                    self.exact_matches += 1
+                elif self._is_partial_match(pred_value, true_value):
+                    self.true_positives[field_name] += 1
+                    self.partial_matches += 1
+                    document_perfect = False
+                else:
+                    self.false_positives[field_name] += 1
+                    document_perfect = False
+            elif pred_value and not true_value:
+                self.false_positives[field_name] += 1
+                document_perfect = False
+            elif not pred_value and true_value:
+                self.false_negatives[field_name] += 1
+                document_perfect = False
+                
+        if document_perfect and len(ground_truth_fields) > 0:
+            self.perfect_documents += 1
+            
+    def _normalize_value(self, value: str) -> str:
+        """Нормализация значения для сравнения"""
+        value = " ".join(value.split())
+        value = value.lower()
+        value = value.strip(".,;:")
+        return value
+        
+    def _is_partial_match(self, pred: str, true: str) -> bool:
+        """Проверка частичного совпадения"""
+        if pred in true or true in pred:
+            return True
+            
+        pred_norm = self._normalize_value(pred)
+        true_norm = self._normalize_value(true)
+        
+        pred_numbers = "".join(filter(str.isdigit, pred_norm))
+        true_numbers = "".join(filter(str.isdigit, true_norm))
+        
+        if pred_numbers and pred_numbers == true_numbers:
+            return True
+            
+        return False
+        
+    def get_metrics(self) -> Dict[str, float]:
+        """Вычисляет итоговые метрики"""
+        total_tp = sum(self.true_positives.values())
+        total_fp = sum(self.false_positives.values())
+        total_fn = sum(self.false_negatives.values())
+        
+        precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
+        recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        
+        document_accuracy = self.perfect_documents / self.total_documents if self.total_documents > 0 else 0
+        exact_match_rate = self.exact_matches / (self.exact_matches + self.partial_matches) if (self.exact_matches + self.partial_matches) > 0 else 0
+        
+        return {
+            'precision': precision,
+            'recall': recall,
+            'f1': f1,
+            'document_accuracy': document_accuracy,
+            'exact_match_rate': exact_match_rate,
+            'total_documents': self.total_documents,
+            'perfect_documents': self.perfect_documents
+        }
+
+
 class DonutMetricsCallback(TrainerCallback):
     """Callback для вычисления метрик Donut во время обучения"""
     
@@ -72,16 +166,35 @@ class DonutMetricsCallback(TrainerCallback):
         self.processor = processor
         self.eval_dataset = eval_dataset
         self.log_callback = log_callback
-        self.rouge_scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+        self.metrics_calculator = DonutFieldExtractionMetrics()
+        
+    def _parse_donut_output(self, text: str) -> Dict[str, str]:
+        """Парсит выход Donut в словарь полей"""
+        fields = {}
+        
+        # Попытка 1: JSON парсинг
+        try:
+            if text.strip().startswith('{'):
+                return json.loads(text)
+        except:
+            pass
+            
+        # Попытка 2: Парсинг тегов Donut (<s_field>value</s_field>)
+        pattern = r'<s_([^>]+)>([^<]+)</s_\1>'
+        matches = re.findall(pattern, text)
+        
+        for field_name, value in matches:
+            fields[field_name] = value.strip()
+            
+        return fields
         
     def on_evaluate(self, args, state, control, model, **kwargs):
         """Вычисляет метрики после каждой оценки"""
         try:
-            # Берем небольшую выборку для быстрой оценки
-            eval_samples = self.eval_dataset.select(range(min(50, len(self.eval_dataset))))
+            # Берем выборку для оценки
+            eval_samples = self.eval_dataset.select(range(min(100, len(self.eval_dataset))))
             
-            predictions = []
-            references = []
+            self.metrics_calculator.reset()
             
             model.eval()
             with torch.no_grad():
@@ -93,8 +206,8 @@ class DonutMetricsCallback(TrainerCallback):
                     # Генерируем предсказание
                     pixel_values = self.processor(image, return_tensors="pt").pixel_values
                     
-                    # Используем task token для генерации
-                    task_prompt = "<s_cord-v2>"
+                    # Используем правильный task prompt
+                    task_prompt = "<s_docvqa><s_question>Extract all fields from the document</s_question><s_answer>"
                     decoder_input_ids = self.processor.tokenizer(
                         task_prompt, 
                         add_special_tokens=False, 
@@ -103,10 +216,11 @@ class DonutMetricsCallback(TrainerCallback):
                     
                     # Генерируем ответ
                     outputs = model.generate(
-                        pixel_values,
-                        decoder_input_ids=decoder_input_ids,
-                        max_length=256,
-                        num_beams=1,
+                        pixel_values.to(model.device),
+                        decoder_input_ids=decoder_input_ids.to(model.device),
+                        max_length=512,
+                        num_beams=4,
+                        temperature=0.1,
                         do_sample=False,
                         pad_token_id=self.processor.tokenizer.pad_token_id,
                         eos_token_id=self.processor.tokenizer.eos_token_id,
@@ -116,55 +230,63 @@ class DonutMetricsCallback(TrainerCallback):
                     pred_text = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
                     pred_text = pred_text.replace(task_prompt, "").strip()
                     
-                    predictions.append(pred_text)
-                    references.append(target_text)
+                    # Парсим результаты
+                    try:
+                        pred_fields = self._parse_donut_output(pred_text)
+                        true_fields = self._parse_donut_output(target_text)
+                        
+                        self.metrics_calculator.add_document(pred_fields, true_fields)
+                    except Exception as e:
+                        logger.warning(f"Ошибка парсинга результата: {e}")
+                        continue
             
-            # Вычисляем метрики
-            bleu_scores = []
-            rouge_scores = {'rouge1': [], 'rouge2': [], 'rougeL': []}
+            # Получаем метрики
+            metrics = self.metrics_calculator.get_metrics()
             
-            for pred, ref in zip(predictions, references):
-                # BLEU score
-                bleu = sentence_bleu([ref.split()], pred.split())
-                bleu_scores.append(bleu)
-                
-                # ROUGE scores
-                rouge = self.rouge_scorer.score(ref, pred)
-                rouge_scores['rouge1'].append(rouge['rouge1'].fmeasure)
-                rouge_scores['rouge2'].append(rouge['rouge2'].fmeasure)
-                rouge_scores['rougeL'].append(rouge['rougeL'].fmeasure)
-            
-            # Средние значения
-            avg_bleu = np.mean(bleu_scores)
-            avg_rouge1 = np.mean(rouge_scores['rouge1'])
-            avg_rouge2 = np.mean(rouge_scores['rouge2'])
-            avg_rougeL = np.mean(rouge_scores['rougeL'])
-            
-            # Дополнительная статистика
-            min_bleu = np.min(bleu_scores) if bleu_scores else 0
-            max_bleu = np.max(bleu_scores) if bleu_scores else 0
-            std_bleu = np.std(bleu_scores) if bleu_scores else 0
+            # Форматируем сообщение
+            accuracy_percentage = metrics['f1'] * 100
+            doc_accuracy = metrics['document_accuracy'] * 100
+            exact_match = metrics['exact_match_rate'] * 100
             
             # Логируем метрики
             metrics_msg = (
-                f"📊 Метрики оценки (на {len(bleu_scores)} примерах):\n"
-                f"   BLEU: {avg_bleu:.4f} (мин: {min_bleu:.4f}, макс: {max_bleu:.4f}, σ: {std_bleu:.4f})\n"
-                f"   ROUGE-1: {avg_rouge1:.4f}\n"
-                f"   ROUGE-2: {avg_rouge2:.4f}\n"
-                f"   ROUGE-L: {avg_rougeL:.4f}\n"
-                f"   📈 Качество: {'Отлично' if avg_bleu > 0.8 else 'Хорошо' if avg_bleu > 0.6 else 'Удовлетворительно' if avg_bleu > 0.4 else 'Требует улучшения'}"
+                f"📊 Метрики извлечения полей (на {metrics['total_documents']} документах):\n"
+                f"   🎯 Общая точность (F1): {accuracy_percentage:.1f}%\n"
+                f"   📄 Точность документов (100% полей): {doc_accuracy:.1f}%\n"
+                f"   ✅ Точные совпадения: {exact_match:.1f}%\n"
+                f"   📈 Precision: {metrics['precision']:.3f}\n"
+                f"   📊 Recall: {metrics['recall']:.3f}\n"
             )
+            
+            # Качественная оценка
+            if accuracy_percentage >= 98:
+                quality = "🏆 ПРЕВОСХОДНО! Целевая точность достигнута!"
+            elif accuracy_percentage >= 95:
+                quality = "🔥 Отлично"
+            elif accuracy_percentage >= 90:
+                quality = "✅ Хорошо"
+            elif accuracy_percentage >= 80:
+                quality = "🟡 Удовлетворительно"
+            else:
+                quality = "🔴 Требует улучшения"
+                
+            metrics_msg += f"   💎 Качество: {quality}"
             
             if self.log_callback:
                 self.log_callback(metrics_msg)
                 
             logger.info(metrics_msg)
             
+            # Сохраняем метрики в state для отслеживания
+            if state.log_history:
+                state.log_history[-1]['eval_field_f1'] = metrics['f1']
+                state.log_history[-1]['eval_doc_accuracy'] = metrics['document_accuracy']
+            
         except Exception as e:
-            error_msg = f"Ошибка при вычислении метрик: {str(e)}"
+            error_msg = f"❌ Ошибка при вычислении метрик: {str(e)}"
             if self.log_callback:
                 self.log_callback(error_msg)
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
 
 class DonutProgressCallback(TrainerCallback):
     """Callback для отслеживания прогресса обучения Donut"""
