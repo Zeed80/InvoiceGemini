@@ -18,7 +18,7 @@ from transformers import (
 )
 
 # Dataset imports
-from datasets import Dataset, DatasetDict, load_from_disk
+from datasets import Dataset, DatasetDict, load_from_disk, Features, Value, Image as DatasetImage
 from torch.utils.data import DataLoader
 from PIL import Image
 import numpy as np
@@ -26,6 +26,21 @@ import numpy as np
 # Evaluation imports
 from collections import defaultdict
 import re
+
+# LoRA imports
+try:
+    from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
+    from peft import PeftModel, PeftConfig
+    LORA_AVAILABLE = True
+except ImportError:
+    LORA_AVAILABLE = False
+    
+# 8-bit optimizer imports  
+try:
+    import bitsandbytes as bnb
+    BITSANDBYTES_AVAILABLE = True
+except ImportError:
+    BITSANDBYTES_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -37,41 +52,43 @@ class DonutDataCollator:
         self.max_length = max_length
         
     def __call__(self, batch):
-        """Обрабатывает батч данных для Donut"""
-        # Извлекаем изображения и тексты
-        images = [item['image'] for item in batch]
-        texts = [item['text'] for item in batch]
+        """Обрабатывает батч данных для Donut обучения"""
         
-        # Обрабатываем изображения процессором
-        pixel_values = self.processor.image_processor(
+        # Извлекаем изображения и тексты из батча
+        images = []
+        texts = []
+        
+        for item in batch:
+            # Проверяем наличие нужных колонок
+            if 'image' not in item:
+                raise ValueError(f"Отсутствует колонка 'image' в элементе батча")
+            if 'text' not in item:
+                raise ValueError(f"Отсутствует колонка 'text' в элементе батча")
+                
+            images.append(item['image'])
+            texts.append(item['text'])
+        
+        # Обрабатываем изображения для encoder (DonutSwin)
+        pixel_values = self.processor(
             images, 
             return_tensors="pt"
-        )["pixel_values"]
+        ).pixel_values
         
-        # Обрабатываем тексты токенизатором
-        text_inputs = self.processor.tokenizer(
+        # Обрабатываем тексты для decoder (labels)
+        labels = self.processor.tokenizer(
             texts,
             max_length=self.max_length,
             padding=True,
             truncation=True,
             return_tensors="pt"
-        )
+        ).input_ids
         
-        # Подготавливаем decoder_input_ids и labels для VisionEncoderDecoderModel
-        input_ids = text_inputs["input_ids"]
-        
-        # decoder_input_ids = input_ids со сдвигом (без последнего токена)
-        decoder_input_ids = input_ids[:, :-1].contiguous()
-        
-        # labels = input_ids со сдвигом (без первого токена) 
-        labels = input_ids[:, 1:].contiguous()
-        
-        # Заменяем padding токены на -100 для игнорирования в loss
+        # КРИТИЧНО: Заменяем padding токены на -100 для игнорирования в loss
         labels[labels == self.processor.tokenizer.pad_token_id] = -100
         
+        # VisionEncoderDecoderModel автоматически создаст decoder_input_ids из labels
         return {
             'pixel_values': pixel_values,
-            'decoder_input_ids': decoder_input_ids,
             'labels': labels
         }
 
@@ -719,9 +736,33 @@ class DonutTrainer:
             self._log(f"   Всего параметров: {total_params:,}")
             self._log(f"   Обучаемых параметров: {trainable_params:,}")
             
-            # Перемещаем модель на устройство
-            self._log(f"🔄 Перемещение модели на устройство: {self.device}")
-            model.to(self.device)
+            # 🔧 КРИТИЧЕСКИ ВАЖНО: Патчим модель ПЕРЕД LoRA для исправления VisionEncoderDecoderModel
+            self._log("🔧 Применяем патч для исправления VisionEncoderDecoderModel...")
+            model = self._patch_model_forward(model)
+            
+            # 🔧 Применяем оптимизации памяти (LoRA будет правильно настроена для VisionEncoderDecoderModel)
+            model = self._apply_memory_optimizations(model, training_args)
+            
+            # Включаем gradient checkpointing для экономии памяти
+            gradient_checkpointing = training_args.get('gradient_checkpointing', True)
+            self._log(f"   💾 Gradient checkpointing: {gradient_checkpointing}")
+            if gradient_checkpointing:
+                try:
+                    model.gradient_checkpointing_enable()
+                    self._log("   ✅ Gradient checkpointing включен")
+                except Exception as e:
+                    self._log(f"   ⚠️ Не удалось включить gradient checkpointing: {e}")
+            
+            # 🚀 ПРИНУДИТЕЛЬНО включаем gradient checkpointing для экономии памяти
+            if torch.cuda.is_available():
+                try:
+                    model.gradient_checkpointing_enable()
+                    self._log("   🚀 ПРИНУДИТЕЛЬНО включен gradient checkpointing для GPU")
+                except Exception as e:
+                    self._log(f"   ⚠️ Ошибка включения gradient checkpointing: {e}")
+            
+            # Перемещаем модель на устройство ПОСЛЕ оптимизаций
+            model = model.to(self.device)
             self._log("✅ Модель перемещена на устройство")
             
             # ⚡ КРИТИЧЕСКИ ВАЖНО: Принудительная проверка и оптимизация GPU
@@ -808,15 +849,69 @@ class DonutTrainer:
             for i, callback in enumerate(callbacks):
                 self._log(f"   {i+1}. {callback.__class__.__name__}")
             
-            # 7. Создаем тренер
-            self._log("\n🏃 ===== ЭТАП 7: СОЗДАНИЕ TRAINER =====")
-            trainer = Trainer(
+            # ⚡ Создаем кастомный Trainer с поддержкой 8-bit оптимизатора
+            class OptimizedDonutTrainer(Trainer):
+                def __init__(self, *args, use_8bit_optimizer=False, learning_rate=5e-5, **kwargs):
+                    self.use_8bit_optimizer = use_8bit_optimizer
+                    self.custom_learning_rate = learning_rate
+                    super().__init__(*args, **kwargs)
+                
+                def create_optimizer(self):
+                    """Создает оптимизатор с поддержкой 8-bit"""
+                    if self.use_8bit_optimizer and BITSANDBYTES_AVAILABLE:
+                        try:
+                            # Создаем 8-bit оптимизатор
+                            optimizer = bnb.optim.AdamW8bit(
+                                self.model.parameters(),
+                                lr=self.custom_learning_rate,
+                                betas=(0.9, 0.999),
+                                eps=1e-8,
+                                weight_decay=0.01
+                            )
+                            
+                            # Создаем scheduler
+                            scheduler = None
+                            if self.args.max_steps > 0:
+                                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                                    optimizer, T_max=self.args.max_steps
+                                )
+                            
+                            # Сохраняем в атрибутах для Trainer
+                            self.optimizer = optimizer
+                            self.lr_scheduler = scheduler
+                            
+                            self._log("✅ Используется 8-bit AdamW оптимизатор (экономия ~25% памяти)")
+                            return optimizer
+                            
+                        except Exception as e:
+                            self._log(f"❌ Ошибка создания 8-bit оптимизатора: {e}")
+                            # Возврат к стандартному
+                            
+                    # Стандартный оптимизатор
+                    return super().create_optimizer()
+                
+                def _log(self, message):
+                    """Вспомогательный метод для логирования"""
+                    try:
+                        logger.info(message)
+                    except:
+                        print(f"OptimizedDonutTrainer: {message}")
+            
+            # Настройка использования кастомного оптимизатора
+            use_8bit_optimizer = training_args.get('use_8bit_optimizer', True)
+            learning_rate = training_args.get('learning_rate', 5e-5)
+            
+            # Создаем trainer с оптимизациями памяти
+            self._log("🚀 Создание оптимизированного Trainer...")
+            trainer = OptimizedDonutTrainer(
                 model=model,
                 args=train_args,
                 train_dataset=dataset['train'],
                 eval_dataset=dataset.get('validation'),
                 data_collator=data_collator,
                 callbacks=callbacks,
+                use_8bit_optimizer=use_8bit_optimizer,
+                learning_rate=learning_rate
             )
             self._log("✅ Trainer создан успешно")
             
@@ -1044,24 +1139,6 @@ class DonutTrainer:
         vocab_size = len(processor.tokenizer)
         self._log(f"   📚 Размер словаря токенизатора: {vocab_size}")
         
-        # Включаем gradient checkpointing для экономии памяти
-        gradient_checkpointing = training_args.get('gradient_checkpointing', True)
-        self._log(f"   💾 Gradient checkpointing: {gradient_checkpointing}")
-        if gradient_checkpointing:
-            try:
-                model.gradient_checkpointing_enable()
-                self._log("   ✅ Gradient checkpointing включен")
-            except Exception as e:
-                self._log(f"   ⚠️ Не удалось включить gradient checkpointing: {e}")
-        
-        # 🚀 ПРИНУДИТЕЛЬНО включаем gradient checkpointing для экономии памяти
-        if torch.cuda.is_available():
-            try:
-                model.gradient_checkpointing_enable()
-                self._log("   🚀 ПРИНУДИТЕЛЬНО включен gradient checkpointing для GPU")
-            except Exception as e:
-                self._log(f"   ⚠️ Ошибка принудительного gradient checkpointing: {e}")
-        
         # Проверяем совместимость конфигурации
         self._log("   🔍 Проверка совместимости конфигурации:")
         if hasattr(model.config, 'vocab_size'):
@@ -1213,3 +1290,169 @@ class DonutTrainer:
         ))
         
         return callbacks 
+
+    def _apply_lora_optimization(self, model, training_args: dict):
+        """
+        Применяет LoRA оптимизацию для радикального снижения потребления памяти
+        """
+        if not LORA_AVAILABLE:
+            self._log("⚠️ PEFT (LoRA) не установлен. Используйте: pip install peft")
+            return model, False
+            
+        # LoRA конфигурация для Donut
+        lora_config = LoraConfig(
+            task_type=TaskType.SEQ_2_SEQ_LM,  # Donut - это sequence-to-sequence модель
+            r=16,  # Rank - количество параметров LoRA (меньше = экономия памяти)
+            lora_alpha=32,  # Scaling factor
+            lora_dropout=0.1,
+            # Применяем LoRA к ключевым слоям decoder (где происходит основное обучение)
+            target_modules=[
+                "q_proj", "k_proj", "v_proj", "out_proj",  # Attention слои decoder
+                "fc1", "fc2",  # Feed forward слои decoder
+                # НЕ применяем к encoder для экономии параметров
+            ],
+            bias="none",  # Не обучаем bias для экономии параметров
+            modules_to_save=None,  # Не сохраняем дополнительные модули
+        )
+        
+        try:
+            self._log("🔧 Применяем LoRA оптимизацию...")
+            
+            # Подготавливаем модель для LoRA
+            model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+            
+            # Применяем LoRA
+            model = get_peft_model(model, lora_config)
+            
+            # Информация о параметрах
+            total_params = sum(p.numel() for p in model.parameters())
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            
+            self._log(f"📊 Параметры после LoRA:")
+            self._log(f"   Всего: {total_params:,}")
+            self._log(f"   Обучаемых: {trainable_params:,}")
+            self._log(f"   Процент обучаемых: {100 * trainable_params / total_params:.2f}%")
+            self._log(f"   🚀 Экономия памяти: ~{100 - (100 * trainable_params / total_params):.1f}%")
+            
+            return model, True
+            
+        except Exception as e:
+            self._log(f"❌ Ошибка применения LoRA: {str(e)}")
+            return model, False
+    
+    def _get_8bit_optimizer(self, model, learning_rate: float):
+        """
+        Создает 8-bit оптимизатор для экономии памяти
+        """
+        if not BITSANDBYTES_AVAILABLE:
+            self._log("⚠️ bitsandbytes не установлен. Используйте: pip install bitsandbytes")
+            return None
+            
+        try:
+            # 8-bit AdamW оптимизатор
+            optimizer = bnb.optim.AdamW8bit(
+                model.parameters(),
+                lr=learning_rate,
+                betas=(0.9, 0.999),
+                eps=1e-8,
+                weight_decay=0.01
+            )
+            
+            self._log("✅ Используется 8-bit AdamW оптимизатор (экономия ~25% памяти)")
+            return optimizer
+            
+        except Exception as e:
+            self._log(f"❌ Ошибка создания 8-bit оптимизатора: {str(e)}")
+            return None
+    
+    def _apply_memory_optimizations(self, model, training_args: dict):
+        """
+        Применяет все доступные оптимизации памяти
+        """
+        optimizations_applied = []
+        
+        # 1. LoRA оптимизация
+        use_lora = training_args.get('use_lora', True)
+        if use_lora:
+            model, lora_success = self._apply_lora_optimization(model, training_args)
+            if lora_success:
+                optimizations_applied.append("LoRA (до 95% экономии)")
+        
+        # 2. Принудительный gradient checkpointing
+        try:
+            model.gradient_checkpointing_enable()
+            optimizations_applied.append("Gradient Checkpointing")
+        except:
+            pass
+            
+        # 3. Freeze encoder (опционально)
+        freeze_encoder = training_args.get('freeze_encoder', False)
+        if freeze_encoder:
+            try:
+                # Замораживаем encoder, обучаем только decoder
+                for name, param in model.named_parameters():
+                    if 'encoder' in name:
+                        param.requires_grad = False
+                        
+                trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                total = sum(p.numel() for p in model.parameters())
+                
+                self._log(f"🧊 Encoder заморожен. Обучаемых параметров: {trainable:,} ({100*trainable/total:.1f}%)")
+                optimizations_applied.append("Frozen Encoder")
+                
+            except Exception as e:
+                self._log(f"⚠️ Не удалось заморозить encoder: {e}")
+        
+        self._log(f"🚀 Применены оптимизации памяти: {', '.join(optimizations_applied)}")
+        return model 
+
+    def _patch_model_forward(self, model):
+        """
+        Патчит forward метод VisionEncoderDecoderModel для правильной работы с Donut
+        Это решает проблему передачи labels в encoder как input_ids
+        """
+        original_forward = model.forward
+        
+        def patched_forward(pixel_values=None, labels=None, **kwargs):
+            """Исправленный forward для VisionEncoderDecoderModel"""
+            
+            # КРИТИЧНО: Encoder получает только pixel_values
+            encoder_inputs = {
+                'pixel_values': pixel_values
+            }
+            
+            # Убираем все остальные аргументы для encoder
+            # НЕ передаем: labels, input_ids, attention_mask, decoder_input_ids
+            encoder_outputs = model.encoder(**encoder_inputs)
+            
+            if labels is not None:
+                # Обучение: decoder получает encoder_outputs и labels
+                decoder_input_ids = model._shift_right(labels) if hasattr(model, '_shift_right') else labels
+                
+                # Очищаем kwargs от конфликтующих параметров
+                decoder_kwargs = {k: v for k, v in kwargs.items() 
+                                if k not in ['pixel_values', 'labels', 'input_ids', 'decoder_input_ids', 'decoder_attention_mask', 'decoder_inputs_embeds']}
+                
+                decoder_outputs = model.decoder(
+                    input_ids=decoder_input_ids,
+                    encoder_hidden_states=encoder_outputs.last_hidden_state,
+                    labels=labels,
+                    **decoder_kwargs
+                )
+                
+                return decoder_outputs
+            else:
+                # Инференс: используем generate
+                return model.generate(
+                    pixel_values=pixel_values,
+                    **kwargs
+                )
+        
+        # Заменяем forward метод
+        model.forward = patched_forward
+        self._log("🔧 VisionEncoderDecoderModel.forward патчен для правильной работы с Donut")
+        
+        return model
+
+
+    

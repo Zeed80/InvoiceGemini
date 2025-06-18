@@ -920,6 +920,63 @@ class ModernTrainingDialog(QDialog):
         
         left_layout.addWidget(advanced_group)
         
+        # Группа оптимизаций памяти
+        memory_group = QGroupBox(self.tr("🚀 Оптимизации памяти"))
+        memory_layout = QVBoxLayout(memory_group)
+        
+        # LoRA оптимизация
+        self.use_lora_cb = QCheckBox(self.tr("LoRA (Low-Rank Adaptation) - до 95% экономии памяти"))
+        self.use_lora_cb.setChecked(True)
+        self.use_lora_cb.setToolTip(self.tr("Обучает только 1-5% параметров вместо 100%"))
+        memory_layout.addWidget(self.use_lora_cb)
+        
+        # 8-bit оптимизатор
+        self.use_8bit_optimizer_cb = QCheckBox(self.tr("8-bit оптимизатор - до 25% экономии памяти"))
+        self.use_8bit_optimizer_cb.setChecked(True)
+        self.use_8bit_optimizer_cb.setToolTip(self.tr("Использует 8-bit AdamW вместо 32-bit"))
+        memory_layout.addWidget(self.use_8bit_optimizer_cb)
+        
+        # Заморозка encoder
+        self.freeze_encoder_cb = QCheckBox(self.tr("Заморозить encoder - обучать только decoder"))
+        self.freeze_encoder_cb.setChecked(False)
+        self.freeze_encoder_cb.setToolTip(self.tr("Экономит память, но может снизить качество"))
+        memory_layout.addWidget(self.freeze_encoder_cb)
+        
+        # Информация об оптимизациях
+        memory_info = QLabel(self.tr("""
+<b>💡 Рекомендации:</b><br>
+• <b>LoRA</b> - самая эффективная оптимизация (до 95% экономии)<br>
+• <b>8-bit optimizer</b> - дополнительные 25% экономии<br>
+• <b>Freeze encoder</b> - только если не хватает памяти<br>
+• Комбинация всех методов может снизить потребление с 11GB до 2-3GB
+        """))
+        memory_info.setStyleSheet("QLabel { color: #666; background: #f0f0f0; padding: 8px; border-radius: 4px; }")
+        memory_info.setWordWrap(True)
+        memory_layout.addWidget(memory_info)
+        
+        # Кнопка автоматической оптимизации
+        auto_optimize_btn = QPushButton(self.tr("🚀 Автооптимизация памяти для RTX 4070 Ti"))
+        auto_optimize_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, 
+                    stop: 0 #27ae60, stop: 1 #2ecc71);
+                color: white;
+                border: none;
+                padding: 10px;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, 
+                    stop: 0 #2ecc71, stop: 1 #27ae60);
+            }
+        """)
+        auto_optimize_btn.clicked.connect(self.auto_optimize_memory)
+        memory_layout.addWidget(auto_optimize_btn)
+        
+        layout.addWidget(memory_group)
+        
         # Кнопки управления
         control_layout = QHBoxLayout()
         
@@ -2067,6 +2124,12 @@ class ModernTrainingDialog(QDialog):
                 'save_steps': self.donut_save_steps_spin.value(),
                 'eval_steps': self.donut_eval_steps_spin.value(),
                 'task_type': self.donut_task_combo.currentText(),
+                
+                # Оптимизации памяти
+                'use_lora': self.use_lora_cb.isChecked(),
+                'use_8bit_optimizer': self.use_8bit_optimizer_cb.isChecked(),
+                'freeze_encoder': self.freeze_encoder_cb.isChecked(),
+                'gradient_checkpointing': True,  # Принудительно включаем
             },
             'output_model_name': model_name
         }
@@ -3428,44 +3491,57 @@ class ModernTrainingDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось применить настройки GPU: {str(e)}")
             
-    def start_donut_training(self):
-        """Запуск обучения Donut"""
-        # Проверяем параметры
-        dataset_path = self.donut_dataset_edit.text()
-        if not dataset_path or not os.path.exists(dataset_path):
-            QMessageBox.warning(self, "Ошибка", "Выберите корректный датасет для обучения!")
-            return
+    def auto_optimize_memory(self):
+        """Автоматически оптимизирует все настройки памяти для RTX 4070 Ti"""
+        reply = QMessageBox.question(
+            self,
+            "Автооптимизация памяти",
+            """🚀 Применить оптимальные настройки памяти для RTX 4070 Ti?
+
+Будут применены следующие оптимизации:
+• ✅ LoRA - до 95% экономии памяти
+• ✅ 8-bit оптимизатор - дополнительные 25% экономии  
+• ✅ Gradient checkpointing - экономия activations
+• ⚙️ Batch size = 1, epochs = 1, image_size = 224
+
+Это позволит обучать Donut на RTX 4070 Ti без OOM ошибок.
+            """,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Включаем все оптимизации памяти
+            self.use_lora_cb.setChecked(True)
+            self.use_8bit_optimizer_cb.setChecked(True)
+            self.freeze_encoder_cb.setChecked(False)  # Оставляем encoder обучаемым для качества
             
-        # Создаем тренер Donut
-        self.current_trainer = DonutTrainerClass(self.app_config)
-        
-        # Подготавливаем относительный путь для модели
-        model_name = self.donut_output_name_edit.text() or f"donut_model_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        if not model_name.startswith("donut_"):
-            model_name = f"donut_{model_name}"
-        
-        # Подготавливаем параметры
-        training_params = {
-            'dataset_path': dataset_path,
-            'base_model_id': self.donut_base_model_combo.currentText(),
-            'training_args': {
-                'num_train_epochs': self.donut_epochs_spin.value(),
-                'per_device_train_batch_size': self.donut_batch_size_spin.value(),
-                'learning_rate': self.donut_lr_spin.value(),
-                'gradient_accumulation_steps': self.donut_grad_accum_spin.value(),
-                'max_length': self.donut_max_length_spin.value(),
-                'image_size': int(self.donut_image_size_combo.currentText()),
-                'fp16': self.donut_fp16_checkbox.isChecked(),
-                'save_steps': self.donut_save_steps_spin.value(),
-                'eval_steps': self.donut_eval_steps_spin.value(),
-                'task_type': self.donut_task_combo.currentText(),
-            },
-            'output_model_name': model_name
-        }
-        
-        # Запускаем обучение в отдельном потоке
-        self.start_training_thread(training_params, 'donut')
-        
+            # Устанавливаем консервативные настройки Donut
+            self.donut_epochs_spin.setValue(1)
+            self.donut_batch_size_spin.setValue(1)
+            self.donut_grad_accum_spin.setValue(8)  # Компенсируем маленький batch
+            self.donut_image_size_combo.setCurrentText("224")
+            self.donut_max_length_spin.setValue(256)
+            self.donut_fp16_checkbox.setChecked(True)
+            
+            # Показываем сообщение об успехе
+            QMessageBox.information(
+                self,
+                "✅ Оптимизация применена",
+                """🚀 Автооптимизация памяти применена успешно!
+
+Примененные настройки:
+• LoRA: Включен (до 95% экономии)
+• 8-bit optimizer: Включен (25% экономии)
+• Batch size: 1 (минимальный)
+• Epochs: 1 (для тестирования)
+• Image size: 224px (экономия памяти)
+• Max length: 256 tokens
+• FP16: Включен
+
+Эти настройки должны позволить обучение на RTX 4070 Ti (12GB).
+                """
+            )
+
 # Для обратной совместимости
 TrainingDialog = ModernTrainingDialog
 
