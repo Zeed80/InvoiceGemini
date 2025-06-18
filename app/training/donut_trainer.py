@@ -42,26 +42,36 @@ class DonutDataCollator:
         images = [item['image'] for item in batch]
         texts = [item['text'] for item in batch]
         
-        # Обрабатываем изображения
-        pixel_values = self.processor(
+        # Обрабатываем изображения процессором
+        pixel_values = self.processor.image_processor(
             images, 
             return_tensors="pt"
-        ).pixel_values
+        )["pixel_values"]
         
-        # Обрабатываем тексты
-        labels = self.processor.tokenizer(
+        # Обрабатываем тексты токенизатором
+        text_inputs = self.processor.tokenizer(
             texts,
             max_length=self.max_length,
             padding=True,
             truncation=True,
             return_tensors="pt"
-        ).input_ids
+        )
+        
+        # Подготавливаем decoder_input_ids и labels для VisionEncoderDecoderModel
+        input_ids = text_inputs["input_ids"]
+        
+        # decoder_input_ids = input_ids со сдвигом (без последнего токена)
+        decoder_input_ids = input_ids[:, :-1].contiguous()
+        
+        # labels = input_ids со сдвигом (без первого токена) 
+        labels = input_ids[:, 1:].contiguous()
         
         # Заменяем padding токены на -100 для игнорирования в loss
         labels[labels == self.processor.tokenizer.pad_token_id] = -100
         
         return {
             'pixel_values': pixel_values,
+            'decoder_input_ids': decoder_input_ids,
             'labels': labels
         }
 
@@ -1125,7 +1135,7 @@ class DonutTrainer:
             args['gradient_checkpointing'] = True  # Принудительно включаем
             
             # Дополнительные оптимизации для Donut
-            args['remove_unused_columns'] = True  # Удаляем неиспользуемые колонки
+            args['remove_unused_columns'] = False  # КРИТИЧНО: False для работы с image+text колонками
             args['prediction_loss_only'] = True  # Только loss для экономии памяти
             
             # Информация о GPU
@@ -1150,6 +1160,20 @@ class DonutTrainer:
             current_batch = args['per_device_train_batch_size']
             if current_batch > recommended_batch:
                 self._log(f"   ⚠️ Рекомендация: уменьшить batch_size до {recommended_batch} для предотвращения OOM")
+            
+            # 🚨 КРИТИЧНО: Принудительное ограничение для RTX 4070 Ti
+            if torch.cuda.is_available():
+                current_gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if current_gpu_memory_gb >= 11 and current_gpu_memory_gb <= 13:  # RTX 4070 Ti диапазон
+                    max_safe_batch = 1
+                    if args['per_device_train_batch_size'] > max_safe_batch:
+                        self._log(f"   🚨 ПРИНУДИТЕЛЬНО уменьшаем batch_size с {args['per_device_train_batch_size']} до {max_safe_batch} для RTX 4070 Ti")
+                        args['per_device_train_batch_size'] = max_safe_batch
+                        args['per_device_eval_batch_size'] = max_safe_batch
+                        # Увеличиваем gradient accumulation для компенсации
+                        if args['gradient_accumulation_steps'] < 8:
+                            args['gradient_accumulation_steps'] = 8
+                            self._log(f"   📈 Увеличиваем gradient_accumulation_steps до 8 для компенсации")
             
         else:
             self._log("⚠️ CUDA недоступна - обучение на CPU (будет медленно)")
