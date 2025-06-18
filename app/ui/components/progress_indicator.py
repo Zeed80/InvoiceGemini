@@ -363,4 +363,8 @@ class CircularProgressIndicator(QWidget):
         painter.setFont(font)
         
         percentage = int((self.value / self.maximum * 100) if self.maximum > 0 else 0)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{percentage}%") 
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{percentage}%")
+
+
+# Alias for backward compatibility
+ProgressIndicator = ProcessingIndicator 

@@ -139,4 +139,8 @@ class FileSelectorWidget(QWidget):
         """Enable or disable the widget."""
         self.select_file_button.setEnabled(enabled)
         self.select_folder_button.setEnabled(enabled)
-        self.clear_button.setEnabled(enabled and (self._current_file_path or self._current_folder_path)) 
+        self.clear_button.setEnabled(enabled and (self._current_file_path or self._current_folder_path))
+
+
+# Alias for backward compatibility
+FileSelector = FileSelectorWidget 

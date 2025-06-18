@@ -543,4 +543,8 @@ class BatchProcessingWidget(QWidget):
     def export_results(self):
         """Экспорт результатов"""
         # TODO: Реализовать экспорт в различные форматы
-        pass 
+        pass
+
+
+# Alias for backward compatibility
+BatchProcessor = BatchProcessingWidget 

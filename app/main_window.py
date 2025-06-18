@@ -35,6 +35,15 @@ from .ui.field_manager_dialog import FieldManagerDialog
 from .field_manager import field_manager
 from .ui.llm_providers_dialog import LLMProvidersDialog
 
+# NEW: Import new components for Phase 1 improvements
+from .core.cache_manager import CacheManager
+from .core.retry_manager import RetryManager
+from .core.backup_manager import BackupManager
+from .ui.components.file_selector import FileSelector
+from .ui.components.progress_indicator import ProgressIndicator
+from .ui.components.batch_processor_adapter import BatchProcessor
+from .ui.components.export_manager import ExportManager
+
 
 class MainWindow(QMainWindow):
     """Главное окно приложения."""
@@ -72,6 +81,21 @@ class MainWindow(QMainWindow):
         self.llm_adapters = adapt_all_llm_plugins(self.plugin_manager)
         self.llm_loading_thread = None
         
+        # NEW: Initialize new core components
+        self.cache_manager = CacheManager()
+        self.retry_manager = RetryManager()
+        self.backup_manager = BackupManager()
+        
+        # NEW: Initialize UI components
+        self.file_selector = None  # Will be initialized in init_ui
+        self.progress_indicator = None  # Will be initialized in init_ui
+        self.batch_processor = None  # Will be initialized after UI
+        self.export_manager = None  # Will be initialized after UI
+        
+        # Store batch processing results
+        self.batch_results = []
+        self.current_batch_index = 0
+        
         # Populate LLM models after UI initialization
         QTimer.singleShot(100, self.populate_llm_models)
         
@@ -83,6 +107,9 @@ class MainWindow(QMainWindow):
         # Populate LLM providers and models
         self.populate_cloud_providers()
         self.populate_local_providers()
+        
+        # NEW: Initialize components that need UI and model_manager to be ready
+        self._init_post_ui_components()
     
     def init_ui(self):
         """Инициализация пользовательского интерфейса."""
@@ -100,28 +127,15 @@ class MainWindow(QMainWindow):
         self.image_widget = QWidget()
         image_layout = QVBoxLayout(self.image_widget)
         
-        # Виджет для выбора файла
-        file_group = QGroupBox("Выбор файла")
-        file_layout = QVBoxLayout()
+        # NEW: Use FileSelector component
+        self.file_selector = FileSelector()
+        self.file_selector.signals.file_selected.connect(self.on_file_selected)
+        self.file_selector.signals.folder_selected.connect(self.on_folder_selected)
         
-        file_buttons_layout = QHBoxLayout()
-        self.select_file_button = QPushButton("Выбрать файл")
-        self.select_file_button.clicked.connect(self.select_file)
-        file_buttons_layout.addWidget(self.select_file_button)
-
-        # NEW: Добавляем кнопку выбора папки
-        self.select_folder_button = QPushButton("Выбрать папку")
-        self.select_folder_button.clicked.connect(self.select_folder)
-        file_buttons_layout.addWidget(self.select_folder_button)
-        
-        file_layout.addLayout(file_buttons_layout)
-
-        # NEW: Добавляем метку для отображения выбранного файла/папки
-        self.selected_path_label = QLabel("Файл или папка не выбраны")
-        self.selected_path_label.setWordWrap(True)
-        file_layout.addWidget(self.selected_path_label)
-
-        file_group.setLayout(file_layout)
+        # For backward compatibility
+        self.select_file_button = self.file_selector.select_file_button
+        self.select_folder_button = self.file_selector.select_folder_button
+        self.selected_path_label = self.file_selector.selection_label
         
         # Область отображения изображения
         image_group = QGroupBox("Изображение")
@@ -137,7 +151,7 @@ class MainWindow(QMainWindow):
         image_group.setLayout(scroll_layout)
         
         # Добавляем виджеты в левую часть
-        image_layout.addWidget(file_group)
+        image_layout.addWidget(self.file_selector)
         image_layout.addWidget(image_group, 1)  # Растягивать при изменении размера окна
         
         # Правая часть - для выбора модели и результатов
@@ -306,9 +320,10 @@ class MainWindow(QMainWindow):
         self.process_button.setEnabled(False)  # Отключаем до загрузки изображения
         self.process_button.clicked.connect(self.process_image)
         
-        # Прогресс-бар
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
+        # NEW: Use ProgressIndicator component
+        self.progress_indicator = ProgressIndicator()
+        # For backward compatibility - используем встроенный progress_bar компонента
+        self.progress_bar = self.progress_indicator.progress_bar
         
         # Область результатов с таблицей вместо текста
         results_group = QGroupBox("Результаты")
@@ -370,7 +385,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(model_group)
         controls_layout.addWidget(ocr_lang_group)
         controls_layout.addWidget(self.process_button)
-        controls_layout.addWidget(self.progress_bar)
+        controls_layout.addWidget(self.progress_indicator)
         controls_layout.addWidget(results_group)
         
         # Добавляем левую и правую части в сплиттер
@@ -399,6 +414,126 @@ class MainWindow(QMainWindow):
         
         # Загружаем и применяем сохраненные настройки
         self.load_saved_settings()
+    
+    def _init_post_ui_components(self):
+        """Инициализирует компоненты, которые требуют готового UI."""
+        # Initialize ExportManager
+        self.export_manager = ExportManager()
+        # Не подключаем сигнал export_requested, так как его нет в ExportManager
+        
+        # Initialize BatchProcessor
+        self.batch_processor = BatchProcessor(self.model_manager)
+        self.batch_processor.processing_started.connect(self.on_batch_processing_started)
+        self.batch_processor.file_processed.connect(self.on_batch_file_processed)
+        self.batch_processor.processing_finished.connect(self.on_batch_processing_finished)
+        self.batch_processor.error_occurred.connect(self.on_batch_error)
+        
+        # Connect progress indicator to batch processor if it exists
+        if hasattr(self, 'progress_indicator') and self.progress_indicator:
+            self.batch_processor.progress_updated.connect(self.progress_indicator.set_progress)
+            self.batch_processor.status_updated.connect(self.progress_indicator.set_stage)
+    
+    def on_file_selected(self, file_path: str):
+        """Обработчик выбора файла через FileSelector."""
+        self.current_image_path = file_path
+        self.current_folder_path = None
+        self.load_image(file_path)
+        
+    def on_folder_selected(self, folder_path: str):
+        """Обработчик выбора папки через FileSelector."""
+        self.current_folder_path = folder_path
+        self.current_image_path = None
+        
+        # Enable batch processing
+        self.process_button.setText("Обработать папку")
+        self.process_button.setEnabled(True)
+        self.status_bar.showMessage(f"Выбрана папка: {folder_path}")
+        
+
+            
+    def on_batch_processing_started(self, total_files: int):
+        """Обработчик начала пакетной обработки."""
+        self.batch_results = []
+        self.progress_indicator.set_title(f"Пакетная обработка")
+        self.progress_indicator.set_stage(f"Обработка {total_files} файлов...")
+        self.progress_indicator.setVisible(True)
+        self.progress_indicator.start()
+        self.process_button.setEnabled(False)
+        
+    def on_batch_file_processed(self, file_path: str, result: dict, index: int, total: int):
+        """Обработчик обработки одного файла из пакета."""
+        self.batch_results.append({
+            'file_path': file_path,
+            'result': result
+        })
+        self.progress_indicator.set_stage(f"Обработано {index + 1} из {total} файлов")
+        
+    def on_batch_processing_finished(self):
+        """Обработчик завершения пакетной обработки."""
+        self.progress_indicator.setVisible(False)
+        self.progress_indicator.stop()
+        self.process_button.setEnabled(True)
+        
+        if self.batch_results:
+            # Show batch results
+            self.show_batch_results()
+            
+    def on_batch_error(self, error_message: str):
+        """Обработчик ошибки при пакетной обработке."""
+        self.progress_indicator.setVisible(False)
+        self.progress_indicator.stop()
+        self.process_button.setEnabled(True)
+        QMessageBox.critical(self, "Ошибка обработки", error_message)
+        
+    def _process_folder_with_batch_processor(self, folder_path: str):
+        """Обрабатывает папку с помощью BatchProcessor."""
+        # Определяем тип модели
+        model_type = "layoutlm" if self.layoutlm_radio.isChecked() else "donut"
+        if self.gemini_radio.isChecked():
+            model_type = "gemini"
+        elif self.cloud_llm_radio.isChecked():
+            model_type = "cloud_llm"
+        elif self.local_llm_radio.isChecked():
+            model_type = "local_llm"
+            
+        ocr_lang = self.ocr_lang_combo.currentData() if model_type == "layoutlm" else None
+        
+        # Получаем настройки для конкретной модели
+        model_settings = {}
+        if model_type == 'gemini':
+            model_settings['sub_model_id'] = self.gemini_model_selector.currentData()
+        elif model_type in ['cloud_llm', 'local_llm']:
+            # Для LLM нужна дополнительная логика
+            if not self.current_llm_plugin:
+                self.auto_load_llm_plugin(model_type, 
+                    self.cloud_provider_selector.currentData() if model_type == 'cloud_llm' else self.local_provider_selector.currentData(),
+                    self.cloud_model_selector.currentData() if model_type == 'cloud_llm' else self.local_model_selector.currentData()
+                )
+            model_settings['llm_plugin'] = self.current_llm_plugin
+            
+        # Запускаем пакетную обработку
+        self.batch_processor.process_folder(folder_path, model_type, ocr_lang, model_settings)
+        
+    def show_batch_results(self):
+        """Показывает результаты пакетной обработки."""
+        if not self.batch_results:
+            return
+            
+        # Clear existing results
+        self.results_table.setRowCount(0)
+        
+        # Add all results to table
+        for batch_item in self.batch_results:
+            result = batch_item['result']
+            if result and 'success' in result and result['success']:
+                self.append_result_to_table(result['data'])
+                
+        # Enable export buttons
+        self.save_button.setEnabled(True)
+        self.save_excel_button.setEnabled(True)
+        self.preview_button.setEnabled(True)
+        
+        self.status_bar.showMessage(f"Обработано {len(self.batch_results)} файлов")
     
     def load_saved_settings(self):
         """Загружает сохраненные пользовательские настройки и применяет их."""
@@ -1021,7 +1156,7 @@ class MainWindow(QMainWindow):
             )
     
     def process_image(self):
-        """Обработка изображения или папки выбранной моделью.""" # Обновили описание
+        """Обработка изображения или папки выбранной моделью."""
         # NEW: Проверяем, выбран ли файл или папка
         if not self.current_image_path and not self.current_folder_path:
             utils.show_error_message(
@@ -1031,6 +1166,11 @@ class MainWindow(QMainWindow):
 
         input_path = self.current_folder_path if self.current_folder_path else self.current_image_path
         is_folder = bool(self.current_folder_path)
+        
+        # NEW: Используем BatchProcessor для обработки папок
+        if is_folder and self.batch_processor:
+            self._process_folder_with_batch_processor(input_path)
+            return
         
         # Определяем тип модели
         model_type = "layoutlm" if self.layoutlm_radio.isChecked() else "donut"
@@ -1111,8 +1251,10 @@ class MainWindow(QMainWindow):
         
         # Показываем индикатор прогресса
         self.status_bar.showMessage(f"Обработка изображения моделью {model_type.upper()}...")
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
+        self.progress_indicator.setVisible(True)
+        self.progress_indicator.set_progress(0)
+        self.progress_indicator.set_title(f"Обработка моделью {model_type.upper()}")
+        self.progress_indicator.start()
         
         # Сохраняем выбранную модель в настройках
         settings_manager.set_active_model(model_type)
@@ -1137,132 +1279,98 @@ class MainWindow(QMainWindow):
     
     def update_progress(self, value):
         """Обновление индикатора прогресса."""
-        self.progress_bar.setValue(value)
+        self.progress_indicator.set_progress(value)
     
     def show_results(self, results):
         """Отображение результатов обработки в таблице (для ОДИНОЧНОГО файла)."""
-        # Этот метод теперь используется только для отображения результата одного файла
-        # Сохраняем результаты для дальнейшего использования
-        self.processing_thread.result = results # Сохраняем для совместимости с сохранением одиночного файла
-        
-        # Очищаем таблицу
-        self.results_table.setRowCount(0)
-        
-        # Заполняем таблицу данными
-        if results:
-            # Добавляем результаты в таблицу
-            self.append_result_to_table(results)
-        
-        # Включаем кнопки сохранения
-        self.save_button.setEnabled(True)
-        if hasattr(self, 'save_action'): self.save_action.setEnabled(True)
-        self.save_excel_button.setEnabled(True)
-        if hasattr(self, 'save_excel_action'): self.save_excel_action.setEnabled(True)
-        
-        # NEW: Включаем кнопку предварительного просмотра
-        self.preview_button.setEnabled(True)
-        
-        # NEW: Активируем кнопки новой системы плагинов
-        if hasattr(self, 'validate_button'):
-            self.validate_button.setEnabled(True)
-        if hasattr(self, 'view_data_button'):
-            self.view_data_button.setEnabled(True)
-        if hasattr(self, 'plugin_export_button'):
-            self.plugin_export_button.setEnabled(True)
-        
-        # Скрываем индикатор прогресса
-        self.progress_bar.setVisible(False)
-        self.status_bar.showMessage("Обработка завершена")
+        try:
+            # Этот метод теперь используется только для отображения результата одного файла
+            # Сохраняем результаты для дальнейшего использования
+            self.processing_thread.result = results # Сохраняем для совместимости с сохранением одиночного файла
+            
+            # Очищаем таблицу
+            self.results_table.setRowCount(0)
+            
+            # Заполняем таблицу данными
+            if results:
+                # Добавляем результаты в таблицу
+                self.append_result_to_table(results)
+            
+            # Включаем кнопки сохранения
+            self.save_button.setEnabled(True)
+            if hasattr(self, 'save_action'): self.save_action.setEnabled(True)
+            self.save_excel_button.setEnabled(True)
+            if hasattr(self, 'save_excel_action'): self.save_excel_action.setEnabled(True)
+            
+            # NEW: Включаем кнопку предварительного просмотра
+            self.preview_button.setEnabled(True)
+            
+            # NEW: Активируем кнопки новой системы плагинов
+            if hasattr(self, 'validate_button'):
+                self.validate_button.setEnabled(True)
+            if hasattr(self, 'view_data_button'):
+                self.view_data_button.setEnabled(True)
+            if hasattr(self, 'plugin_export_button'):
+                self.plugin_export_button.setEnabled(True)
+            
+            # Скрываем индикатор прогресса
+            if hasattr(self, 'progress_indicator') and self.progress_indicator:
+                self.progress_indicator.setVisible(False)
+                self.progress_indicator.stop()
+            self.status_bar.showMessage("Обработка завершена")
+        except Exception as e:
+            print(f"ОШИБКА в show_results: {e}")
+            import traceback
+            traceback.print_exc()
+            self.show_processing_error(f"Ошибка отображения результатов: {str(e)}")
     
     def show_processing_error(self, error_msg):
         """Обработка ошибки при обработке изображения."""
-        self.progress_bar.setVisible(False)
+        if hasattr(self, 'progress_indicator') and self.progress_indicator:
+            self.progress_indicator.setVisible(False)
+            self.progress_indicator.stop()
         self.status_bar.showMessage("Ошибка обработки")
         utils.show_error_message(
             self, "Ошибка обработки", f"Произошла ошибка: {error_msg}"
         )
     
     def save_results(self):
-        """Сохранение результатов обработки (файл или папка)."""
-        # NEW: Проверяем, есть ли что сохранять в таблице или в результате потока
-        data_to_save = None
-        is_batch_result = bool(self.current_folder_path) # Проверяем, была ли обработка папки
-
-        if is_batch_result:
-            if self.results_table.rowCount() == 0:
-                utils.show_info_message(
-                    self, "Информация", "Нет результатов в таблице для сохранения. Сначала обработайте папку."
-                )
-                return
-            
-            # Собираем данные из таблицы для пакетного сохранения
-            data_to_save = []
-            headers = [self.results_table.horizontalHeaderItem(col).text() 
-                       for col in range(self.results_table.columnCount())]
-            for row in range(self.results_table.rowCount()):
-                row_data = {}
-                for col, header in enumerate(headers):
-                    item = self.results_table.item(row, col)
-                    row_data[header] = item.text() if item else ""
-                data_to_save.append(row_data)
-            
-            default_folder_name = os.path.basename(self.current_folder_path) or "batch_results"
-            default_name = f"{default_folder_name}_результаты.txt" # Имя по умолчанию для папки
+        """Сохранение результатов обработки с использованием ExportManager."""
+        # Собираем данные из таблицы
+        data = []
+        headers = [self.results_table.horizontalHeaderItem(col).text() 
+                   for col in range(self.results_table.columnCount())]
         
-        else: # Обработка одного файла
-            # Используем старую логику для одиночного файла
-            if not hasattr(self, 'processing_thread') or not self.processing_thread or \
-               not hasattr(self.processing_thread, 'result') or not self.processing_thread.result:
-                utils.show_info_message(
-                    self, "Информация", "Нет результатов для сохранения. Сначала обработайте файл."
-                )
-                return
-            data_to_save = self.processing_thread.result # Один словарь
+        for row in range(self.results_table.rowCount()):
+            row_data = {}
+            for col, header in enumerate(headers):
+                item = self.results_table.item(row, col)
+                row_data[header] = item.text() if item else ""
+            data.append(row_data)
             
-            if not self.current_image_path: # На случай если путь к файлу потерялся
-                 default_name = "single_file_results.txt"
-            else:
-                 default_name = os.path.splitext(os.path.basename(self.current_image_path))[0] + "_результаты.txt"
-
-        # Получаем последний сохраненный путь экспорта из настроек или используем каталог документов
-        last_export_path = settings_manager.get_string('Interface', 'last_export_path', utils.get_documents_dir())
-        
-        file_path = utils.get_save_file_path(
-            self, "Сохранить результаты", 
-            os.path.join(last_export_path, default_name),
-            "Текстовый файл (*.txt);;JSON файл (*.json);;CSV файл (*.csv);;HTML файл (*.html)" # Обновил порядок и форматы
+        if not data:
+            utils.show_info_message(self, "Информация", "Нет данных для сохранения")
+            return
+            
+        # Получаем путь для сохранения
+        from PyQt6.QtWidgets import QFileDialog
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self, "Сохранить результаты", "",
+            self.export_manager.get_export_filters()
         )
         
-        if not file_path:
-            return
-        
-        # Сохраняем директорию выбранного файла в настройках
-        file_dir = os.path.dirname(file_path)
-        settings_manager.save_interface_setting('last_export_path', file_dir)
-        
-        try:
-            # Определяем формат файла по расширению
-            ext = utils.get_extension(file_path)
-            format_type = ext[1:] if ext.startswith('.') else ext
-            
-            # Используем общую функцию экспорта из utils
-            # ПРЕДУПРЕЖДЕНИЕ: utils.export_results пока может не поддерживать список словарей (data_to_save)
-            # Это будет исправлено следующим шагом.
-            success, message = utils.export_results(data_to_save, file_path, format_type)
-            
+        if file_path:
+            # Определяем формат по расширению
+            format_type = Path(file_path).suffix[1:].lower()
+            if not format_type:
+                format_type = 'csv'  # По умолчанию
+                
+            # Экспортируем
+            success = self.export_manager.export_data(data, file_path, format_type)
             if success:
-                self.status_bar.showMessage(f"Результаты сохранены в {file_path}")
-                utils.show_info_message(
-                    self, "Сохранение успешно", f"Результаты экспортированы в файл {file_path}"
-                )
+                self.status_bar.showMessage(f"Результаты сохранены: {file_path}")
             else:
-                utils.show_error_message(
-                    self, "Ошибка сохранения", message
-                )
-        except Exception as e:
-            utils.show_error_message(
-                self, "Ошибка сохранения", f"Не удалось сохранить результаты: {str(e)}"
-            )
+                utils.show_error_message(self, "Ошибка", "Не удалось сохранить результаты")
 
     def show_model_management_dialog(self):
         """Показывает диалог управления моделями."""
@@ -1903,8 +2011,13 @@ Analyze:"""
                 # Логируем неизвестные поля для отладки
                 print(f"ОТЛАДКА: Неизвестное поле '{field_name}' со значением '{value}' не добавлено в таблицу")
 
-        self.results_table.resizeRowsToContents()
-        print(f"ОТЛАДКА: Добавлена строка в таблицу. Полей обработано: {processed_fields}/{len([k for k in result.keys() if not k.startswith('_')])}")
+        try:
+            self.results_table.resizeRowsToContents()
+            print(f"ОТЛАДКА: Добавлена строка в таблицу. Полей обработано: {processed_fields}/{len([k for k in result.keys() if not k.startswith('_')])}")
+        except Exception as e:
+            print(f"ОШИБКА при изменении размера строк таблицы: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _create_field_aliases_mapping(self, column_mapping):
         """Создает расширенное сопоставление полей с алиасами для гибкого поиска"""
@@ -1917,8 +2030,8 @@ Analyze:"""
             "№ Invoice": ["№ счета", "номер счета", "invoice_number", "счет №", "invoice number", "№счета", "invoice №", "invoice_id", "invoice no"],
             
             # НДС
-            "% НДС": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка"],
-            "VAT %": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка"],
+            "% НДС": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка", "VAT %", "vat %"],
+            "VAT %": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка", "% НДС"],
             "НДС %": ["VAT %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка"],
             
             # Поставщик
@@ -2050,6 +2163,48 @@ Analyze:"""
                 self.preview_button.setEnabled(False)
     
     def save_excel(self):
+        """Сохранение результатов в Excel с использованием ExportManager."""
+        # Собираем данные из таблицы
+        data = []
+        headers = [self.results_table.horizontalHeaderItem(col).text() 
+                   for col in range(self.results_table.columnCount())]
+        
+        for row in range(self.results_table.rowCount()):
+            row_data = {}
+            for col, header in enumerate(headers):
+                item = self.results_table.item(row, col)
+                row_data[header] = item.text() if item else ""
+            data.append(row_data)
+            
+        if not data:
+            utils.show_info_message(
+                self, "Информация", "Нет данных для экспорта в Excel"
+            )
+            return
+            
+        # Получаем путь для сохранения
+        last_export_path = settings_manager.get_string('Interface', 'last_export_path', utils.get_documents_dir())
+        default_name = "invoice_results.xlsx"
+        
+        file_path = utils.get_save_file_path(
+            self, "Сохранить в Excel",
+            os.path.join(last_export_path, default_name),
+            "Excel файлы (*.xlsx)"
+        )
+        
+        if file_path:
+            # Экспортируем
+            success = self.export_manager.export_data(data, file_path, 'excel')
+            if success:
+                self.status_bar.showMessage(f"Результаты сохранены в Excel: {file_path}")
+                # Сохраняем путь для следующего раза
+                settings_manager.save_interface_setting('last_export_path', os.path.dirname(file_path))
+            else:
+                utils.show_error_message(
+                    self, "Ошибка экспорта", "Не удалось экспортировать в Excel"
+                )
+            
+    def _save_excel_legacy(self):
         """Сохранение результатов в формате Excel."""
         # NEW: Проверяем, есть ли строки в таблице
         if self.results_table.rowCount() == 0:
@@ -2136,6 +2291,14 @@ Analyze:"""
         """Обработка закрытия окна."""
         print("Начинаем корректное закрытие приложения...")
         
+        # NEW: Создаем резервную копию настроек перед закрытием
+        if self.backup_manager:
+            try:
+                self.backup_manager.backup_settings()
+                print("Резервная копия настроек создана при закрытии приложения")
+            except Exception as e:
+                print(f"Ошибка создания резервной копии при закрытии: {e}")
+        
         # Останавливаем обработку изображений
         if self.processing_thread and self.processing_thread.isRunning():
             print("Останавливаем поток обработки изображений...")
@@ -2176,6 +2339,11 @@ Analyze:"""
                             print("Вызван метод stop() для DataPreparator")
                         except:
                             pass
+            
+            # NEW: Очищаем кэш перед закрытием
+            if self.cache_manager:
+                self.cache_manager.clear_expired()
+                print("Очищен устаревший кэш")
                             
             # Даем время для остановки
             QCoreApplication.processEvents()
@@ -2582,22 +2750,23 @@ Analyze:"""
             'организация': 'Поставщик',
             
             # Номер счета
-            '№ счета': '№ Invoice',
-            'номер счета': '№ Invoice', 
-            'invoice_number': '№ Invoice',
-            'invoice number': '№ Invoice',
-            'счет №': '№ Invoice',
-            'invoice_id': '№ Invoice',
-            'invoice no': '№ Invoice',
-            '№счета': '№ Invoice',
-            'invoice №': '№ Invoice',
+            '№ счета': '№ счета',
+            'номер счета': '№ счета', 
+            'invoice_number': '№ счета',
+            'invoice number': '№ счета',
+            'счет №': '№ счета',
+            'invoice_id': '№ счета',
+            'invoice no': '№ счета',
+            '№счета': '№ счета',
+            'invoice №': '№ счета',
+            '№ invoice': '№ счета',
             
             # Дата счета
-            'дата счета': 'Invoice Date',
-            'invoice_date': 'Invoice Date',
-            'invoice date': 'Invoice Date',
-            'дата': 'Invoice Date',
-            'date': 'Invoice Date',
+            'дата счета': 'Дата счета',
+            'invoice_date': 'Дата счета',
+            'invoice date': 'Дата счета',
+            'дата': 'Дата счета',
+            'date': 'Дата счета',
             
             # Категория
             'категория': 'Category',
@@ -2620,13 +2789,13 @@ Analyze:"""
             'сумма без налога': 'Amount (0% VAT)',
             
             # НДС %
-            '% ндс': 'VAT %',
-            'ндс %': 'VAT %',
-            'vat %': 'VAT %',
-            'tax_rate': 'VAT %',
-            'vat_rate': 'VAT %',
-            'ставка ндс': 'VAT %',
-            'налоговая ставка': 'VAT %',
+            '% ндс': '% НДС',
+            'ндс %': '% НДС',
+            'vat %': '% НДС',
+            'tax_rate': '% НДС',
+            'vat_rate': '% НДС',
+            'ставка ндс': '% НДС',
+            'налоговая ставка': '% НДС',
             
             # Сумма НДС
             'сумма ндс': 'VAT Amount',
@@ -2637,14 +2806,14 @@ Analyze:"""
             'налог': 'VAT Amount',
             
             # Сумма с НДС (Итого)
-            'сумма с ндс': 'Total',
-            'total': 'Total',
-            'итого': 'Total',
-            'total_amount': 'Total',
-            'amount': 'Total',
-            'к оплате': 'Total',
-            'всего': 'Total',
-            'общая сумма': 'Total',
+            'сумма с ндс': 'Сумма с НДС',
+            'total': 'Сумма с НДС',
+            'итого': 'Сумма с НДС',
+            'total_amount': 'Сумма с НДС',
+            'amount': 'Сумма с НДС',
+            'к оплате': 'Сумма с НДС',
+            'всего': 'Сумма с НДС',
+            'общая сумма': 'Сумма с НДС',
             
             # Валюта
             'валюта': 'Currency',
@@ -2709,14 +2878,14 @@ Analyze:"""
             'correspondent_account': 'К/С',
             
             # Комментарии
-            'комментарии': 'Note',
-            'комментарий': 'Note',
-            'примечание': 'Note',
-            'note': 'Note',
-            'notes': 'Note',
-            'comment': 'Note',
-            'comments': 'Note',
-            'замечания': 'Note',
+            'комментарии': 'Примечание',
+            'комментарий': 'Примечание',
+            'примечание': 'Примечание',
+            'note': 'Примечание',
+            'notes': 'Примечание',
+            'comment': 'Примечание',
+            'comments': 'Примечание',
+            'замечания': 'Примечание',
         }
         
         mapped_result = {}
