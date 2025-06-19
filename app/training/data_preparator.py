@@ -4988,3 +4988,175 @@ class TrainingDataPreparator:
         }
         
         return field_mapping.get(field_name, field_name)
+    
+    def prepare_dataset_for_trocr(self,
+                                source_folder: str,
+                                output_path: str,
+                                annotation_method: str = "gemini",
+                                max_files: Optional[int] = None) -> Optional[str]:
+        """
+        Подготавливает датасет специально для обучения TrOCR моделей
+        
+        Args:
+            source_folder: Папка с исходными изображениями/PDF
+            output_path: Путь для сохранения датасета
+            annotation_method: Метод аннотации ("gemini", "ocr", "manual")
+            max_files: Максимальное количество файлов для обработки
+            
+        Returns:
+            Optional[str]: Путь к сохраненному датасету или None при ошибке
+        """
+        try:
+            self._log("🚀 Начинаем подготовку датасета для TrOCR...")
+            
+            # Находим файлы для обработки
+            files = self._find_files_modern(source_folder, max_files)
+            if not files:
+                self._log("❌ Не найдено файлов для обработки")
+                return None
+                
+            self._log(f"📁 Найдено {len(files)} файлов для обработки")
+            
+            # Создаем временную директорию для датасета
+            dataset_dir = os.path.join(output_path, f"trocr_dataset_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            os.makedirs(dataset_dir, exist_ok=True)
+            
+            # Списки для хранения данных
+            all_images = []
+            all_texts = []
+            processed_count = 0
+            
+            # Обрабатываем каждый файл
+            for i, file_path in enumerate(files):
+                if self.stop_requested:
+                    self._log("⚠️ Обработка остановлена пользователем")
+                    break
+                    
+                self._log(f"🔄 Обработка файла {i+1}/{len(files)}: {os.path.basename(file_path)}")
+                self._update_progress(int((i + 1) / len(files) * 100))
+                
+                # Конвертируем в изображения
+                images = self._convert_to_images_modern(file_path)
+                if not images:
+                    self._log(f"⚠️ Пропуск файла {file_path} - не удалось конвертировать")
+                    continue
+                
+                # Обрабатываем каждое изображение
+                for img_idx, image in enumerate(images):
+                    # Создаем аннотацию для TrOCR
+                    annotation = self._create_trocr_annotation(
+                        image,
+                        f"{os.path.basename(file_path)}_page_{img_idx}",
+                        annotation_method
+                    )
+                    
+                    if annotation:
+                        all_images.append(annotation['image'])
+                        all_texts.append(annotation['text'])
+                        processed_count += 1
+                        
+            if processed_count == 0:
+                self._log("❌ Не удалось обработать ни одного изображения")
+                return None
+                
+            self._log(f"✅ Обработано {processed_count} изображений")
+            
+            # Создаем датасет
+            self._log("📦 Создание TrOCR датасета...")
+            
+            # Создаем Dataset
+            dataset_dict = {
+                'image': all_images,
+                'text': all_texts
+            }
+            
+            dataset = Dataset.from_dict(dataset_dict)
+            
+            # Разделяем на train/validation
+            train_test = dataset.train_test_split(test_size=0.1, seed=42)
+            
+            # Сохраняем датасет
+            dataset_path = os.path.join(dataset_dir, "dataset")
+            train_test.save_to_disk(dataset_path)
+            
+            # Сохраняем метаданные
+            metadata = {
+                'dataset_type': 'trocr',
+                'annotation_method': annotation_method,
+                'total_samples': processed_count,
+                'train_samples': len(train_test['train']),
+                'validation_samples': len(train_test['test']),
+                'created_at': datetime.now().isoformat(),
+                'source_folder': source_folder
+            }
+            
+            self._save_dataset_metadata(dataset_path, metadata)
+            
+            self._log(f"✅ Датасет для TrOCR сохранен: {dataset_path}")
+            self._log(f"   Train: {len(train_test['train'])} примеров")
+            self._log(f"   Validation: {len(train_test['test'])} примеров")
+            
+            return dataset_path
+            
+        except Exception as e:
+            self._log(f"❌ Ошибка при подготовке TrOCR датасета: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _create_trocr_annotation(self,
+                               image: Image.Image,
+                               image_name: str,
+                               annotation_method: str) -> Optional[Dict]:
+        """
+        Создает аннотацию для одного изображения в формате TrOCR
+        
+        Args:
+            image: PIL изображение
+            image_name: Имя изображения
+            annotation_method: Метод аннотации
+            
+        Returns:
+            Optional[Dict]: Словарь с изображением и текстом или None
+        """
+        try:
+            # Извлекаем текст в зависимости от метода
+            if annotation_method == "gemini":
+                # Используем Gemini для извлечения всего текста
+                fields = self._extract_fields_with_gemini_modern(image)
+                # Формируем текст из всех полей
+                text_parts = []
+                for key, value in fields.items():
+                    if value:
+                        text_parts.append(f"{key}: {value}")
+                text = "\n".join(text_parts)
+                
+            elif annotation_method == "ocr":
+                # Используем OCR для извлечения текста
+                fields = self._extract_fields_with_ocr_modern(image)
+                # Берем полный текст если есть
+                text = fields.get('full_text', '')
+                if not text:
+                    # Если нет полного текста, собираем из полей
+                    text_parts = []
+                    for key, value in fields.items():
+                        if value and key != 'full_text':
+                            text_parts.append(f"{key}: {value}")
+                    text = "\n".join(text_parts)
+                
+            else:  # manual
+                # Для ручной аннотации используем базовый текст
+                text = f"Invoice document {image_name}"
+                
+            if not text:
+                self._log(f"⚠️ Не удалось извлечь текст из {image_name}")
+                return None
+                
+            return {
+                'image': image,
+                'text': text.strip()
+            }
+            
+        except Exception as e:
+            self._log(f"❌ Ошибка создания TrOCR аннотации для {image_name}: {e}")
+            return None

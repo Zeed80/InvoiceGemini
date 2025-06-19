@@ -105,6 +105,9 @@ class MainWindow(QMainWindow):
         # Populate Gemini models
         self.populate_gemini_models()
         
+        # Populate TrOCR models
+        self.populate_trocr_models()
+        
         # Populate LLM providers and models
         self.populate_cloud_providers()
         self.populate_local_providers()
@@ -263,6 +266,36 @@ class MainWindow(QMainWindow):
         donut_layout.addWidget(self.donut_radio)
         donut_layout.addWidget(self.donut_prompt_button)
         model_layout.addLayout(donut_layout)
+        
+        # TrOCR (Microsoft Transformer OCR)
+        trocr_layout = QHBoxLayout()
+        self.trocr_radio = QRadioButton("TrOCR (Microsoft)")
+        self.trocr_radio.toggled.connect(self.on_model_changed)
+        self.trocr_prompt_button = QPushButton("Показать промпт")
+        self.trocr_prompt_button.clicked.connect(lambda: self.show_model_prompt('trocr'))
+        trocr_layout.addWidget(self.trocr_radio)
+        trocr_layout.addWidget(self.trocr_prompt_button)
+        model_layout.addLayout(trocr_layout)
+        
+        # TrOCR model selection (with indent)
+        trocr_selection_layout = QVBoxLayout()
+        trocr_selection_layout.setContentsMargins(20, 0, 0, 0)  # Отступ для подкатегории
+        
+        trocr_model_layout = QHBoxLayout()
+        self.trocr_model_label = QLabel("Модель:")
+        self.trocr_model_selector = QComboBox()
+        self.trocr_model_selector.currentIndexChanged.connect(self.on_trocr_model_changed)
+        self.trocr_model_selector.setToolTip("Выберите модель TrOCR для использования")
+        trocr_model_layout.addWidget(self.trocr_model_label)
+        trocr_model_layout.addWidget(self.trocr_model_selector, 1)
+        trocr_selection_layout.addLayout(trocr_model_layout)
+        
+        # TrOCR status indicator
+        self.trocr_status_label = QLabel("Не загружено")
+        self.trocr_status_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 0;")
+        trocr_selection_layout.addWidget(self.trocr_status_label)
+        
+        model_layout.addLayout(trocr_selection_layout)
         
         # Local LLM Models Section
         local_llm_layout = QHBoxLayout()
@@ -529,7 +562,9 @@ class MainWindow(QMainWindow):
             
         # Определяем тип модели
         model_type = "layoutlm" if self.layoutlm_radio.isChecked() else "donut"
-        if self.gemini_radio.isChecked():
+        if self.trocr_radio.isChecked():
+            model_type = "trocr"
+        elif self.gemini_radio.isChecked():
             model_type = "gemini"
         elif self.cloud_llm_radio.isChecked():
             model_type = "cloud_llm"
@@ -621,6 +656,8 @@ class MainWindow(QMainWindow):
             self.layoutlm_radio.setChecked(True)
         elif active_model == 'donut':
             self.donut_radio.setChecked(True)
+        elif active_model == 'trocr':
+            self.trocr_radio.setChecked(True)
         elif active_model == 'gemini':
             self.gemini_radio.setChecked(True)
         elif active_model == 'cloud_llm':
@@ -656,6 +693,8 @@ class MainWindow(QMainWindow):
                 model_name = 'layoutlm'
             elif self.donut_radio.isChecked():
                 model_name = 'donut'
+            elif self.trocr_radio.isChecked():
+                model_name = 'trocr'
             elif self.gemini_radio.isChecked():
                 model_name = 'gemini'
             elif self.cloud_llm_radio.isChecked():
@@ -670,9 +709,14 @@ class MainWindow(QMainWindow):
             self.ocr_lang_combo.setEnabled(model_name == 'layoutlm')
             
             # Обновляем видимость компонентов
+            trocr_enabled = (model_name == 'trocr')
             gemini_enabled = (model_name == 'gemini')
             cloud_llm_enabled = (model_name == 'cloud_llm')
             local_llm_enabled = (model_name == 'local_llm')
+            
+            # TrOCR компоненты
+            self.trocr_model_label.setEnabled(trocr_enabled)
+            self.trocr_model_selector.setEnabled(trocr_enabled)
             
             # Gemini компоненты
             self.gemini_sub_model_label.setEnabled(gemini_enabled)
@@ -1252,7 +1296,9 @@ class MainWindow(QMainWindow):
         
         # Определяем тип модели
         model_type = "layoutlm" if self.layoutlm_radio.isChecked() else "donut"
-        if self.gemini_radio.isChecked():
+        if self.trocr_radio.isChecked():
+            model_type = "trocr"
+        elif self.gemini_radio.isChecked():
             model_type = "gemini"
         elif self.cloud_llm_radio.isChecked():
             model_type = "cloud_llm"
@@ -1634,7 +1680,7 @@ class MainWindow(QMainWindow):
         model_display_name = ""
         
         try:
-            if model_type in ['layoutlm', 'donut', 'gemini']:
+            if model_type in ['layoutlm', 'donut', 'gemini', 'trocr']:
                 # Старые модели через model_manager
                 processor = self.model_manager.get_model(model_type)
                 if processor:
@@ -2056,6 +2102,91 @@ Analyze:"""
             "Используйте кнопку в Расширенных настройках для обновления списка."
             )
         print("Список моделей Gemini заполнен.") 
+
+    def populate_trocr_models(self):
+        """Заполняет выпадающий список моделей TrOCR."""
+        self.trocr_model_selector.clear()
+        
+        # Получаем список доступных моделей TrOCR
+        trocr_models = [
+            {
+                'id': 'microsoft/trocr-base-printed',
+                'name': 'Base Printed',
+                'description': 'Базовая модель для печатного текста'
+            },
+            {
+                'id': 'microsoft/trocr-base-handwritten',
+                'name': 'Base Handwritten',
+                'description': 'Базовая модель для рукописного текста'
+            },
+            {
+                'id': 'microsoft/trocr-large-printed',
+                'name': 'Large Printed',
+                'description': 'Большая модель для печатного текста'
+            },
+            {
+                'id': 'microsoft/trocr-large-handwritten',
+                'name': 'Large Handwritten',
+                'description': 'Большая модель для рукописного текста'
+            }
+        ]
+        
+        # Добавляем базовые модели
+        for model in trocr_models:
+            display_text = f"{model['name']} ({model['description']})"
+            self.trocr_model_selector.addItem(display_text, model['id'])
+        
+        # Проверяем наличие дообученных моделей
+        trained_models_path = os.path.join(app_config.TRAINED_MODELS_PATH, 'trocr')
+        if os.path.exists(trained_models_path):
+            trained_models = [d for d in os.listdir(trained_models_path) 
+                            if os.path.isdir(os.path.join(trained_models_path, d))]
+            
+            if trained_models:
+                # Добавляем разделитель
+                self.trocr_model_selector.insertSeparator(self.trocr_model_selector.count())
+                
+                # Добавляем дообученные модели
+                for model_name in trained_models:
+                    display_text = f"🎓 {model_name} (Дообученная)"
+                    model_path = os.path.join(trained_models_path, model_name)
+                    self.trocr_model_selector.addItem(display_text, model_path)
+        
+        # Восстанавливаем последний выбор
+        last_model = settings_manager.get_string('Models', 'trocr_model_id', 'microsoft/trocr-base-printed')
+        for i in range(self.trocr_model_selector.count()):
+            if self.trocr_model_selector.itemData(i) == last_model:
+                self.trocr_model_selector.setCurrentIndex(i)
+                break
+        
+    def on_trocr_model_changed(self, index):
+        """Обработчик изменения модели TrOCR."""
+        if index < 0:
+            return
+            
+        model_id = self.trocr_model_selector.currentData()
+        if not model_id:
+            return
+            
+        # Определяем тип модели (HuggingFace или кастомная)
+        is_custom = not model_id.startswith('microsoft/')
+        
+        # Сохраняем настройки
+        settings_manager.set_value('Models', 'trocr_model_id', model_id)
+        settings_manager.set_value('Models', 'trocr_model_source', 'custom' if is_custom else 'huggingface')
+        if is_custom:
+            settings_manager.set_value('Models', 'custom_trocr_model_name', os.path.basename(model_id))
+        
+        # Обновляем статус
+        if is_custom:
+            self.trocr_status_label.setText(f"Дообученная: {os.path.basename(model_id)}")
+            self.trocr_status_label.setStyleSheet("color: #4CAF50; font-size: 11px;")
+        else:
+            model_name = self.trocr_model_selector.currentText().split(' (')[0]
+            self.trocr_status_label.setText(f"HuggingFace: {model_name}")
+            self.trocr_status_label.setStyleSheet("color: #2196F3; font-size: 11px;")
+        
+        print(f"Выбрана модель TrOCR: {model_id} ({'custom' if is_custom else 'huggingface'})")
 
     # NEW: Метод для выбора папки
     def select_folder(self):

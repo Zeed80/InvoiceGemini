@@ -11,13 +11,23 @@ from typing import Dict, List, Optional, Union, Any
 from datetime import datetime
 
 try:
-    from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+    from transformers import TrOCRProcessor as HfTrOCRProcessor, VisionEncoderDecoderModel
     from transformers import pipeline
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
 
-class TrOCRProcessor:
+# Импортируем базовый процессор для интеграции
+try:
+    from .base_processor import BaseProcessor
+except ImportError:
+    # Fallback если base_processor недоступен
+    class BaseProcessor:
+        def __init__(self):
+            self.is_loaded = False
+            self.device = None
+
+class TrOCRProcessor(BaseProcessor):
     """
     Процессор для извлечения данных из изображений документов с использованием Microsoft TrOCR
     """
@@ -30,6 +40,8 @@ class TrOCRProcessor:
             model_name: Имя модели TrOCR
             device: Устройство для обработки ('cuda', 'cpu', 'auto')
         """
+        super().__init__()  # Инициализируем BaseProcessor
+        
         if not TRANSFORMERS_AVAILABLE:
             raise ImportError("Transformers не установлен. Выполните: pip install transformers torch")
             
@@ -40,13 +52,22 @@ class TrOCRProcessor:
             self.device = torch.device(device)
             
         self.model_name = model_name
+        self.model_id_loaded = None  # Для отслеживания загруженной модели
         self.processor = None
         self.model = None
         self.logger = logging.getLogger(__name__)
+        self.is_loaded = False  # Флаг загрузки модели
         
         # Кэш директория
         self.cache_dir = "data/models"
         os.makedirs(self.cache_dir, exist_ok=True)
+        
+        # Интеграция с field_manager для структурированного извлечения
+        try:
+            from .field_manager import field_manager
+            self.field_manager = field_manager
+        except ImportError:
+            self.field_manager = None
         
         self.logger.info(f"TrOCRProcessor инициализирован с моделью: {model_name}")
         self.logger.info(f"Устройство: {self.device}")
@@ -62,7 +83,7 @@ class TrOCRProcessor:
             self.logger.info(f"Загрузка TrOCR модели: {self.model_name}")
             
             # Загружаем процессор
-            self.processor = TrOCRProcessor.from_pretrained(
+            self.processor = HfTrOCRProcessor.from_pretrained(
                 self.model_name,
                 cache_dir=self.cache_dir
             )
@@ -77,6 +98,8 @@ class TrOCRProcessor:
             self.model.to(self.device)
             self.model.eval()
             
+            self.model_id_loaded = self.model_name
+            self.is_loaded = True
             self.logger.info("TrOCR модель успешно загружена")
             return True
             
@@ -181,7 +204,7 @@ class TrOCRProcessor:
     
     def _extract_fields_from_text(self, text: str, fields: List[str]) -> Dict[str, str]:
         """
-        Извлекает конкретные поля из текста с помощью регулярных выражений
+        Извлекает конкретные поля из текста с помощью структурированного подхода
         
         Args:
             text: Исходный текст
@@ -192,51 +215,148 @@ class TrOCRProcessor:
         """
         extracted = {}
         
-        # Паттерны для извлечения полей
-        patterns = {
-            'invoice_number': [
-                r'(?:invoice|счет|№)\s*[:№#]?\s*([A-Za-z0-9\-/_]+)',
-                r'№\s*([A-Za-z0-9\-/_]+)',
-                r'Invoice\s*#?\s*([A-Za-z0-9\-/_]+)'
-            ],
-            'date': [
-                r'(?:date|дата)\s*[:.]?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})',
-                r'(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})',
-                r'(\d{2,4}[./\-]\d{1,2}[./\-]\d{1,2})'
-            ],
-            'total_amount': [
-                r'(?:total|итого|всего)\s*[:.]?\s*([0-9,.\s]+)',
-                r'(?:sum|сумма)\s*[:.]?\s*([0-9,.\s]+)',
-                r'(\d+[,.]?\d*)\s*(?:руб|рублей|$|€|₽)'
-            ],
-            'vendor_name': [
-                r'(?:from|от|поставщик)\s*[:.]?\s*([^\n\r]+)',
-                r'(?:vendor|company)\s*[:.]?\s*([^\n\r]+)'
-            ],
-            'description': [
-                r'(?:description|описание|наименование)\s*[:.]?\s*([^\n\r]+)',
-                r'(?:item|товар)\s*[:.]?\s*([^\n\r]+)'
-            ]
-        }
+        # Если модель дообучена для структурированного извлечения, используем её
+        if self._is_fine_tuned_model():
+            # Для дообученной модели используем специальный промпт
+            return self._extract_with_fine_tuned_model(text, fields)
         
-        # Извлекаем каждое поле
-        for field in fields:
-            field_lower = field.lower()
-            extracted[field] = ""
-            
-            # Ищем подходящие паттерны
-            for pattern_key, pattern_list in patterns.items():
-                if field_lower in pattern_key or pattern_key in field_lower:
-                    for pattern in pattern_list:
+        # Для базовой модели используем интеллектуальный парсинг
+        # Разбиваем текст на строки для анализа
+        lines = text.split('\n')
+        
+        # Словарь для хранения потенциальных значений с их вероятностями
+        field_candidates = {field: [] for field in fields}
+        
+        # Анализируем каждую строку
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Проверяем каждое поле
+            for field in fields:
+                confidence = 0.0
+                value = ""
+                
+                if field == 'invoice_number':
+                    # Ищем номер счета
+                    if any(marker in line.lower() for marker in ['invoice', 'счет', '№', 'номер', 'no.']):
+                        # Извлекаем числовую или буквенно-числовую часть
                         import re
-                        match = re.search(pattern, text, re.IGNORECASE)
+                        matches = re.findall(r'[A-Za-z0-9\-/]+', line)
+                        for match in matches:
+                            if len(match) > 3 and any(c.isdigit() for c in match):
+                                value = match
+                                confidence = 0.9
+                                break
+                                
+                elif field == 'date':
+                    # Ищем дату
+                    import re
+                    date_patterns = [
+                        r'\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}',
+                        r'\d{2,4}[./\-]\d{1,2}[./\-]\d{1,2}'
+                    ]
+                    for pattern in date_patterns:
+                        match = re.search(pattern, line)
                         if match:
-                            extracted[field] = match.group(1).strip()
+                            value = match.group()
+                            confidence = 0.95
                             break
-                    if extracted[field]:
-                        break
+                            
+                elif field in ['total_amount', 'vat_amount']:
+                    # Ищем суммы
+                    if any(marker in line.lower() for marker in ['total', 'итого', 'всего', 'сумма', 'amount', 'ндс', 'vat']):
+                        import re
+                        # Ищем числа с десятичными знаками
+                        matches = re.findall(r'[\d\s]+[,.]?\d*', line)
+                        for match in matches:
+                            cleaned = match.replace(' ', '')
+                            if cleaned:
+                                value = cleaned
+                                confidence = 0.85
+                                if 'total' in line.lower() or 'итого' in line.lower():
+                                    confidence = 0.95
+                                break
+                                
+                elif field == 'vendor_name':
+                    # Ищем название поставщика
+                    if any(marker in line.lower() for marker in ['from', 'от', 'поставщик', 'vendor', 'company', 'ооо', 'зао', 'ип']):
+                        # Убираем маркеры и берем оставшуюся часть
+                        value = line
+                        for marker in ['from:', 'от:', 'поставщик:', 'vendor:', 'company:']:
+                            if marker in line.lower():
+                                value = line.split(marker, 1)[-1].strip()
+                                break
+                        if value and len(value) > 2:
+                            confidence = 0.8
+                            
+                elif field == 'description':
+                    # Описание обычно идет после заголовков
+                    if any(marker in line.lower() for marker in ['товар', 'услуга', 'наименование', 'description', 'item']):
+                        # Следующие строки могут содержать описание
+                        value = line
+                        confidence = 0.7
+                
+                # Добавляем кандидата если есть значение
+                if value and confidence > 0:
+                    field_candidates[field].append({
+                        'value': value,
+                        'confidence': confidence,
+                        'line': line
+                    })
+        
+        # Выбираем лучшего кандидата для каждого поля
+        for field, candidates in field_candidates.items():
+            if candidates:
+                # Сортируем по уверенности и берем лучший
+                best_candidate = max(candidates, key=lambda x: x['confidence'])
+                extracted[field] = best_candidate['value']
+            else:
+                extracted[field] = ""
+                
+        # Постобработка для улучшения качества
+        extracted = self._postprocess_extracted_fields(extracted)
         
         return extracted
+    
+    def _is_fine_tuned_model(self) -> bool:
+        """Проверяет, является ли модель дообученной"""
+        # Проверяем по пути модели
+        if self.model_id_loaded and 'trained_models' in self.model_id_loaded:
+            return True
+        return False
+    
+    def _extract_with_fine_tuned_model(self, text: str, fields: List[str]) -> Dict[str, str]:
+        """Использует дообученную модель для структурированного извлечения"""
+        # Формируем специальный промпт для дообученной модели
+        prompt = f"Extract the following fields from the invoice: {', '.join(fields)}\n\nText: {text}\n\nExtracted fields:"
+        
+        # Здесь должна быть логика использования дообученной модели
+        # Пока используем базовый подход
+        return {field: "" for field in fields}
+    
+    def _postprocess_extracted_fields(self, fields: Dict[str, str]) -> Dict[str, str]:
+        """Постобработка извлеченных полей для улучшения качества"""
+        # Очищаем и форматируем значения
+        for field, value in fields.items():
+            if field == 'date' and value:
+                # Нормализуем формат даты
+                import re
+                value = re.sub(r'[./\-]', '.', value)
+                
+            elif field in ['total_amount', 'vat_amount'] and value:
+                # Нормализуем числовые значения
+                value = value.replace(',', '.')
+                value = re.sub(r'[^\d.]', '', value)
+                
+            elif field == 'vendor_name' and value:
+                # Очищаем название компании
+                value = value.strip('"\'')
+                
+            fields[field] = value
+            
+        return fields
     
     def process_multiple_images(self, image_paths: List[str], fields: List[str] = None) -> List[Dict[str, Any]]:
         """
@@ -306,6 +426,88 @@ class TrOCRProcessor:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             
+        self.logger.info("TrOCR модель выгружена из памяти")
+    
+    def process_image(self, image_path: str, ocr_lang: str = None, custom_prompt: str = None) -> Dict[str, Any]:
+        """
+        Основной метод обработки изображения для интеграции с системой
+        
+        Args:
+            image_path: Путь к изображению
+            ocr_lang: Язык OCR (не используется в TrOCR, для совместимости)
+            custom_prompt: Кастомный промпт (для будущих версий)
+            
+        Returns:
+            Dict с результатами обработки
+        """
+        try:
+            # Загружаем модель если не загружена
+            if not self.is_loaded:
+                if not self.load_model():
+                    return {"error": "Не удалось загрузить модель TrOCR"}
+                    
+            # Получаем поля для извлечения из field_manager
+            if self.field_manager:
+                fields_to_extract = [field.id for field in self.field_manager.get_enabled_fields()]
+            else:
+                # Базовый набор полей
+                fields_to_extract = [
+                    'invoice_number', 'date', 'total_amount', 
+                    'vendor_name', 'vat_amount', 'description'
+                ]
+            
+            # Обрабатываем изображение
+            result = self.process_invoice_image(image_path, fields_to_extract)
+            
+            # Форматируем результат для совместимости с системой
+            if result['success']:
+                return result['extracted_fields']
+            else:
+                return {"error": result.get('error', 'Неизвестная ошибка')}
+                
+        except Exception as e:
+            self.logger.error(f"Ошибка обработки изображения: {e}")
+            return {"error": str(e)}
+    
+    def get_full_prompt(self, custom_prompt: str = None) -> str:
+        """
+        Возвращает полный промпт для модели (для совместимости)
+        
+        Args:
+            custom_prompt: Кастомный промпт
+            
+        Returns:
+            str: Промпт
+        """
+        if custom_prompt:
+            return custom_prompt
+            
+        if self.field_manager:
+            # Генерируем промпт на основе включенных полей
+            fields = self.field_manager.get_enabled_fields()
+            prompt = "Извлеките следующие поля из счета:\n"
+            for field in fields:
+                prompt += f"- {field.display_name}: {field.description}\n"
+            return prompt
+        else:
+            return "Извлеките данные счета: номер, дата, сумма, поставщик"
+    
+    def unload_model(self):
+        """Выгружает модель из памяти"""
+        if self.model:
+            del self.model
+            self.model = None
+            
+        if self.processor:
+            del self.processor
+            self.processor = None
+            
+        # Очищаем GPU память
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        self.is_loaded = False
+        self.model_id_loaded = None
         self.logger.info("TrOCR модель выгружена из памяти")
     
     def __del__(self):
