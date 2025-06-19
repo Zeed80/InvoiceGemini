@@ -4,6 +4,7 @@
 import os
 import sys
 import json
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QRadioButton, QLabel, QGroupBox, 
@@ -109,7 +110,8 @@ class MainWindow(QMainWindow):
         self.populate_local_providers()
         
         # NEW: Initialize components that need UI and model_manager to be ready
-        self._init_post_ui_components()
+        # Отложенная инициализация после полной настройки UI
+        QTimer.singleShot(200, self._init_post_ui_components)
     
     def init_ui(self):
         """Инициализация пользовательского интерфейса."""
@@ -417,21 +419,52 @@ class MainWindow(QMainWindow):
     
     def _init_post_ui_components(self):
         """Инициализирует компоненты, которые требуют готового UI."""
-        # Initialize ExportManager
-        self.export_manager = ExportManager()
-        # Не подключаем сигнал export_requested, так как его нет в ExportManager
-        
-        # Initialize BatchProcessor
-        self.batch_processor = BatchProcessor(self.model_manager)
-        self.batch_processor.processing_started.connect(self.on_batch_processing_started)
-        self.batch_processor.file_processed.connect(self.on_batch_file_processed)
-        self.batch_processor.processing_finished.connect(self.on_batch_processing_finished)
-        self.batch_processor.error_occurred.connect(self.on_batch_error)
-        
-        # Connect progress indicator to batch processor if it exists
-        if hasattr(self, 'progress_indicator') and self.progress_indicator:
-            self.batch_processor.progress_updated.connect(self.progress_indicator.set_progress)
-            self.batch_processor.status_updated.connect(self.progress_indicator.set_stage)
+        try:
+            # Initialize ExportManager 
+            self.export_manager = ExportManager()
+            print("ExportManager инициализирован")
+            
+            # Initialize BatchProcessor только если model_manager готов
+            if hasattr(self, 'model_manager') and self.model_manager:
+                self.batch_processor = BatchProcessor(self.model_manager)
+                self.batch_processor.processing_started.connect(self.on_batch_processing_started)
+                self.batch_processor.file_processed.connect(self.on_batch_file_processed)
+                self.batch_processor.processing_finished.connect(self.on_batch_processing_finished)
+                self.batch_processor.error_occurred.connect(self.on_batch_error)
+                
+                # Connect progress indicator to batch processor if it exists
+                if hasattr(self, 'progress_indicator') and self.progress_indicator:
+                    self.batch_processor.progress_updated.connect(self.progress_indicator.set_progress)
+                    self.batch_processor.status_updated.connect(self.progress_indicator.set_stage)
+                    
+                print("BatchProcessor инициализирован")
+            else:
+                print("model_manager еще не готов, отложим инициализацию BatchProcessor")
+                # Повторяем попытку через 100ms
+                QTimer.singleShot(100, self._init_batch_processor)
+                
+        except Exception as e:
+            print(f"Ошибка в _init_post_ui_components: {e}")
+            import traceback
+            traceback.print_exc()
+            
+    def _init_batch_processor(self):
+        """Отложенная инициализация BatchProcessor."""
+        try:
+            if hasattr(self, 'model_manager') and self.model_manager and not hasattr(self, 'batch_processor'):
+                self.batch_processor = BatchProcessor(self.model_manager)
+                self.batch_processor.processing_started.connect(self.on_batch_processing_started)
+                self.batch_processor.file_processed.connect(self.on_batch_file_processed)
+                self.batch_processor.processing_finished.connect(self.on_batch_processing_finished)
+                self.batch_processor.error_occurred.connect(self.on_batch_error)
+                
+                if hasattr(self, 'progress_indicator') and self.progress_indicator:
+                    self.batch_processor.progress_updated.connect(self.progress_indicator.set_progress)
+                    self.batch_processor.status_updated.connect(self.progress_indicator.set_stage)
+                    
+                print("BatchProcessor инициализирован (отложенная инициализация)")
+        except Exception as e:
+            print(f"Ошибка отложенной инициализации BatchProcessor: {e}")
     
     def on_file_selected(self, file_path: str):
         """Обработчик выбора файла через FileSelector."""
@@ -487,6 +520,13 @@ class MainWindow(QMainWindow):
         
     def _process_folder_with_batch_processor(self, folder_path: str):
         """Обрабатывает папку с помощью BatchProcessor."""
+        if not hasattr(self, 'batch_processor') or not self.batch_processor:
+            utils.show_error_message(
+                self, "Ошибка", 
+                "Компонент пакетной обработки не инициализирован. Попробуйте перезапустить приложение."
+            )
+            return
+            
         # Определяем тип модели
         model_type = "layoutlm" if self.layoutlm_radio.isChecked() else "donut"
         if self.gemini_radio.isChecked():
@@ -498,21 +538,30 @@ class MainWindow(QMainWindow):
             
         ocr_lang = self.ocr_lang_combo.currentData() if model_type == "layoutlm" else None
         
-        # Получаем настройки для конкретной модели
+        # Дополнительные настройки для моделей
         model_settings = {}
-        if model_type == 'gemini':
+        if model_type == "gemini":
+            # Передаем выбранную sub-модель
             model_settings['sub_model_id'] = self.gemini_model_selector.currentData()
-        elif model_type in ['cloud_llm', 'local_llm']:
-            # Для LLM нужна дополнительная логика
-            if not self.current_llm_plugin:
-                self.auto_load_llm_plugin(model_type, 
-                    self.cloud_provider_selector.currentData() if model_type == 'cloud_llm' else self.local_provider_selector.currentData(),
-                    self.cloud_model_selector.currentData() if model_type == 'cloud_llm' else self.local_model_selector.currentData()
-                )
-            model_settings['llm_plugin'] = self.current_llm_plugin
             
+        # Отключаем кнопку обработки на время
+        self.process_button.setEnabled(False)
+        
         # Запускаем пакетную обработку
-        self.batch_processor.process_folder(folder_path, model_type, ocr_lang, model_settings)
+        try:
+            self.batch_processor.process_folder(
+                folder_path,
+                model_type,
+                ocr_lang,
+                model_settings
+            )
+        except Exception as e:
+            print(f"Ошибка запуска пакетной обработки: {e}")
+            utils.show_error_message(
+                self, "Ошибка обработки",
+                f"Не удалось начать обработку папки: {str(e)}"
+            )
+            self.process_button.setEnabled(True)
         
     def show_batch_results(self):
         """Показывает результаты пакетной обработки."""
@@ -523,17 +572,46 @@ class MainWindow(QMainWindow):
         self.results_table.setRowCount(0)
         
         # Add all results to table
+        successful_count = 0
         for batch_item in self.batch_results:
             result = batch_item['result']
-            if result and 'success' in result and result['success']:
-                self.append_result_to_table(result['data'])
+            file_name = os.path.basename(batch_item['file_path'])
+            
+            if result:
+                # Добавляем имя файла к результату
+                result_with_file = result.copy() if isinstance(result, dict) else {}
+                result_with_file['_source_file'] = file_name
+                
+                # Если результат содержит вложенную структуру с 'data'
+                if isinstance(result, dict) and 'data' in result:
+                    result_data = result['data']
+                    if isinstance(result_data, dict):
+                        result_data['_source_file'] = file_name
+                        self.append_result_to_table(result_data)
+                    else:
+                        self.append_result_to_table(result_with_file)
+                else:
+                    # Прямой результат
+                    self.append_result_to_table(result_with_file)
+                    
+                successful_count += 1
                 
         # Enable export buttons
         self.save_button.setEnabled(True)
         self.save_excel_button.setEnabled(True)
         self.preview_button.setEnabled(True)
         
-        self.status_bar.showMessage(f"Обработано {len(self.batch_results)} файлов")
+        # Обновляем статус
+        self.status_bar.showMessage(f"Обработано файлов: {successful_count} из {len(self.batch_results)}")
+        
+        # Показываем сообщение о завершении
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self,
+            "Пакетная обработка завершена",
+            f"Успешно обработано {successful_count} из {len(self.batch_results)} файлов.\n"
+            f"Результаты отображены в таблице."
+        )
     
     def load_saved_settings(self):
         """Загружает сохраненные пользовательские настройки и применяет их."""
@@ -1352,7 +1430,32 @@ class MainWindow(QMainWindow):
             utils.show_info_message(self, "Информация", "Нет данных для сохранения")
             return
             
-        # Получаем путь для сохранения
+        # Проверяем наличие ExportManager
+        if not hasattr(self, 'export_manager') or not self.export_manager:
+            # Fallback - используем старый метод
+            from PyQt6.QtWidgets import QFileDialog
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Сохранить результаты", "", 
+                "CSV файлы (*.csv);;JSON файлы (*.json);;Все файлы (*.*)"
+            )
+            
+            if file_path:
+                # Определяем формат по расширению  
+                if file_path.endswith('.json'):
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                else:
+                    # CSV по умолчанию
+                    import csv
+                    with open(file_path, 'w', newline='', encoding='utf-8-sig') as f:
+                        writer = csv.DictWriter(f, fieldnames=headers, delimiter=';')
+                        writer.writeheader()
+                        writer.writerows(data)
+                        
+                self.status_bar.showMessage(f"Результаты сохранены: {file_path}")
+            return
+            
+        # Используем ExportManager
         from PyQt6.QtWidgets import QFileDialog
         file_path, selected_filter = QFileDialog.getSaveFileName(
             self, "Сохранить результаты", "",
@@ -1360,10 +1463,24 @@ class MainWindow(QMainWindow):
         )
         
         if file_path:
-            # Определяем формат по расширению
-            format_type = Path(file_path).suffix[1:].lower()
+            # Определяем формат по выбранному фильтру или расширению
+            format_type = None
+            
+            # Сначала пробуем определить по фильтру
+            if selected_filter:
+                for fmt, desc in self.export_manager.SUPPORTED_FORMATS.items():
+                    if desc in selected_filter:
+                        format_type = fmt
+                        break
+                        
+            # Если не определили по фильтру, используем расширение
             if not format_type:
-                format_type = 'csv'  # По умолчанию
+                ext = Path(file_path).suffix[1:].lower()
+                format_type = ext if ext in self.export_manager.SUPPORTED_FORMATS else 'csv'
+                
+            # Добавляем расширение если его нет
+            if not Path(file_path).suffix:
+                file_path += f'.{format_type}'
                 
             # Экспортируем
             success = self.export_manager.export_data(data, file_path, format_type)
@@ -2182,9 +2299,23 @@ Analyze:"""
             )
             return
             
+        # Проверяем наличие ExportManager
+        if not hasattr(self, 'export_manager') or not self.export_manager:
+            # Используем старый метод
+            self._save_excel_legacy()
+            return
+            
         # Получаем путь для сохранения
         last_export_path = settings_manager.get_string('Interface', 'last_export_path', utils.get_documents_dir())
-        default_name = "invoice_results.xlsx"
+        
+        # Определяем имя файла по умолчанию
+        if self.current_folder_path:
+            default_folder_name = os.path.basename(self.current_folder_path) or "batch_results"
+            default_name = f"{default_folder_name}_результаты.xlsx"
+        elif self.current_image_path:
+            default_name = os.path.splitext(os.path.basename(self.current_image_path))[0] + "_результаты.xlsx"
+        else:
+            default_name = "invoice_results.xlsx"
         
         file_path = utils.get_save_file_path(
             self, "Сохранить в Excel",
@@ -2193,16 +2324,29 @@ Analyze:"""
         )
         
         if file_path:
+            # Убеждаемся, что есть расширение
+            if not file_path.endswith('.xlsx'):
+                file_path += '.xlsx'
+                
             # Экспортируем
-            success = self.export_manager.export_data(data, file_path, 'excel')
-            if success:
-                self.status_bar.showMessage(f"Результаты сохранены в Excel: {file_path}")
-                # Сохраняем путь для следующего раза
-                settings_manager.save_interface_setting('last_export_path', os.path.dirname(file_path))
-            else:
-                utils.show_error_message(
-                    self, "Ошибка экспорта", "Не удалось экспортировать в Excel"
-                )
+            try:
+                success = self.export_manager.export_data(data, file_path, 'excel')
+                if success:
+                    self.status_bar.showMessage(f"Результаты сохранены в Excel: {file_path}")
+                    # Сохраняем путь для следующего раза
+                    settings_manager.save_interface_setting('last_export_path', os.path.dirname(file_path))
+                    utils.show_info_message(
+                        self, "Сохранение успешно", 
+                        f"Результаты экспортированы в Excel-файл:\n{file_path}"
+                    )
+                else:
+                    utils.show_error_message(
+                        self, "Ошибка экспорта", "Не удалось экспортировать в Excel"
+                    )
+            except Exception as e:
+                print(f"Ошибка при экспорте в Excel: {e}")
+                # Пробуем старый метод как fallback
+                self._save_excel_legacy()
             
     def _save_excel_legacy(self):
         """Сохранение результатов в формате Excel."""
