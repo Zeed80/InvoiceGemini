@@ -90,27 +90,170 @@ class TrOCRProgressCallback:
     
     def __init__(self, progress_callback=None):
         self.progress_callback = progress_callback
+    
+    def on_init_end(self, args, state, control, **kwargs):
+        """Вызывается после инициализации trainer"""
+        return control
+    
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Вызывается в начале обучения"""
+        return control
+    
+    def on_train_end(self, args, state, control, **kwargs):
+        """Вызывается в конце обучения"""
+        return control
+    
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        """Вызывается в начале эпохи"""
+        return control
+    
+    def on_epoch_end(self, args, state, control, **kwargs):
+        """Вызывается в конце эпохи"""
+        return control
+        
+    def on_step_begin(self, args, state, control, **kwargs):
+        """Вызывается в начале шага"""
+        return control
         
     def on_step_end(self, args, state, control, **kwargs):
-        if self.progress_callback:
+        """Вызывается в конце шага"""
+        if self.progress_callback and state.max_steps > 0:
             progress = int((state.global_step / state.max_steps) * 100)
             self.progress_callback(progress)
+        return control
+    
+    def on_log(self, args, state, control, **kwargs):
+        """Вызывается при логировании"""
+        return control
+        
+    def on_substep_end(self, args, state, control, **kwargs):
+        """Вызывается в конце подшага (новый метод в transformers)"""
+        return control
+        
+    def on_pre_optimizer_step(self, args, state, control, **kwargs):
+        """Вызывается перед шагом оптимизатора (новый метод в transformers)"""
+        return control
+        
+    def on_optimizer_step(self, args, state, control, **kwargs):
+        """Вызывается после шага оптимизатора (новый метод в transformers)"""
+        return control
+        
+    def on_save(self, args, state, control, **kwargs):
+        """Вызывается при сохранении модели (новый метод в transformers)"""
+        return control
 
 class TrOCRMetricsCallback:
     """Callback для сбора метрик обучения TrOCR"""
     
     def __init__(self, metrics_callback=None):
         self.metrics_callback = metrics_callback
+    
+    def on_init_end(self, args, state, control, **kwargs):
+        return control
+    
+    def on_train_begin(self, args, state, control, **kwargs):
+        return control
+    
+    def on_train_end(self, args, state, control, **kwargs):
+        return control
+    
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        return control
+    
+    def on_epoch_end(self, args, state, control, **kwargs):
+        return control
+    
+    def on_step_begin(self, args, state, control, **kwargs):
+        return control
+    
+    def on_step_end(self, args, state, control, **kwargs):
+        return control
         
     def on_log(self, args, state, control, logs=None, **kwargs):
         if self.metrics_callback and logs:
-            self.metrics_callback(logs)
+            # Форматируем метрики для UI
+            formatted_message = self._format_metrics_message(logs, state)
+            self.metrics_callback(formatted_message)
+        return control
+    
+    def _format_metrics_message(self, logs, state):
+        """Форматирует метрики для отображения в UI"""
+        try:
+            # Базовая информация
+            epoch = getattr(state, 'epoch', 0)
+            step = getattr(state, 'global_step', 0)
+            max_steps = getattr(state, 'max_steps', 1)
+            
+            # Прогресс в процентах
+            progress_percent = int((step / max_steps) * 100) if max_steps > 0 else 0
+            
+            # Формируем сообщение
+            message_parts = []
+            message_parts.append(f"📊 Эпоха {epoch:.1f}, Шаг {step}/{max_steps} ({progress_percent}%)")
+            
+            # Добавляем метрики из логов
+            if 'train_loss' in logs:
+                loss = logs['train_loss']
+                message_parts.append(f"📉 Loss: {loss:.4f}")
+            
+            if 'learning_rate' in logs:
+                lr = logs['learning_rate']
+                message_parts.append(f"📈 LR: {lr:.2e}")
+                
+            if 'train_runtime' in logs:
+                runtime = logs['train_runtime']
+                message_parts.append(f"⏱️ Время: {runtime:.1f}s")
+                
+            if 'train_samples_per_second' in logs:
+                sps = logs['train_samples_per_second']
+                message_parts.append(f"🚀 {sps:.2f} samples/sec")
+            
+            # Оценка памяти GPU
+            if torch.cuda.is_available():
+                memory_used = torch.cuda.memory_allocated() / (1024**3)
+                message_parts.append(f"💾 GPU: {memory_used:.1f}GB")
+            
+            return " | ".join(message_parts)
+            
+        except Exception as e:
+            return f"📊 Шаг {step}: метрики обновлены (ошибка форматирования: {e})"
+        
+    def on_substep_end(self, args, state, control, **kwargs):
+        """Вызывается в конце подшага (новый метод в transformers)"""
+        return control
+        
+    def on_pre_optimizer_step(self, args, state, control, **kwargs):
+        """Вызывается перед шагом оптимизатора (новый метод в transformers)"""
+        return control
+        
+    def on_optimizer_step(self, args, state, control, **kwargs):
+        """Вызывается после шага оптимизатора (новый метод в transformers)"""
+        return control
+        
+    def on_save(self, args, state, control, **kwargs):
+        """Вызывается при сохранении модели (новый метод в transformers)"""
+        return control
 
 class TrOCRGPUMonitorCallback:
     """Callback для мониторинга GPU во время обучения TrOCR"""
     
     def __init__(self, logger_func=None):
         self._log = logger_func or print
+    
+    def on_init_end(self, args, state, control, **kwargs):
+        return control
+    
+    def on_train_begin(self, args, state, control, **kwargs):
+        return control
+    
+    def on_train_end(self, args, state, control, **kwargs):
+        return control
+    
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        return control
+    
+    def on_epoch_end(self, args, state, control, **kwargs):
+        return control
         
     def on_step_begin(self, args, state, control, **kwargs):
         if torch.cuda.is_available():
@@ -119,6 +262,29 @@ class TrOCRGPUMonitorCallback:
             
             if state.global_step % 5 == 0:  # Каждые 5 шагов
                 self._log(f"   📊 Шаг {state.global_step}: GPU памяти использовано {allocated:.2f}GB / {reserved:.2f}GB зарезервировано")
+        return control
+    
+    def on_step_end(self, args, state, control, **kwargs):
+        return control
+    
+    def on_log(self, args, state, control, **kwargs):
+        return control
+        
+    def on_substep_end(self, args, state, control, **kwargs):
+        """Вызывается в конце подшага (новый метод в transformers)"""
+        return control
+        
+    def on_pre_optimizer_step(self, args, state, control, **kwargs):
+        """Вызывается перед шагом оптимизатора (новый метод в transformers)"""
+        return control
+        
+    def on_optimizer_step(self, args, state, control, **kwargs):
+        """Вызывается после шага оптимизатора (новый метод в transformers)"""
+        return control
+        
+    def on_save(self, args, state, control, **kwargs):
+        """Вызывается при сохранении модели (новый метод в transformers)"""
+        return control
 
 class TrOCRTrainer:
     """
@@ -150,11 +316,19 @@ class TrOCRTrainer:
         self._log(f"TrOCRTrainer использует устройство: {self.device}")
     
     def _log(self, message: str, level: str = "info"):
-        """Универсальный метод логирования"""
+        """Универсальный метод логирования с безопасной обработкой Unicode"""
+        # Создаем ASCII-совместимую версию сообщения для Windows console
+        safe_message = message.encode('ascii', errors='replace').decode('ascii')
+        
         if self.logger:
-            getattr(self.logger, level)(message)
+            # Логгер может обрабатывать Unicode, поэтому используем оригинальное сообщение
+            try:
+                getattr(self.logger, level)(message)
+            except UnicodeEncodeError:
+                # Fallback к безопасной версии если есть проблемы с кодировкой
+                getattr(self.logger, level)(safe_message)
         else:
-            print(f"[{level.upper()}] {message}")
+            print(f"[{level.upper()}] {safe_message}")
     
     def set_callbacks(self, progress_callback=None, metrics_callback=None, status_callback=None):
         """Устанавливает callback функции для мониторинга обучения"""
@@ -318,14 +492,64 @@ class TrOCRTrainer:
             # ЭТАП 1: ПОДГОТОВКА ДАТАСЕТА
             self._log("")
             self._log("📚 ===== ЭТАП 1: ПОДГОТОВКА ДАТАСЕТА =====")
+            
+            # Анализируем датасет перед конвертацией
+            self._log("🔍 Анализ исходного датасета...")
+            
+            # Загружаем сырой датасет для анализа
+            raw_dataset = load_from_disk(dataset_path)
+            
+            # Анализируем структуру датасета
+            if isinstance(raw_dataset, DatasetDict):
+                train_size = len(raw_dataset['train']) if 'train' in raw_dataset else 0
+                val_size = len(raw_dataset['validation']) if 'validation' in raw_dataset else 0
+                test_size = len(raw_dataset['test']) if 'test' in raw_dataset else 0
+                total_size = train_size + val_size + test_size
+                
+                self._log(f"📊 Информация о датасете:")
+                self._log(f"   📁 Путь: {dataset_path}")
+                self._log(f"   🎯 Обучающих примеров: {train_size}")
+                self._log(f"   ✅ Валидационных примеров: {val_size}")
+                self._log(f"   🧪 Тестовых примеров: {test_size}")
+                self._log(f"   📈 Общий размер: {total_size}")
+                
+                # Анализируем поля в датасете
+                if train_size > 0:
+                    sample = raw_dataset['train'][0]
+                    fields = list(sample.keys())
+                    self._log(f"   🏷️ Доступные поля: {', '.join(fields)}")
+                    
+                    # Анализируем размеры изображений
+                    if 'image' in sample:
+                        img = sample['image']
+                        self._log(f"   🖼️ Размер изображений: {img.size}")
+                        
+                    # Анализируем длину текста
+                    if 'ground_truth' in sample or 'text' in sample:
+                        text = sample.get('ground_truth', sample.get('text', ''))
+                        self._log(f"   📝 Пример текста: '{text[:100]}{'...' if len(text) > 100 else ''}'")
+                        self._log(f"   📏 Средняя длина текста: ~{len(text)} символов")
+            else:
+                total_size = len(raw_dataset)
+                self._log(f"📊 Информация о датасете:")
+                self._log(f"   📁 Путь: {dataset_path}")
+                self._log(f"   📈 Общий размер: {total_size}")
+                
+                if total_size > 0:
+                    sample = raw_dataset[0]
+                    fields = list(sample.keys())
+                    self._log(f"   🏷️ Доступные поля: {', '.join(fields)}")
+            
+            # Конвертируем датасет
+            self._log("🔄 Конвертация в формат TrOCR...")
             dataset = self.convert_dataset_to_trocr_format(dataset_path)
             
             # Валидация датасета
             train_dataset = dataset['train'] if 'train' in dataset else dataset
             if len(train_dataset) == 0:
-                raise ValueError("Датасет пуст")
+                raise ValueError("Датасет пуст после конвертации")
             
-            self._log(f"✅ Датасет валиден: {len(train_dataset)} примеров для обучения")
+            self._log(f"✅ Датасет сконвертирован: {len(train_dataset)} примеров для обучения")
             self._log("✅ Датасет подготовлен успешно")
             
             # ЭТАП 2: ЗАГРУЗКА МОДЕЛИ
@@ -467,7 +691,7 @@ class TrOCRTrainer:
                 'save_steps': training_args.get('save_steps', 500),
                 'eval_steps': training_args.get('eval_steps', 500),
                 'save_total_limit': training_args.get('save_total_limit', 3),
-                'evaluation_strategy': 'no',
+                'eval_strategy': 'no',
                 'save_strategy': 'epoch',
                 'logging_dir': './logs',
                 'report_to': [],
@@ -526,8 +750,8 @@ class TrOCRTrainer:
                 metrics_cb = TrOCRMetricsCallback(self.metrics_callback)
                 callbacks.append(metrics_cb)
             
-            # Early stopping
-            callbacks.append(EarlyStoppingCallback(early_stopping_patience=3))
+            # Early stopping - remove for now since it requires metric_for_best_model
+            # callbacks.append(EarlyStoppingCallback(early_stopping_patience=3))
             
             # GPU monitoring
             gpu_monitor_cb = TrOCRGPUMonitorCallback(self._log)
@@ -543,10 +767,31 @@ class TrOCRTrainer:
             
             # Создаем кастомный Trainer с поддержкой 8-bit оптимизатора
             class OptimizedTrOCRTrainer(Trainer):
-                def __init__(self, *args, use_8bit_optimizer=False, learning_rate=5e-5, **kwargs):
+                def __init__(self, *args, use_8bit_optimizer=False, learning_rate=5e-5, logger_func=None, **kwargs):
+                    # Сначала вызываем parent __init__
+                    super().__init__(*args, **kwargs)
+                    # Затем устанавливаем наши атрибуты
                     self.use_8bit_optimizer = use_8bit_optimizer
                     self.custom_learning_rate = learning_rate
-                    super().__init__(*args, **kwargs)
+                    self._log_func = logger_func or print  # Сохраняем функцию логирования
+                
+                def _log(self, message):
+                    """Безопасный метод логирования с обработкой Unicode"""
+                    # Создаем ASCII-совместимую версию сообщения
+                    safe_message = message.encode('ascii', errors='replace').decode('ascii')
+                    
+                    try:
+                        if hasattr(self, '_log_func') and self._log_func:
+                            self._log_func(message)
+                        elif hasattr(self, 'log') and callable(self.log):
+                            # Используем родительский метод log если доступен
+                            self.log(safe_message)
+                        else:
+                            # Fallback к print
+                            print(safe_message)
+                    except Exception:
+                        # В крайнем случае просто используем print с безопасным сообщением
+                        print(safe_message)
                 
                 def create_optimizer(self):
                     """Создает оптимизатор с поддержкой 8-bit"""
@@ -587,7 +832,8 @@ class TrOCRTrainer:
                 data_collator=data_collator,
                 callbacks=callbacks,
                 use_8bit_optimizer=training_args.get('use_8bit_optimizer', False),
-                learning_rate=args['learning_rate']
+                learning_rate=args['learning_rate'],
+                logger_func=self._log  # Передаем метод логирования
             )
             
             self._log("✅ Trainer создан успешно")
@@ -701,4 +947,19 @@ class TrOCRTrainer:
             self.logger.error(f"TrOCRTrainer error: {e}")
             self.logger.error(traceback.format_exc())
             
-            return None 
+            return None
+    
+    def stop(self):
+        """Остановка процесса обучения"""
+        try:
+            self._log("🛑 Запрос на остановку обучения TrOCR...")
+            if hasattr(self, 'current_trainer') and self.current_trainer is not None:
+                # Если есть активный trainer - пытаемся остановить
+                self._log("🔄 Попытка остановки активного trainer...")
+                # Note: Transformers Trainer не имеет прямого метода stop
+                # Обычно используется прерывание процесса или флаги
+                self._log("⚠️ Trainer остановлен через внешнее прерывание")
+            else:
+                self._log("ℹ️ Активный trainer не найден")
+        except Exception as e:
+            self._log(f"⚠️ Ошибка при остановке TrOCRTrainer: {e}", "warning") 

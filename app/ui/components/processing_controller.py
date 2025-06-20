@@ -271,5 +271,6 @@ class ProcessingController(QObject):
         try:
             self.stop_processing()
             self._temp_dir.cleanup()
-        except:
+        except (OSError, AttributeError) as e:
+            # Temporary directory может быть уже очищен или недоступен
             pass 

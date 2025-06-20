@@ -360,5 +360,6 @@ class AnthropicPlugin(BaseLLMPlugin):
         """Деструктор для очистки ресурсов."""
         try:
             self.cleanup()
-        except:
+        except (AttributeError, RuntimeError, Exception) as e:
+            # Ошибка при очистке ресурсов в деструкторе - безопасно игнорируем
             pass 

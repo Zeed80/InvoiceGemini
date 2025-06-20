@@ -195,7 +195,8 @@ def create_demo_images():
             # Пытаемся загрузить шрифт
             try:
                 font = ImageFont.truetype("arial.ttf", 14)
-            except:
+            except (OSError, IOError) as e:
+                # Системный шрифт недоступен - используем шрифт по умолчанию
                 font = ImageFont.load_default()
             
             # Размещаем текст
@@ -294,7 +295,8 @@ def run_automated_demo():
                 if split_dir.exists():
                     files_count = len(list(split_dir.glob("*.json")))
                     logger.info(f"     Файлов: {files_count}")
-            except:
+            except (OSError, IOError, ValueError) as e:
+                # Ошибка при подсчете файлов - не критично для демо
                 pass
         
         # Анализ созданного датасета

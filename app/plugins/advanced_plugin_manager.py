@@ -526,7 +526,8 @@ class AdvancedPluginManager:
                 return -1
             else:
                 return 0
-        except:
+        except (ValueError, TypeError, AttributeError) as e:
+            # Ошибка парсинга версий - считаем равными
             return 0
     
     def _stop_plugin(self, plugin_id: str):
@@ -537,7 +538,8 @@ class AdvancedPluginManager:
                 instance = self.base_manager.plugin_instances[plugin_type][plugin_id]
                 try:
                     instance.cleanup()
-                except:
+                except (AttributeError, RuntimeError, Exception) as e:
+                    # Ошибка при очистке экземпляра плагина - не критично
                     pass
                 del self.base_manager.plugin_instances[plugin_type][plugin_id]
     

@@ -1036,6 +1036,23 @@ class TrainingThread(QThread):
         self.dataset_path = dataset_path
         self.output_dir = output_dir
         self.training_config = training_config
+        self._should_stop = False  # Флаг для корректной остановки
+    
+    def stop(self):
+        """Безопасная остановка потока."""
+        self._should_stop = True
+        self.quit()
+        self.wait(5000)  # Ждем до 5 секунд завершения
+    
+    def cleanup(self):
+        """Очистка ресурсов потока."""
+        try:
+            self.stop()
+            # Очищаем ссылки
+            self.trainer = None
+            self.deleteLater()
+        except Exception as e:
+            logger.error(f"Ошибка при очистке TrainingThread: {e}")
     
     def run(self):
         try:
@@ -1066,6 +1083,24 @@ class DatasetGenerationThread(QThread):
         self.image_paths = image_paths
         self.gemini_processor = gemini_processor
         self.output_path = output_path
+        self._should_stop = False  # Флаг для корректной остановки
+    
+    def stop(self):
+        """Безопасная остановка потока."""
+        self._should_stop = True
+        self.quit()
+        self.wait(5000)  # Ждем до 5 секунд завершения
+    
+    def cleanup(self):
+        """Очистка ресурсов потока."""
+        try:
+            self.stop()
+            # Очищаем ссылки
+            self.trainer = None
+            self.gemini_processor = None
+            self.deleteLater()
+        except Exception as e:
+            logger.error(f"Ошибка при очистке DatasetGenerationThread: {e}")
     
     def run(self):
         try:

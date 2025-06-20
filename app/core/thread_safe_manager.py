@@ -174,7 +174,8 @@ class ThreadSafeModelManager:
                                 import sys
                                 model_size = sys.getsizeof(processor.model) / 1024 / 1024
                                 model_info["size_mb"] = model_size
-                            except:
+                            except (AttributeError, OSError, Exception) as e:
+                                # Ошибка получения размера модели - не критично
                                 pass
                         
                         info["loaded_models"].append(model_info)
@@ -210,7 +211,8 @@ class ThreadSafeModelManager:
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                         logger.info("GPU память очищена")
-                except:
+                except (ImportError, RuntimeError, AttributeError, Exception) as e:
+                    # Ошибка очистки GPU памяти - не критично
                     pass
                 
                 logger.info("[Thread-Safe] Очистка ресурсов завершена")

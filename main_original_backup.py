@@ -24,7 +24,8 @@ if sys.platform == "win32":
         import subprocess
         try:
             subprocess.run(['chcp', '65001'], capture_output=True, check=False)
-        except:
+        except (subprocess.SubprocessError, OSError, FileNotFoundError) as e:
+            # Тихо игнорируем ошибки изменения кодировки консоли - не критично для работы
             pass
     except Exception as e:
         print(f"Не удалось настроить UTF-8 кодировку: {e}")

@@ -316,7 +316,8 @@ class LLMTrainer:
         # Извлекаем текст из изображения
         try:
             image_text = self.plugin.extract_text_from_image(image_path)
-        except:
+        except (AttributeError, IOError, OSError, Exception) as e:
+            # Ошибка извлечения текста - используем заглушку
             image_text = "Не удалось извлечь текст"
         
         # Создаем промпт
@@ -983,7 +984,8 @@ class LLMTrainer:
                 self._log(f"   CUDA устройств: {torch.cuda.device_count()}")
                 try:
                     self._log(f"   Память GPU: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-                except:
+                except (RuntimeError, AttributeError, Exception) as e:
+                    # Ошибка получения информации о GPU - не критично
                     pass
             
             self._log(f"   Рабочая директория: {os.getcwd()}")
@@ -1111,7 +1113,8 @@ class LLMTrainer:
         if hasattr(self.progress_callback, '__call__'):
             try:
                 self.progress_callback(-1, log_message)  # -1 означает лог сообщение
-            except:
+            except (TypeError, AttributeError, Exception) as e:
+                # Ошибка вызова callback - продолжаем без логирования
                 pass
 
 

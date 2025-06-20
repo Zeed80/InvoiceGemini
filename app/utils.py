@@ -111,7 +111,7 @@ def find_tesseract_in_path():
                 pytesseract.pytesseract.tesseract_cmd = path
                 pytesseract.get_tesseract_version()
                 return path
-            except:
+            except (pytesseract.TesseractError, OSError, subprocess.SubprocessError, RuntimeError) as e:
                 # Если это не Tesseract, восстанавливаем путь и продолжаем поиск
                 pytesseract.pytesseract.tesseract_cmd = old_cmd
     

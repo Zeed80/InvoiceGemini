@@ -118,8 +118,9 @@ class GPUResourceManager:
             
         try:
             self.device_locks[device_id].release()
-        except:
-            pass  # Уже освобождён
+        except (IndexError, RuntimeError, AttributeError, Exception) as e:
+            # Устройство уже освобождено или недоступно
+            pass
 
 
 class SmartCache:

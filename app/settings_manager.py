@@ -805,7 +805,8 @@ class SettingsManager:
                         if isinstance(value, str) and (value.startswith('{') or value.startswith('[')):
                             try:
                                 return json.loads(value)
-                            except:
+                            except (json.JSONDecodeError, ValueError) as e:
+                                # Возвращаем исходное значение, если JSON некорректен
                                 return value
                         return value
                         
@@ -819,7 +820,8 @@ class SettingsManager:
                         if isinstance(value, str) and (value.startswith('{') or value.startswith('[')):
                             try:
                                 return json.loads(value)
-                            except:
+                            except (json.JSONDecodeError, ValueError) as e:
+                                # Возвращаем исходное значение, если JSON некорректен в простом ключе
                                 return value
                         return value
                 return default

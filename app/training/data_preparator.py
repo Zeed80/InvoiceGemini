@@ -2958,7 +2958,8 @@ class TrainingDataPreparator:
                         process = psutil.Process()
                         memory_info = process.memory_info()
                         self._log(f"🔍 Память после ошибки: {memory_info.rss / 1024 / 1024:.1f} MB")
-                    except:
+                    except (ImportError, OSError, AttributeError) as e:
+                        # psutil может быть недоступен или возникла ошибка системного уровня
                         pass
                     continue
                     
@@ -3104,7 +3105,8 @@ class TrainingDataPreparator:
                 process = psutil.Process()
                 memory_info = process.memory_info()
                 self._log(f"         [CONVERT] Память до конвертации: {memory_info.rss / 1024 / 1024:.1f} MB")
-            except:
+            except (ImportError, OSError, AttributeError) as e:
+                # psutil может быть недоступен или возникла ошибка системного уровня
                 pass
             
             supported_image_formats = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
@@ -3287,7 +3289,8 @@ class TrainingDataPreparator:
                 process = psutil.Process()
                 memory_info = process.memory_info()
                 self._log(f"         [CONVERT] Память после конвертации: {memory_info.rss / 1024 / 1024:.1f} MB")
-            except:
+            except (ImportError, OSError, AttributeError) as e:
+                # psutil может быть недоступен или возникла ошибка системного уровня
                 pass
             
         except Exception as pdf_error:
@@ -3310,7 +3313,8 @@ class TrainingDataPreparator:
                 process = psutil.Process()
                 memory_info = process.memory_info()
                 self._log(f"         [ERROR] Память при ошибке: {memory_info.rss / 1024 / 1024:.1f} MB")
-            except:
+            except (ImportError, OSError, AttributeError) as e:
+                # psutil может быть недоступен или возникла ошибка системного уровня
                 pass
                 
             raise pdf_error
@@ -3607,7 +3611,8 @@ class TrainingDataPreparator:
                 process = psutil.Process()
                 memory_info = process.memory_info()
                 self._log(f"         🔍 Память до Gemini: {memory_info.rss / 1024 / 1024:.1f} MB")
-            except:
+            except (ImportError, OSError, AttributeError) as e:
+                # psutil может быть недоступен или возникла ошибка системного уровня
                 pass
             
             # Проверяем доступность Gemini процессора
@@ -3659,7 +3664,8 @@ class TrainingDataPreparator:
                     process = psutil.Process()
                     memory_info = process.memory_info()
                     self._log(f"         🔍 Память после ошибки Gemini: {memory_info.rss / 1024 / 1024:.1f} MB")
-                except:
+                except (ImportError, OSError, AttributeError) as e:
+                    # psutil может быть недоступен или возникла ошибка системного уровня
                     pass
                 
                 raise gemini_error
@@ -4514,7 +4520,8 @@ class TrainingDataPreparator:
                     if os.path.exists(temp_image_path):
                         os.remove(temp_image_path)
                         self._log(f"     🗑️ Временный файл удален: {temp_image_path}")
-                except:
+                except (OSError, PermissionError, FileNotFoundError) as e:
+                    # Временный файл может быть заблокирован или уже удален
                     pass
                     
         except Exception as e:
@@ -5017,8 +5024,8 @@ class TrainingDataPreparator:
                 
             self._log(f"📁 Найдено {len(files)} файлов для обработки")
             
-            # Создаем временную директорию для датасета
-            dataset_dir = os.path.join(output_path, f"trocr_dataset_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            # Создаем простую директорию для датасета без избыточных вложений
+            dataset_dir = output_path
             os.makedirs(dataset_dir, exist_ok=True)
             
             # Списки для хранения данных
@@ -5084,9 +5091,8 @@ class TrainingDataPreparator:
                 # Нормальное разделение для больших датасетов
                 train_test = dataset.train_test_split(test_size=0.1, seed=42)
             
-            # Сохраняем датасет
-            dataset_path = os.path.join(dataset_dir, "dataset")
-            train_test.save_to_disk(dataset_path)
+            # Сохраняем датасет напрямую в основную директорию
+            train_test.save_to_disk(dataset_dir)
             
             # Сохраняем метаданные
             metadata = {
@@ -5099,13 +5105,13 @@ class TrainingDataPreparator:
                 'source_folder': source_folder
             }
             
-            self._save_dataset_metadata(dataset_path, metadata)
+            self._save_dataset_metadata(dataset_dir, metadata)
             
-            self._log(f"✅ Датасет для TrOCR сохранен: {dataset_path}")
+            self._log(f"✅ Датасет для TrOCR сохранен: {dataset_dir}")
             self._log(f"   Train: {len(train_test['train'])} примеров")
             self._log(f"   Validation: {len(train_test['test'])} примеров")
             
-            return dataset_path
+            return dataset_dir
             
         except Exception as e:
             self._log(f"❌ Ошибка при подготовке TrOCR датасета: {e}")

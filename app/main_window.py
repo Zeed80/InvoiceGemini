@@ -2149,8 +2149,8 @@ class MainWindow(QMainWindow):
             field_manager = FieldManager()
             enabled_fields = field_manager.get_enabled_fields()
             table_fields = [f"- {field.display_name}: {field.description}" for field in enabled_fields]
-        except:
-            # Базовые поля если не удалось получить из настроек
+        except (ImportError, AttributeError, TypeError, Exception) as e:
+            # Базовые поля если не удалось получить из настроек field_manager
             table_fields = [
                 "- Номер счета: Номер документа/инвойса",
                 "- Дата: Дата выставления счета",
@@ -2994,7 +2994,8 @@ Analyze:"""
                         try:
                             obj.stop()
                             print("Вызван метод stop() для DataPreparator")
-                        except:
+                        except (AttributeError, RuntimeError, Exception) as e:
+                            # Ошибка при остановке DataPreparator - не критично
                             pass
             
             # NEW: Очищаем кэш перед закрытием
@@ -3012,7 +3013,8 @@ Analyze:"""
         try:
             self.temp_dir.cleanup()
             print("Временные файлы очищены")
-        except:
+        except (OSError, AttributeError, Exception) as e:
+            # Ошибка при очистке временных файлов - не критично при закрытии
             pass
             
         print("Закрытие приложения завершено")
@@ -4200,7 +4202,8 @@ Analyze:"""
             import requests
             response = requests.get("http://localhost:11434/api/tags", timeout=2)
             return response.status_code == 200
-        except:
+        except (requests.RequestException, requests.ConnectionError, requests.Timeout, ImportError) as e:
+            # Ollama недоступен - это нормально, если не установлен
             return False
 
     def on_cloud_provider_changed(self):
@@ -4347,7 +4350,8 @@ Analyze:"""
                 data = response.json()
                 return [model['name'] for model in data.get('models', [])]
             return []
-        except:
+        except (requests.RequestException, requests.ConnectionError, requests.Timeout, ValueError, KeyError, ImportError) as e:
+            # Ошибка при получении моделей Ollama - возвращаем пустой список
             return []
 
     def get_model_pricing_info(self, provider_name: str, model: str) -> str:
@@ -4773,6 +4777,24 @@ class LLMLoadingThread(QThread):
         super().__init__()
         self.plugin_manager = plugin_manager
         self.plugin_data = plugin_data
+        self._should_stop = False  # Флаг для корректной остановки
+    
+    def stop(self):
+        """Безопасная остановка потока."""
+        self._should_stop = True
+        self.quit()
+        self.wait(5000)  # Ждем до 5 секунд завершения
+    
+    def cleanup(self):
+        """Очистка ресурсов потока."""
+        try:
+            self.stop()
+            # Очищаем ссылки
+            self.plugin_manager = None
+            self.plugin_data = None
+            self.deleteLater()
+        except Exception as e:
+            logger.error(f"Ошибка при очистке LLMLoadingThread: {e}")
         
     def run(self):
         try:

@@ -162,8 +162,9 @@ class CodeLlamaPlugin(BaseLLMPlugin):
                     use_fast=False,  # Code Llama лучше работает с медленным токенизатором
                     cache_dir=self.cache_dir
                 )
-            except:
-                # Fallback к обычному токенизатору
+            except (OSError, ValueError, ImportError, Exception) as e:
+                # Fallback к обычному токенизатору при ошибке загрузки медленного
+                print(f"⚠️ Переход к быстрому токенизатору: {e}")
                 self.tokenizer = AutoTokenizer.from_pretrained(
                     model_path,
                     trust_remote_code=True,

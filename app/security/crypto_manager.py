@@ -5,6 +5,7 @@
 
 import os
 import base64
+import base64.binascii
 from pathlib import Path
 from typing import Optional, Union
 from cryptography.fernet import Fernet
@@ -44,7 +45,8 @@ class CryptoManager:
         if os.name != 'nt':  # Unix-like системы
             try:
                 os.chmod(key_dir, 0o700)
-            except:
+            except (OSError, PermissionError, Exception) as e:
+                # Ошибка установки прав доступа - не критично
                 pass
                 
         return key_file
@@ -59,7 +61,8 @@ class CryptoManager:
             if os.name != 'nt':
                 try:
                     os.chmod(self.key_file, 0o600)
-                except:
+                except (OSError, PermissionError, Exception) as e:
+                    # Ошибка установки прав доступа к ключу - не критично
                     pass
     
     def _generate_and_save_key(self) -> None:
@@ -192,7 +195,8 @@ class CryptoManager:
             base64.b64decode(data, validate=True)
             # Проверяем, что строка имеет правильный формат Fernet
             return data.startswith('gAAAAA') and len(data) > 100
-        except:
+        except (ValueError, TypeError, base64.binascii.Error, Exception) as e:
+            # Ошибка проверки шифрования - данные не зашифрованы
             return False
     
     def clear_key(self) -> None:

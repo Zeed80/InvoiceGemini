@@ -375,7 +375,8 @@ class BaseLLMPlugin(BaseProcessor):
                 table_fields = settings_manager.get_table_fields()
                 if table_fields:
                     fields_json = {field['name']: field.get('description', '') for field in table_fields}
-            except:
+            except (ImportError, AttributeError, KeyError, TypeError) as e:
+                # Ошибка при получении настроек полей таблицы - используем стандартные
                 pass
         
         # Если нет настроенных полей, используем стандартные
@@ -503,7 +504,8 @@ class BaseLLMPlugin(BaseProcessor):
             # Если JSON не найден, возвращаем первые 200 символов
             return response[:200] + "..." if len(response) > 200 else response
             
-        except:
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            # Ошибка при извлечении сообщения об ошибке - возвращаем исходный ответ
             return response[:200] + "..." if len(response) > 200 else response
     
     def _clean_json_string(self, json_str: str) -> str:

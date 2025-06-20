@@ -924,7 +924,8 @@ class PreviewDialog(QDialog):
                 except ValueError:
                     continue
             return False
-        except:
+        except (ValueError, TypeError, AttributeError) as e:
+            # Ошибка парсинга даты или неподдерживаемый тип
             return False
     
     def _validate_amount_format(self, amount_str):
@@ -934,7 +935,8 @@ class PreviewDialog(QDialog):
             cleaned = amount_str.replace("₽", "").replace("$", "").replace("€", "").replace(" ", "").replace(",", ".")
             float(cleaned)
             return True
-        except:
+        except (ValueError, TypeError) as e:
+            # Ошибка парсинга числа
             return False
     
     def compare_models(self):

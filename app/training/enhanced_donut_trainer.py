@@ -295,7 +295,8 @@ class EnhancedDonutMetricsCallback(TrainerCallback):
         try:
             if text.strip().startswith('{'):
                 return json.loads(text)
-        except:
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            # Ошибка JSON парсинга, пробуем альтернативный метод
             pass
             
         # Попытка 2: Парсинг тегов Donut (<s_field>value</s_field>)

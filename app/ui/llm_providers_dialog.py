@@ -27,6 +27,23 @@ class LLMProviderTestThread(QThread):
         self.provider_name = provider_name
         self.model_name = model_name
         self.api_key = api_key
+        self._should_stop = False  # Флаг для корректной остановки
+    
+    def stop(self):
+        """Безопасная остановка потока."""
+        self._should_stop = True
+        self.quit()
+        self.wait(5000)  # Ждем до 5 секунд завершения
+    
+    def cleanup(self):
+        """Очистка ресурсов потока."""
+        try:
+            self.stop()
+            # Очищаем ссылки
+            self.api_key = None
+            self.deleteLater()
+        except Exception as e:
+            logger.error(f"Ошибка при очистке LLMProviderTestThread: {e}")
     
     def run(self):
         try:
@@ -65,6 +82,23 @@ class ModelRefreshThread(QThread):
         super().__init__()
         self.provider_name = provider_name
         self.api_key = api_key
+        self._should_stop = False  # Флаг для корректной остановки
+    
+    def stop(self):
+        """Безопасная остановка потока."""
+        self._should_stop = True
+        self.quit()
+        self.wait(5000)  # Ждем до 5 секунд завершения
+    
+    def cleanup(self):
+        """Очистка ресурсов потока."""
+        try:
+            self.stop()
+            # Очищаем ссылки
+            self.api_key = None
+            self.deleteLater()
+        except Exception as e:
+            logger.error(f"Ошибка при очистке ModelRefreshThread: {e}")
     
     def run(self):
         """Выполняет обновление списка моделей"""

@@ -23,7 +23,8 @@ if sys.platform == "win32":
         import subprocess
         try:
             subprocess.run(['chcp', '65001'], capture_output=True, check=False)
-        except:
+        except (subprocess.SubprocessError, OSError, FileNotFoundError) as e:
+            # Quietly ignore console encoding errors - not critical for operation
             pass
     except Exception as e:
         print(f"Failed to setup UTF-8 encoding: {e}")

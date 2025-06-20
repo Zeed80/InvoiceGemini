@@ -678,7 +678,8 @@ class UniversalPluginManager:
             temp_instance = plugin_class()
             metadata = temp_instance.metadata.to_dict()
             temp_instance.cleanup()
-        except:
+        except (TypeError, AttributeError, ImportError, Exception) as e:
+            # Ошибка создания временного экземпляра - используем базовые метаданные
             metadata = {"name": plugin_id, "type": plugin_type.value}
         
         return {

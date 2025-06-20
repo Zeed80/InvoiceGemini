@@ -72,7 +72,8 @@ class MemoryManager:
             if torch.cuda.is_available():
                 logger.info(f"GPU доступен: {torch.cuda.get_device_name(0)}")
                 return True
-        except:
+        except (ImportError, RuntimeError, AttributeError, Exception) as e:
+            # Ошибка проверки GPU - считаем недоступным
             pass
         return False
     

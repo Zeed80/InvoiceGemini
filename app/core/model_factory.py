@@ -70,7 +70,8 @@ class LayoutLMFactory(BaseModelFactory):
         """Get service from container if available."""
         try:
             return self.container.get(name)
-        except:
+        except (KeyError, AttributeError, Exception) as e:
+            # Сервис недоступен в контейнере - возвращаем None
             return None
 
 
@@ -102,7 +103,8 @@ class DonutFactory(BaseModelFactory):
         """Get service from container if available."""
         try:
             return self.container.get(name)
-        except:
+        except (KeyError, AttributeError, Exception) as e:
+            # Сервис недоступен в контейнере - возвращаем None для Donut
             return None
 
 
@@ -134,7 +136,8 @@ class GeminiFactory(BaseModelFactory):
         """Get service from container if available."""
         try:
             return self.container.get(name)
-        except:
+        except (KeyError, AttributeError, Exception) as e:
+            # Сервис недоступен в контейнере - возвращаем None для Gemini
             return None
 
 

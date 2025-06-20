@@ -23,6 +23,9 @@ from .training.data_preparator import TrainingDataPreparator # Переноси�
 from .training.donut_trainer import DonutTrainer as DonutTrainerClass
 from .training.trocr_trainer import TrOCRTrainer
 from .training.trocr_dataset_preparator import TrOCRDatasetPreparator, TrOCRDatasetConfig
+from .training.hyperparameter_optimizer import TrOCRHyperparameterOptimizer
+from .training.universal_dataset_parser import UniversalDatasetParser, DatasetFormat
+from .training.advanced_data_validator import AdvancedDataValidator
 from .pdf_text_analyzer import PDFTextAnalyzer  # NEW: PDF анализатор
 
 # Используем реальный DonutTrainer из отдельного модуля
@@ -92,7 +95,8 @@ class DatasetQualityAnalyzer(QObject):
                                 size_info['total'] += len(data)
                             elif isinstance(data, dict) and 'annotations' in data:
                                 size_info['total'] += len(data['annotations'])
-                    except:
+                    except (json.JSONDecodeError, IOError, OSError, UnicodeDecodeError) as e:
+                        # Пропускаем поврежденные или нечитаемые JSON файлы
                         pass
                         
                 elif file.lower().endswith(('.jpg', '.jpeg', '.png', '.pdf')):
@@ -146,7 +150,8 @@ class DatasetQualityAnalyzer(QObject):
                                 label_stats['label_distribution'][label_name] += 1
                                 label_stats['total_labels'] += 1
                                 
-                        except:
+                        except (json.JSONDecodeError, IOError, OSError, UnicodeDecodeError, KeyError) as e:
+                            # Пропускаем файлы с ошибками структуры или чтения JSON
                             continue
             
             # Вычисляем статистики
@@ -183,13 +188,15 @@ class DatasetQualityAnalyzer(QObject):
                                         if not value or (isinstance(value, list) and len(value) == 0):
                                             empty_fields += 1
                                             
-                        except:
+                        except (json.JSONDecodeError, IOError, OSError, UnicodeDecodeError, KeyError) as e:
+                            # Пропускаем файлы с ошибками при проверке полноты данных
                             continue
             
             if total_fields > 0:
                 completeness_score = ((total_fields - empty_fields) / total_fields) * 100
                 
-        except:
+        except (OSError, IOError) as e:
+            # Ошибка при обходе директорий - возвращаем 0
             pass
             
         return max(0.0, min(100.0, completeness_score))
@@ -216,13 +223,15 @@ class DatasetQualityAnalyzer(QObject):
                                     if self._is_valid_annotation(item):
                                         valid_annotations += 1
                                         
-                        except:
+                        except (json.JSONDecodeError, IOError, OSError, UnicodeDecodeError, KeyError) as e:
+                            # Пропускаем файлы с ошибками при оценке качества аннотаций
                             continue
             
             if total_annotations > 0:
                 quality_score = (valid_annotations / total_annotations) * 100
                 
-        except:
+        except (OSError, IOError) as e:
+            # Ошибка при обходе директорий для оценки качества
             pass
             
         return max(0.0, min(100.0, quality_score))
@@ -267,13 +276,15 @@ class DatasetQualityAnalyzer(QObject):
                             if os.path.getsize(filepath) == 0:
                                 corrupted_files += 1
                                 
-                    except:
+                    except (json.JSONDecodeError, IOError, OSError, UnicodeDecodeError) as e:
+                        # Файл поврежден или нечитаем
                         corrupted_files += 1
             
             if total_files > 0:
                 integrity_score = ((total_files - corrupted_files) / total_files) * 100
                 
-        except:
+        except (OSError, IOError) as e:
+            # Ошибка при проверке целостности файлов
             pass
             
         return max(0.0, min(100.0, integrity_score))
@@ -297,7 +308,8 @@ class DatasetQualityAnalyzer(QObject):
             else:
                 consistency_score = 50.0  # Снижаем балл за отсутствие метаданных
                 
-        except:
+        except (json.JSONDecodeError, IOError, OSError, UnicodeDecodeError, KeyError) as e:
+            # Ошибка при проверке метаданных - нет консистентности
             consistency_score = 0.0
             
         return max(0.0, min(100.0, consistency_score))
@@ -415,8 +427,9 @@ class TrainingWorker(QObject):
             # Устанавливаем callbacks
             print("TrainingWorker: Устанавливаем коллбеки...")
             self.trainer.set_callbacks(
-                log_callback=self.log_message.emit,
-                progress_callback=self.progress.emit
+                status_callback=self.log_message.emit,
+                progress_callback=self.progress.emit,
+                metrics_callback=self.log_message.emit  # Добавляем для TrOCR метрик
             )
             
             # Запускаем обучение
@@ -429,8 +442,12 @@ class TrainingWorker(QObject):
                 print("TrainingWorker: Запускаем обучение Donut...")
                 result = self.trainer.train_donut(**self.training_params)
                 print(f"TrainingWorker: Donut обучение завершено с результатом: {result}")
+            elif hasattr(self.trainer, 'train_trocr'):
+                print("TrainingWorker: Запускаем обучение TrOCR...")
+                result = self.trainer.train_trocr(**self.training_params)
+                print(f"TrainingWorker: TrOCR обучение завершено с результатом: {result}")
             else:
-                raise ValueError("Неизвестный тип тренера")
+                raise ValueError(f"Неизвестный тип тренера: {type(self.trainer).__name__}")
                 
             if result:
                 print(f"TrainingWorker: Отправляем сигнал finished с результатом: {result}")
@@ -1288,6 +1305,28 @@ class ModernTrainingDialog(QDialog):
         auto_optimize_trocr_btn.clicked.connect(self.auto_optimize_trocr_memory)
         memory_layout.addWidget(auto_optimize_trocr_btn)
         
+        # Кнопка интеллектуальной оптимизации гиперпараметров
+        smart_optimize_btn = QPushButton("🧠 Умная оптимизация гиперпараметров")
+        smart_optimize_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, 
+                    stop: 0 #28a745, stop: 1 #20873a);
+                color: white;
+                border: none;
+                padding: 10px;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, 
+                    stop: 0 #20873a, stop: 1 #28a745);
+            }
+        """)
+        smart_optimize_btn.setToolTip("Анализирует датасет и предыдущие результаты для оптимизации параметров обучения")
+        smart_optimize_btn.clicked.connect(self.smart_optimize_trocr_hyperparameters)
+        memory_layout.addWidget(smart_optimize_btn)
+        
         left_layout.addWidget(memory_group)
         
         # Дополнительные настройки
@@ -1499,7 +1538,10 @@ class ModernTrainingDialog(QDialog):
             "Из аннотаций счетов (JSON)",
             "Из структуры папок",
             "Синтетический датасет",
-            "Из готовых аннотаций"
+            "Из готовых аннотаций",
+            "🔄 Импорт внешнего датасета (COCO/YOLO/VOC)",
+            "📊 Импорт CSV датасета",
+            "🏷️ Импорт LabelMe датасета"
         ])
         self.trocr_dataset_type_combo.currentTextChanged.connect(self.on_trocr_dataset_type_changed)
         type_layout.addRow("Тип источника:", self.trocr_dataset_type_combo)
@@ -1578,7 +1620,7 @@ class ModernTrainingDialog(QDialog):
         output_layout = QFormLayout(output_group)
         
         self.trocr_output_path_edit = QLineEdit()
-        self.trocr_output_path_edit.setPlaceholderText("data/trocr_datasets/dataset_" + 
+        self.trocr_output_path_edit.setPlaceholderText("data/training_datasets/trocr_" + 
                                                      datetime.now().strftime('%Y%m%d_%H%M%S'))
         output_button = QPushButton("📁")
         output_button.clicked.connect(self.select_trocr_output_path)
@@ -1634,9 +1676,50 @@ class ModernTrainingDialog(QDialog):
         
         control_layout.addWidget(self.trocr_dataset_start_button)
         control_layout.addWidget(self.trocr_dataset_stop_button)
+        
+        # Кнопки валидации и очистки данных
+        validate_button = QPushButton("🔍 Валидация")
+        validate_button.clicked.connect(self.validate_trocr_dataset)
+        validate_button.setStyleSheet("""
+            QPushButton {
+                background-color: #17a2b8;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #138496;
+            }
+        """)
+        
+        clean_button = QPushButton("🧹 Очистка")
+        clean_button.clicked.connect(self.clean_trocr_dataset)
+        clean_button.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+        """)
+        
+        # Вторая строка кнопок для валидации
+        validation_layout = QHBoxLayout()
+        validation_layout.addWidget(validate_button)
+        validation_layout.addWidget(clean_button)
+        validation_layout.addStretch()
+        
         control_layout.addStretch()
         
         left_layout.addLayout(control_layout)
+        left_layout.addLayout(validation_layout)
         left_layout.addStretch()
         
         # Правая панель - мониторинг
@@ -2268,6 +2351,12 @@ class ModernTrainingDialog(QDialog):
             elif model_type == 'trocr':
                 self.trocr_dataset_edit.setText(folder)
                 self.update_dataset_info(folder, self.trocr_dataset_info)
+                # Сохраняем путь к выбранному TrOCR датасету
+                try:
+                    from app.settings_manager import settings_manager
+                    settings_manager.set_value('Training', 'last_trocr_dataset', folder)
+                except Exception:
+                    pass  # Игнорируем ошибки сохранения настроек
                 
     def update_dataset_info(self, dataset_path, info_label):
         """Обновляет информацию о датасете"""
@@ -2275,24 +2364,58 @@ class ModernTrainingDialog(QDialog):
             if not os.path.exists(dataset_path):
                 info_label.setText("Датасет не найден")
                 return
+            
+            # Проверяем тип датасета
+            # Вариант 1: HuggingFace datasets (есть dataset_info.json или *.arrow файлы)
+            has_arrow_files = any(f.endswith('.arrow') for f in os.listdir(dataset_path) if os.path.isfile(os.path.join(dataset_path, f)))
+            has_dataset_info = os.path.exists(os.path.join(dataset_path, 'dataset_info.json'))
+            
+            if has_arrow_files or has_dataset_info:
+                # HuggingFace датасет - анализируем структуру
+                try:
+                    from datasets import load_from_disk
+                    dataset = load_from_disk(dataset_path)
+                    
+                    if hasattr(dataset, 'num_rows'):
+                        # Простой датасет
+                        info_text = f"HuggingFace датасет: {dataset.num_rows} записей"
+                    elif hasattr(dataset, 'keys'):
+                        # Датасет с разбивками
+                        splits_info = []
+                        for split_name in dataset.keys():
+                            splits_info.append(f"{split_name}: {len(dataset[split_name])} записей")
+                        info_text = f"HuggingFace датасет: {', '.join(splits_info)}"
+                    else:
+                        info_text = "HuggingFace датасет: структура распознана"
+                        
+                except Exception as dataset_error:
+                    # Если не удалось загрузить через datasets, анализируем файлы
+                    arrow_files = [f for f in os.listdir(dataset_path) if f.endswith('.arrow')]
+                    info_text = f"HuggingFace датасет: {len(arrow_files)} arrow файлов"
                 
-            # Подсчитываем файлы
+                info_label.setText(info_text)
+                info_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+                return
+            
+            # Вариант 2: Обычные файлы (изображения/PDF) - для LayoutLM/Donut
             total_files = 0
             train_files = 0
             val_files = 0
             
             for root, dirs, files in os.walk(dataset_path):
+                image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png', '.pdf', '.tiff', '.bmp'))]
+                
                 if 'train' in root.lower():
-                    train_files += len([f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png', '.pdf'))])
+                    train_files += len(image_files)
                 elif 'val' in root.lower() or 'validation' in root.lower():
-                    val_files += len([f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png', '.pdf'))])
+                    val_files += len(image_files)
                 else:
-                    total_files += len([f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png', '.pdf'))])
+                    total_files += len(image_files)
             
             if train_files > 0 or val_files > 0:
-                info_text = f"Обучение: {train_files} файлов, Валидация: {val_files} файлов"
+                info_text = f"Файловый датасет - Обучение: {train_files}, Валидация: {val_files}"
             else:
-                info_text = f"Всего файлов: {total_files}"
+                info_text = f"Файловый датасет - Всего файлов: {total_files}"
                 
             info_label.setText(info_text)
             info_label.setStyleSheet("color: #27ae60; font-weight: bold;")
@@ -2789,7 +2912,7 @@ class ModernTrainingDialog(QDialog):
                 'learning_rate': self.trocr_lr_spin.value(),
                 'gradient_accumulation_steps': self.trocr_grad_accum_spin.value(),
                 'max_length': self.trocr_max_length_spin.value(),
-                'image_size': int(self.trocr_image_size_combo.currentText()),
+                'image_size': self._parse_image_size(self.trocr_image_size_combo.currentText())[0],
                 'fp16': self.trocr_fp16_checkbox.isChecked(),
                 'warmup_ratio': self.trocr_warmup_ratio_spin.value(),
                 'weight_decay': self.trocr_weight_decay_spin.value(),
@@ -2848,6 +2971,79 @@ class ModernTrainingDialog(QDialog):
         
         self.add_log_message(self.trocr_log, "⚡ Применены быстрые настройки GPU для TrOCR")
     
+    def smart_optimize_trocr_hyperparameters(self):
+        """Интеллектуальная оптимизация гиперпараметров на основе анализа датасета"""
+        try:
+            # Проверяем, что выбран датасет
+            dataset_path = self.trocr_dataset_edit.text()
+            if not dataset_path or not os.path.exists(dataset_path):
+                QMessageBox.warning(self, "Ошибка", "Сначала выберите датасет для анализа")
+                return
+            
+            self.add_log_message(self.trocr_log, "🧠 Запуск интеллектуальной оптимизации гиперпараметров...")
+            
+            # Создаем оптимизатор
+            optimizer = TrOCRHyperparameterOptimizer()
+            
+            # Ищем предыдущие результаты обучения
+            previous_results = None
+            trained_models_dir = "data/trained_models"
+            if os.path.exists(trained_models_dir):
+                # Ищем последнюю обученную модель TrOCR
+                trocr_models = [d for d in os.listdir(trained_models_dir) if d.startswith('trocr_')]
+                if trocr_models:
+                    latest_model = max(trocr_models, key=lambda x: os.path.getctime(os.path.join(trained_models_dir, x)))
+                    model_path = os.path.join(trained_models_dir, latest_model, "final_model")
+                    previous_results = optimizer.analyze_previous_results(model_path)
+                    if previous_results:
+                        self.add_log_message(self.trocr_log, f"📊 Найдены результаты предыдущего обучения: {latest_model}")
+            
+            # Оптимизируем гиперпараметры
+            gpu_memory = 12.0  # RTX 4070 Ti
+            target_time = 30   # 30 минут
+            
+            optimization = optimizer.optimize_hyperparameters(
+                dataset_path=dataset_path,
+                gpu_memory_gb=gpu_memory,
+                target_training_time_minutes=target_time,
+                previous_results=previous_results
+            )
+            
+            # Применяем оптимизированные параметры
+            self.trocr_epochs_spin.setValue(optimization.epochs)
+            self.trocr_batch_size_spin.setValue(optimization.batch_size)
+            self.trocr_lr_spin.setValue(optimization.learning_rate)
+            self.trocr_grad_accum_spin.setValue(optimization.gradient_accumulation_steps)
+            self.trocr_warmup_ratio_spin.setValue(optimization.warmup_steps / max(1, optimization.epochs * 10))
+            
+            # Анализируем характеристики датасета
+            characteristics = optimizer.analyze_dataset(dataset_path)
+            
+            # Генерируем и показываем отчет
+            report = optimizer.generate_training_report(optimization, characteristics)
+            
+            # Выводим отчет в лог
+            self.add_log_message(self.trocr_log, "")
+            for line in report.split('\n'):
+                if line.strip():
+                    self.add_log_message(self.trocr_log, line)
+            
+            # Показываем диалог с подробным отчетом
+            msg = QMessageBox(self)
+            msg.setWindowTitle("🧠 Отчет об оптимизации гиперпараметров")
+            msg.setText("Параметры обучения оптимизированы на основе анализа датасета!")
+            msg.setDetailedText(report)
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.exec()
+            
+            self.add_log_message(self.trocr_log, "")
+            self.add_log_message(self.trocr_log, "✅ Интеллектуальная оптимизация завершена успешно!")
+            
+        except Exception as e:
+            error_msg = f"Ошибка при оптимизации гиперпараметров: {str(e)}"
+            self.add_log_message(self.trocr_log, f"❌ {error_msg}")
+            QMessageBox.critical(self, "Ошибка", error_msg)
+    
     # ========================
     # TrOCR Dataset Methods
     # ========================
@@ -2882,12 +3078,45 @@ class ModernTrainingDialog(QDialog):
         self.trocr_synthetic_samples_spin.setRange(100, 100000)
         self.trocr_synthetic_samples_spin.setValue(10000)
         
+        # Виджеты для импорта внешних датасетов
+        self.trocr_external_dataset_edit = QLineEdit()
+        self.trocr_external_dataset_edit.setPlaceholderText("Выберите папку с внешним датасетом...")
+        self.trocr_external_dataset_button = QPushButton("📁")
+        self.trocr_external_dataset_button.clicked.connect(self.select_trocr_external_dataset)
+        
+        # Комбобокс для выбора формата внешнего датасета
+        self.trocr_external_format_combo = QComboBox()
+        self.trocr_external_format_combo.addItems([
+            "Автоопределение",
+            "COCO Format",
+            "YOLO Format", 
+            "PASCAL VOC",
+            "CSV Format",
+            "LabelMe Format",
+            "Простой JSON"
+        ])
+        
+        # Информационный лейбл о формате
+        self.trocr_format_info_label = QLabel()
+        self.trocr_format_info_label.setStyleSheet("""
+            background: #e8f4fd; 
+            padding: 8px; 
+            border-radius: 4px; 
+            color: #1976d2;
+            font-size: 11px;
+        """)
+        self.trocr_format_info_label.setWordWrap(True)
+        self.trocr_external_format_combo.currentTextChanged.connect(self.update_format_info)
+        
         # Сохраняем ссылки на виджеты
         self.trocr_source_widgets = {
             'images_folder': (self.trocr_images_folder_edit, self.trocr_images_folder_button),
             'annotations_file': (self.trocr_annotations_file_edit, self.trocr_annotations_file_button),
             'folder_structure': (self.trocr_folder_structure_edit, self.trocr_folder_structure_button),
-            'synthetic_samples': self.trocr_synthetic_samples_spin
+            'synthetic_samples': self.trocr_synthetic_samples_spin,
+            'external_dataset': (self.trocr_external_dataset_edit, self.trocr_external_dataset_button),
+            'external_format': self.trocr_external_format_combo,
+            'format_info': self.trocr_format_info_label
         }
     
     def on_trocr_dataset_type_changed(self):
@@ -2933,6 +3162,39 @@ class ModernTrainingDialog(QDialog):
             # Количество примеров
             self.trocr_source_layout.addRow("Количество примеров:", self.trocr_synthetic_samples_spin)
             self.trocr_synthetic_samples_spin.setVisible(True)
+            
+        elif "Импорт внешнего" in current_type or "Импорт CSV" in current_type or "Импорт LabelMe" in current_type:
+            # Папка с внешним датасетом
+            external_layout = QHBoxLayout()
+            external_layout.addWidget(self.trocr_external_dataset_edit)
+            external_layout.addWidget(self.trocr_external_dataset_button)
+            self.trocr_source_layout.addRow("Папка датасета:", external_layout)
+            
+            # Формат датасета (только для универсального импорта)
+            if "Импорт внешнего" in current_type:
+                self.trocr_source_layout.addRow("Формат:", self.trocr_external_format_combo)
+                self.trocr_external_format_combo.setVisible(True)
+                
+                # Информация о формате
+                self.trocr_source_layout.addRow("", self.trocr_format_info_label)
+                self.trocr_format_info_label.setVisible(True)
+                self.update_format_info()
+            elif "Импорт CSV" in current_type:
+                # Автоматически устанавливаем CSV формат
+                self.trocr_external_format_combo.setCurrentText("CSV Format")
+                self.trocr_format_info_label.setText("📊 CSV формат: файл должен содержать колонки image_path и text")
+                self.trocr_source_layout.addRow("", self.trocr_format_info_label)
+                self.trocr_format_info_label.setVisible(True)
+            elif "Импорт LabelMe" in current_type:
+                # Автоматически устанавливаем LabelMe формат
+                self.trocr_external_format_combo.setCurrentText("LabelMe Format")
+                self.trocr_format_info_label.setText("🏷️ LabelMe формат: JSON файлы с полями shapes и imagePath")
+                self.trocr_source_layout.addRow("", self.trocr_format_info_label)
+                self.trocr_format_info_label.setVisible(True)
+            
+            # Показываем виджеты
+            self.trocr_external_dataset_edit.setVisible(True)
+            self.trocr_external_dataset_button.setVisible(True)
     
     def select_trocr_images_folder(self):
         """Выбор папки с изображениями для TrOCR"""
@@ -2974,6 +3236,78 @@ class ModernTrainingDialog(QDialog):
             self.trocr_output_path_edit.setText(folder)
             self.add_log_message(self.trocr_dataset_log, f"💾 Выбран путь сохранения: {folder}")
     
+    def select_trocr_external_dataset(self):
+        """Выбор папки с внешним датасетом для TrOCR"""
+        folder = QFileDialog.getExistingDirectory(
+            self, "Выберите папку с внешним датасетом", 
+            "data"
+        )
+        if folder:
+            self.trocr_external_dataset_edit.setText(folder)
+            self.add_log_message(self.trocr_dataset_log, f"📦 Выбран внешний датасет: {folder}")
+            
+            # Автоматически определяем формат датасета
+            self.auto_detect_dataset_format(folder)
+    
+    def auto_detect_dataset_format(self, dataset_path):
+        """Автоматическое определение формата датасета"""
+        try:
+            parser = UniversalDatasetParser()
+            detected_format = parser.detect_format(dataset_path)
+            
+            # Маппинг форматов на текст в комбобоксе
+            format_mapping = {
+                DatasetFormat.COCO: "COCO Format",
+                DatasetFormat.YOLO: "YOLO Format",
+                DatasetFormat.PASCAL_VOC: "PASCAL VOC",
+                DatasetFormat.CSV: "CSV Format",
+                DatasetFormat.LABELME: "LabelMe Format",
+                DatasetFormat.JSON_SIMPLE: "Простой JSON",
+                DatasetFormat.FOLDER_STRUCTURE: "Автоопределение"
+            }
+            
+            format_text = format_mapping.get(detected_format, "Автоопределение")
+            self.trocr_external_format_combo.setCurrentText(format_text)
+            
+            # Получаем информацию о датасете
+            dataset_info = parser.get_dataset_info(dataset_path, detected_format)
+            
+            info_text = f"""
+🔍 Обнаружен формат: {detected_format.value.upper()}
+📊 Изображений: {dataset_info.total_images}
+📝 Аннотаций: {dataset_info.total_annotations}
+🏷️ Категории: {', '.join(dataset_info.categories[:3])}{'...' if len(dataset_info.categories) > 3 else ''}
+🌍 Языки: {', '.join(dataset_info.languages)}
+            """.strip()
+            
+            self.trocr_format_info_label.setText(info_text)
+            
+            self.add_log_message(self.trocr_dataset_log, 
+                f"🔍 Автоопределение: формат {detected_format.value}, "
+                f"{dataset_info.total_images} изображений, {dataset_info.total_annotations} аннотаций"
+            )
+            
+        except Exception as e:
+            self.add_log_message(self.trocr_dataset_log, f"⚠️ Ошибка автоопределения формата: {e}")
+            self.trocr_format_info_label.setText(f"⚠️ Не удалось определить формат: {e}")
+    
+    def update_format_info(self):
+        """Обновляет информацию о выбранном формате датасета"""
+        current_format = self.trocr_external_format_combo.currentText()
+        
+        format_descriptions = {
+            "Автоопределение": "🤖 Автоматическое определение формата на основе структуры файлов",
+            "COCO Format": "📷 COCO: JSON с полями images, annotations, categories. Стандарт для object detection",
+            "YOLO Format": "🎯 YOLO: YAML конфиг + TXT аннотации. Координаты в нормализованном формате",
+            "PASCAL VOC": "🗂️ PASCAL VOC: XML файлы с аннотациями bounding box. Абсолютные координаты",
+            "CSV Format": "📊 CSV: таблица с колонками image_path, text, опционально bbox координаты",
+            "LabelMe Format": "🏷️ LabelMe: JSON файлы с полями shapes, imagePath. Векторные аннотации",
+            "Простой JSON": "📄 JSON: простая структура [{image_path, text, bbox}] или вложенные объекты"
+        }
+        
+        description = format_descriptions.get(current_format, "")
+        self.trocr_format_info_label.setText(description)
+    
     def start_trocr_dataset_preparation(self):
         """Запускает создание датасета TrOCR с автоматическими аннотациями Gemini"""
         try:
@@ -2987,9 +3321,14 @@ class ModernTrainingDialog(QDialog):
                 source_folder = self.trocr_folder_structure_edit.text()
             elif "аннотаций счетов" in dataset_type:
                 source_folder = self.trocr_images_folder_edit.text()
+            elif "Импорт" in dataset_type:
+                source_folder = self.trocr_external_dataset_edit.text()
             
             if "Синтетический" not in dataset_type and not source_folder:
-                QMessageBox.warning(self, "Ошибка", "Выберите папку с изображениями для автоматической Gemini аннотации")
+                if "Импорт" in dataset_type:
+                    QMessageBox.warning(self, "Ошибка", "Выберите папку с внешним датасетом для импорта")
+                else:
+                    QMessageBox.warning(self, "Ошибка", "Выберите папку с изображениями для автоматической Gemini аннотации")
                 return
             
             # Логируем начало
@@ -3053,6 +3392,12 @@ class ModernTrainingDialog(QDialog):
                             self.log_message.emit("🎨 Создание синтетического TrOCR датасета...")
                             # Здесь можно добавить логику создания синтетических данных
                             result_path = self.output_path
+                            
+                        elif "Импорт" in self.dataset_type:
+                            # Импортируем внешний датасет с конвертацией
+                            self.log_message.emit("📦 Импорт и конвертация внешнего датасета...")
+                            result_path = self._import_external_dataset()
+                            
                         else:
                             # Создаем датасет из файлов с автоматическими аннотациями через Gemini
                             self.log_message.emit("🤖 Создание TrOCR датасета с Gemini аннотациями...")
@@ -3075,6 +3420,107 @@ class ModernTrainingDialog(QDialog):
                 
                 def stop(self):
                     self.should_stop = True
+                
+                def _import_external_dataset(self):
+                    """Импорт и конвертация внешнего датасета в формат TrOCR"""
+                    try:
+                        # Получаем формат датасета из parent_dialog
+                        format_text = self.parent_dialog.trocr_external_format_combo.currentText()
+                        
+                        # Маппинг UI текста на DatasetFormat
+                        format_mapping = {
+                            "COCO Format": DatasetFormat.COCO,
+                            "YOLO Format": DatasetFormat.YOLO,
+                            "PASCAL VOC": DatasetFormat.PASCAL_VOC,
+                            "CSV Format": DatasetFormat.CSV,
+                            "LabelMe Format": DatasetFormat.LABELME,
+                            "Простой JSON": DatasetFormat.JSON_SIMPLE
+                        }
+                        
+                        dataset_format = format_mapping.get(format_text, None)
+                        
+                        self.log_message.emit(f"🔍 Анализируем датасет в формате: {format_text}")
+                        self.progress.emit(10)
+                        
+                        # Создаем универсальный парсер
+                        parser = UniversalDatasetParser()
+                        
+                        # Парсим датасет
+                        self.log_message.emit("📖 Парсинг аннотаций...")
+                        annotations = parser.parse_dataset(self.source_folder, dataset_format)
+                        
+                        if not annotations:
+                            raise ValueError("Не найдено аннотаций в указанном датасете")
+                        
+                        self.log_message.emit(f"✅ Найдено {len(annotations)} аннотаций")
+                        self.progress.emit(30)
+                        
+                        # Фильтруем только существующие изображения
+                        valid_annotations = []
+                        for i, ann in enumerate(annotations):
+                            if self.should_stop:
+                                return None
+                                
+                            if os.path.exists(ann.image_path):
+                                valid_annotations.append(ann)
+                            else:
+                                self.log_message.emit(f"⚠️ Пропущено: {ann.image_path} (файл не найден)")
+                            
+                            if i % 50 == 0:  # Обновляем прогресс каждые 50 файлов
+                                progress = 30 + (i / len(annotations)) * 40
+                                self.progress.emit(int(progress))
+                        
+                        self.log_message.emit(f"✅ Валидных аннотаций: {len(valid_annotations)}")
+                        self.progress.emit(70)
+                        
+                        if not valid_annotations:
+                            raise ValueError("Не найдено валидных аннотаций с существующими изображениями")
+                        
+                        # Конвертируем в формат TrOCR
+                        self.log_message.emit("🔄 Конвертация в формат TrOCR...")
+                        output_file = parser.convert_to_trocr_format(valid_annotations, self.output_path)
+                        
+                        self.progress.emit(90)
+                        
+                        # Создаем дополнительные файлы метаданных
+                        self._create_dataset_metadata(valid_annotations)
+                        
+                        self.log_message.emit(f"🎉 Импорт завершен успешно! Датасет сохранен в: {self.output_path}")
+                        self.progress.emit(100)
+                        
+                        return self.output_path
+                        
+                    except Exception as e:
+                        self.log_message.emit(f"❌ Ошибка импорта: {e}")
+                        raise e
+                
+                def _create_dataset_metadata(self, annotations):
+                    """Создает метаданные датасета"""
+                    try:
+                        from datetime import datetime
+                        import json
+                        
+                        # Статистика датасета
+                        stats = {
+                            "total_samples": len(annotations),
+                            "categories": list(set(ann.category for ann in annotations)),
+                            "languages": list(set(ann.language for ann in annotations)),
+                            "avg_text_length": sum(len(ann.text) for ann in annotations) / len(annotations),
+                            "has_bbox": sum(1 for ann in annotations if ann.bbox) / len(annotations),
+                            "import_source": self.source_folder,
+                            "import_format": self.parent_dialog.trocr_external_format_combo.currentText(),
+                            "created_at": datetime.now().isoformat()
+                        }
+                        
+                        # Сохраняем метаданные
+                        metadata_file = Path(self.output_path) / "dataset_metadata.json"
+                        with open(metadata_file, 'w', encoding='utf-8') as f:
+                            json.dump(stats, f, ensure_ascii=False, indent=2)
+                        
+                        self.log_message.emit(f"📊 Метаданные сохранены: {metadata_file}")
+                        
+                    except Exception as e:
+                        self.log_message.emit(f"⚠️ Ошибка создания метаданных: {e}")
             
             # Запускаем worker
             self.trocr_auto_worker = AutoTrOCRDatasetWorker(
@@ -3109,6 +3555,18 @@ class ModernTrainingDialog(QDialog):
         """Обработчик завершения автоматического создания TrOCR датасета"""
         self.add_log_message(self.trocr_dataset_log, "✅ TrOCR датасет с Gemini аннотациями создан успешно!")
         self.add_log_message(self.trocr_dataset_log, f"📁 Сохранен в: {result_path}")
+        
+        # Автоматически устанавливаем правильный путь к датасету в поле ввода
+        if result_path and os.path.exists(result_path):
+            self.trocr_dataset_edit.setText(result_path)
+            self.add_log_message(self.trocr_dataset_log, f"📂 Путь к датасету установлен: {result_path}")
+            
+            # Сохраняем путь к созданному датасету в настройки
+            try:
+                from app.settings_manager import settings_manager
+                settings_manager.set_value('Training', 'last_trocr_dataset', result_path)
+            except Exception:
+                pass  # Игнорируем ошибки сохранения настроек
         
         # Обновляем информацию о датасете
         info_text = f"📊 Создан TrOCR датасет с автоматическими Gemini аннотациями:\n"
@@ -3164,9 +3622,352 @@ class ModernTrainingDialog(QDialog):
         self.add_log_message(self.trocr_dataset_log, "⏹️ Создание датасета остановлено")
         self.trocr_dataset_status_label.setText("⏹️ Остановлено")
         
-        
-        # Используем QTimer для отложенной обработки, чтобы дать потоку корректно завершиться
-        QTimer.singleShot(100, lambda: self._handle_training_completion(model_path, True))
+    def validate_trocr_dataset(self):
+        """Валидация качества TrOCR датасета"""
+        try:
+            # Получаем путь к датасету
+            dataset_path = None
+            
+            # Сначала проверяем путь из поля TrOCR обучения
+            if hasattr(self, 'trocr_dataset_edit') and self.trocr_dataset_edit.text():
+                dataset_path = self.trocr_dataset_edit.text()
+            # Затем из поля создания датасета
+            elif hasattr(self, 'trocr_output_path_edit') and self.trocr_output_path_edit.text():
+                dataset_path = self.trocr_output_path_edit.text()
+            # Или из недавно созданных
+            elif hasattr(self, 'last_created_dataset_path'):
+                dataset_path = self.last_created_dataset_path
+            
+            if not dataset_path or not os.path.exists(dataset_path):
+                QMessageBox.warning(self, "Ошибка", 
+                    "Выберите существующий датасет для валидации. "
+                    "Используйте поле 'Датасет для обучения' в основной вкладке TrOCR.")
+                return
+            
+            self.add_log_message(self.trocr_dataset_log, f"🔍 Начинаем валидацию датасета: {dataset_path}")
+            
+            # Создаем валидатор и запускаем в отдельном потоке
+            from PyQt6.QtCore import QThread, QObject, pyqtSignal
+            
+            class DatasetValidationWorker(QObject):
+                finished = pyqtSignal(dict)
+                error = pyqtSignal(str)
+                progress = pyqtSignal(int)
+                log_message = pyqtSignal(str)
+                
+                def __init__(self, dataset_path):
+                    super().__init__()
+                    self.dataset_path = dataset_path
+                    
+                def run(self):
+                    try:
+                        from app.training.advanced_data_validator import AdvancedDataValidator
+                        
+                        self.log_message.emit("🔧 Инициализация валидатора...")
+                        validator = AdvancedDataValidator()
+                        
+                        self.log_message.emit("📊 Анализ датасета...")
+                        self.progress.emit(20)
+                        
+                        validation_results = validator.validate_dataset(
+                            self.dataset_path,
+                            check_duplicates=True,
+                            check_quality=True,
+                            check_text=True
+                        )
+                        
+                        self.progress.emit(80)
+                        
+                        # Генерируем отчет
+                        self.log_message.emit("📋 Создание отчета...")
+                        report_path = validator.generate_quality_report(validation_results)
+                        validation_results['report_path'] = report_path
+                        
+                        self.progress.emit(100)
+                        self.finished.emit(validation_results)
+                        
+                    except Exception as e:
+                        self.error.emit(str(e))
+            
+            # Запускаем валидацию
+            self.validation_worker = DatasetValidationWorker(dataset_path)
+            self.validation_thread = QThread()
+            
+            self.validation_worker.moveToThread(self.validation_thread)
+            self.validation_worker.finished.connect(self.on_validation_finished)
+            self.validation_worker.error.connect(self.on_validation_error)
+            self.validation_worker.progress.connect(self.on_auto_trocr_progress)
+            self.validation_worker.log_message.connect(
+                lambda msg: self.add_log_message(self.trocr_dataset_log, msg)
+            )
+            
+            self.validation_thread.started.connect(self.validation_worker.run)
+            self.validation_thread.start()
+            
+            # Обновляем UI
+            self.trocr_dataset_progress_bar.setVisible(True)
+            self.trocr_dataset_progress_bar.setValue(0)
+            self.trocr_dataset_status_label.setText("🔍 Валидация датасета...")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка запуска валидации: {e}")
+            self.add_log_message(self.trocr_dataset_log, f"❌ Ошибка валидации: {e}")
+    
+    def on_validation_finished(self, validation_results):
+        """Обработчик завершения валидации"""
+        try:
+            self.trocr_dataset_progress_bar.setVisible(False)
+            self.trocr_dataset_status_label.setText("✅ Валидация завершена")
+            
+            # Сохраняем результаты для очистки
+            self.validation_results = validation_results
+            
+            # Показываем краткий отчет
+            total_items = validation_results['total_items']
+            valid_items = validation_results['valid_items']
+            issues_count = len(validation_results['issues'])
+            duplicates_count = len(validation_results['duplicates'])
+            
+            summary = f"""
+📊 **Результаты валидации датасета:**
+
+📈 **Общая статистика:**
+• Всего элементов: {total_items}
+• Валидных элементов: {valid_items}
+• Найдено проблем: {issues_count}
+• Группы дубликатов: {duplicates_count}
+
+📝 **Рекомендации:**
+{chr(10).join('• ' + rec for rec in validation_results['recommendations'])}
+
+📋 **Подробный отчет:** {validation_results.get('report_path', 'не создан')}
+            """.strip()
+            
+            self.add_log_message(self.trocr_dataset_log, "✅ Валидация завершена успешно!")
+            self.add_log_message(self.trocr_dataset_log, summary)
+            
+            # Показываем диалог с результатами
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Результаты валидации")
+            msg_box.setText("Валидация датасета завершена")
+            msg_box.setDetailedText(summary)
+            msg_box.setIcon(QMessageBox.Icon.Information)
+            
+            # Кнопка открытия отчета
+            if 'report_path' in validation_results:
+                open_report_btn = msg_box.addButton("📋 Открыть отчет", QMessageBox.ButtonRole.ActionRole)
+                open_report_btn.clicked.connect(
+                    lambda: os.startfile(validation_results['report_path'])
+                )
+            
+            msg_box.addButton(QMessageBox.StandardButton.Ok)
+            msg_box.exec()
+            
+        except Exception as e:
+            self.add_log_message(self.trocr_dataset_log, f"❌ Ошибка обработки результатов: {e}")
+    
+    def on_validation_error(self, error_message):
+        """Обработчик ошибки валидации"""
+        self.trocr_dataset_progress_bar.setVisible(False)
+        self.trocr_dataset_status_label.setText("❌ Ошибка валидации")
+        self.add_log_message(self.trocr_dataset_log, f"❌ Ошибка валидации: {error_message}")
+        QMessageBox.critical(self, "Ошибка валидации", error_message)
+    
+    def clean_trocr_dataset(self):
+        """Автоматическая очистка TrOCR датасета"""
+        try:
+            if not hasattr(self, 'validation_results') or not self.validation_results:
+                QMessageBox.warning(self, "Предупреждение", 
+                    "Сначала выполните валидацию датасета для определения проблем.")
+                return
+            
+            # Диалог подтверждения с настройками
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Настройки очистки датасета")
+            dialog.setModal(True)
+            layout = QVBoxLayout(dialog)
+            
+            # Информация о проблемах
+            info_label = QLabel("Найденные проблемы для очистки:")
+            layout.addWidget(info_label)
+            
+            issues_text = QTextEdit()
+            issues_text.setReadOnly(True)
+            issues_text.setMaximumHeight(150)
+            
+            issues_summary = f"Найдено {len(self.validation_results['issues'])} проблем:\n"
+            issue_types = {}
+            for issue in self.validation_results['issues']:
+                issue_type = issue['type']
+                issue_types[issue_type] = issue_types.get(issue_type, 0) + 1
+            
+            for issue_type, count in issue_types.items():
+                issues_summary += f"• {issue_type}: {count}\n"
+            
+            issues_text.setPlainText(issues_summary)
+            layout.addWidget(issues_text)
+            
+            # Настройки очистки
+            settings_group = QGroupBox("Настройки очистки")
+            settings_layout = QVBoxLayout(settings_group)
+            
+            remove_duplicates_cb = QCheckBox("Удалить дубликаты")
+            remove_duplicates_cb.setChecked(True)
+            settings_layout.addWidget(remove_duplicates_cb)
+            
+            remove_low_quality_cb = QCheckBox("Удалить низкокачественные элементы")
+            remove_low_quality_cb.setChecked(True)
+            settings_layout.addWidget(remove_low_quality_cb)
+            
+            quality_threshold_layout = QHBoxLayout()
+            quality_threshold_layout.addWidget(QLabel("Порог качества:"))
+            quality_threshold_spin = QDoubleSpinBox()
+            quality_threshold_spin.setRange(0.1, 0.9)
+            quality_threshold_spin.setDecimals(2)
+            quality_threshold_spin.setValue(0.3)
+            quality_threshold_layout.addWidget(quality_threshold_spin)
+            settings_layout.addLayout(quality_threshold_layout)
+            
+            layout.addWidget(settings_group)
+            
+            # Кнопки
+            buttons_layout = QHBoxLayout()
+            ok_button = QPushButton("🧹 Выполнить очистку")
+            cancel_button = QPushButton("❌ Отмена")
+            
+            buttons_layout.addWidget(ok_button)
+            buttons_layout.addWidget(cancel_button)
+            layout.addLayout(buttons_layout)
+            
+            # Подключаем обработчики
+            ok_button.clicked.connect(dialog.accept)
+            cancel_button.clicked.connect(dialog.reject)
+            
+            # Показываем диалог
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self._perform_dataset_cleanup(
+                    remove_duplicates_cb.isChecked(),
+                    remove_low_quality_cb.isChecked(),
+                    quality_threshold_spin.value()
+                )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка очистки: {e}")
+            self.add_log_message(self.trocr_dataset_log, f"❌ Ошибка очистки: {e}")
+    
+    def _perform_dataset_cleanup(self, remove_duplicates, remove_low_quality, quality_threshold):
+        """Выполнение очистки датасета"""
+        try:
+            self.add_log_message(self.trocr_dataset_log, "🧹 Начинаем очистку датасета...")
+            
+            # Создаем worker для очистки
+            from PyQt6.QtCore import QThread, QObject, pyqtSignal
+            
+            class DatasetCleanupWorker(QObject):
+                finished = pyqtSignal(dict)
+                error = pyqtSignal(str)
+                progress = pyqtSignal(int)
+                log_message = pyqtSignal(str)
+                
+                def __init__(self, validation_results, remove_duplicates, remove_low_quality, quality_threshold):
+                    super().__init__()
+                    self.validation_results = validation_results
+                    self.remove_duplicates = remove_duplicates
+                    self.remove_low_quality = remove_low_quality
+                    self.quality_threshold = quality_threshold
+                    
+                def run(self):
+                    try:
+                        from app.training.advanced_data_validator import AdvancedDataValidator
+                        
+                        validator = AdvancedDataValidator()
+                        
+                        self.log_message.emit("🔧 Анализ элементов для удаления...")
+                        self.progress.emit(30)
+                        
+                        cleanup_results = validator.clean_dataset(
+                            self.validation_results,
+                            remove_duplicates=self.remove_duplicates,
+                            remove_low_quality=self.remove_low_quality,
+                            quality_threshold=self.quality_threshold
+                        )
+                        
+                        self.progress.emit(100)
+                        self.finished.emit(cleanup_results)
+                        
+                    except Exception as e:
+                        self.error.emit(str(e))
+            
+            # Запускаем очистку
+            self.cleanup_worker = DatasetCleanupWorker(
+                self.validation_results, remove_duplicates, remove_low_quality, quality_threshold
+            )
+            self.cleanup_thread = QThread()
+            
+            self.cleanup_worker.moveToThread(self.cleanup_thread)
+            self.cleanup_worker.finished.connect(self.on_cleanup_finished)
+            self.cleanup_worker.error.connect(self.on_cleanup_error)
+            self.cleanup_worker.progress.connect(self.on_auto_trocr_progress)
+            self.cleanup_worker.log_message.connect(
+                lambda msg: self.add_log_message(self.trocr_dataset_log, msg)
+            )
+            
+            self.cleanup_thread.started.connect(self.cleanup_worker.run)
+            self.cleanup_thread.start()
+            
+            # Обновляем UI
+            self.trocr_dataset_progress_bar.setVisible(True)
+            self.trocr_dataset_progress_bar.setValue(0)
+            self.trocr_dataset_status_label.setText("🧹 Очистка датасета...")
+            
+        except Exception as e:
+            self.add_log_message(self.trocr_dataset_log, f"❌ Ошибка запуска очистки: {e}")
+    
+    def on_cleanup_finished(self, cleanup_results):
+        """Обработчик завершения очистки"""
+        try:
+            self.trocr_dataset_progress_bar.setVisible(False)
+            self.trocr_dataset_status_label.setText("✅ Очистка завершена")
+            
+            # Показываем результаты очистки
+            stats = cleanup_results.get('cleanup_stats', {})
+            removed_count = stats.get('total_removed', 0)
+            kept_count = stats.get('total_kept', 0)
+            removal_percentage = stats.get('removal_percentage', 0)
+            
+            summary = f"""
+🧹 **Результаты очистки датасета:**
+
+📊 **Статистика:**
+• Удалено элементов: {removed_count}
+• Оставлено элементов: {kept_count}
+• Процент удаления: {removal_percentage:.1f}%
+
+📋 **Детали:**
+• Дубликатов удалено: {stats.get('duplicates_removed', 0)}
+• Низкокачественных удалено: {stats.get('low_quality_removed', 0)}
+
+✅ Датасет успешно очищен и готов для обучения!
+            """.strip()
+            
+            self.add_log_message(self.trocr_dataset_log, "✅ Очистка завершена успешно!")
+            self.add_log_message(self.trocr_dataset_log, summary)
+            
+            # Показываем диалог с результатами
+            QMessageBox.information(self, "Очистка завершена", summary)
+            
+            # Сбрасываем результаты валидации
+            self.validation_results = None
+            
+        except Exception as e:
+            self.add_log_message(self.trocr_dataset_log, f"❌ Ошибка обработки результатов очистки: {e}")
+    
+    def on_cleanup_error(self, error_message):
+        """Обработчик ошибки очистки"""
+        self.trocr_dataset_progress_bar.setVisible(False)
+        self.trocr_dataset_status_label.setText("❌ Ошибка очистки")
+        self.add_log_message(self.trocr_dataset_log, f"❌ Ошибка очистки: {error_message}")
+        QMessageBox.critical(self, "Ошибка очистки", error_message)
         
     def on_training_error(self, error_message):
         """Обработчик ошибки обучения"""
@@ -3629,6 +4430,17 @@ class ModernTrainingDialog(QDialog):
             settings_manager.get_int('Training', 'donut_batch_size', 2)
         )
         
+        # TrOCR настройки - загружаем последний используемый датасет
+        last_trocr_dataset = settings_manager.get_string('Training', 'last_trocr_dataset', '')
+        if last_trocr_dataset and os.path.exists(last_trocr_dataset):
+            self.trocr_dataset_edit.setText(last_trocr_dataset)
+            self.update_dataset_info(last_trocr_dataset, self.trocr_dataset_info)
+        
+        # TrOCR последний путь создания датасета
+        last_trocr_output_path = settings_manager.get_string('Training', 'last_trocr_output_path', '')
+        if last_trocr_output_path:
+            self.trocr_output_path_edit.setText(last_trocr_output_path)
+        
     def save_settings(self):
         """Сохранение настроек"""
         from app.settings_manager import settings_manager
@@ -3647,6 +4459,16 @@ class ModernTrainingDialog(QDialog):
         settings_manager.set_value('Training', 'donut_base_model', self.donut_base_model_combo.currentText())
         settings_manager.set_value('Training', 'donut_epochs', self.donut_epochs_spin.value())
         settings_manager.set_value('Training', 'donut_batch_size', self.donut_batch_size_spin.value())
+        
+        # TrOCR настройки - сохраняем последний используемый датасет
+        trocr_dataset_path = self.trocr_dataset_edit.text()
+        if trocr_dataset_path:
+            settings_manager.set_value('Training', 'last_trocr_dataset', trocr_dataset_path)
+        
+        # TrOCR путь создания датасета
+        trocr_output_path = self.trocr_output_path_edit.text()
+        if trocr_output_path:
+            settings_manager.set_value('Training', 'last_trocr_output_path', trocr_output_path)
 
     def closeEvent(self, event):
         """Обработка закрытия диалога - останавливаем все потоки"""
@@ -4598,11 +5420,11 @@ class ModernTrainingDialog(QDialog):
             'training_args': {
                 'num_train_epochs': self.trocr_epochs_spin.value(),
                 'per_device_train_batch_size': self.trocr_batch_size_spin.value(),
-                'learning_rate': self.trocr_lr_spin.value(),
-                'gradient_accumulation_steps': self.trocr_grad_accum_spin.value(),
-                'max_length': self.trocr_max_length_spin.value(),
-                'image_size': int(self.trocr_image_size_combo.currentText()),
-                'fp16': self.trocr_fp16_checkbox.isChecked(),
+                            'learning_rate': self.trocr_lr_spin.value(),
+            'gradient_accumulation_steps': self.trocr_grad_accum_spin.value(),
+            'max_length': self.trocr_max_length_spin.value(),
+            'image_size': self._parse_image_size(self.trocr_image_size_combo.currentText())[0],
+            'fp16': self.trocr_fp16_checkbox.isChecked(),
                 'warmup_ratio': self.trocr_warmup_ratio_spin.value(),
                 'weight_decay': self.trocr_weight_decay_spin.value(),
                 # Оптимизации памяти
@@ -4659,10 +5481,6 @@ class ModernTrainingDialog(QDialog):
         self.trocr_fp16_checkbox.setChecked(True)
         
         self.add_log_message(self.trocr_log, "⚡ Применены быстрые настройки GPU для TrOCR")
-        
-        
-        # Используем QTimer для отложенной обработки, чтобы дать потоку корректно завершиться
-        QTimer.singleShot(100, lambda: self._handle_training_completion(model_path, True))
         
     def on_training_error(self, error_message):
         """Обработчик ошибки обучения"""
@@ -4820,6 +5638,56 @@ class ModernTrainingDialog(QDialog):
                 delattr(self, 'trocr_auto_thread')
             except:
                 pass
+    
+    def update_dataset_info(self, dataset_path, info_label):
+        """Обновляет информацию о датасете в интерфейсе"""
+        try:
+            if not dataset_path or not os.path.exists(dataset_path):
+                info_label.setText("Выберите датасет для получения информации")
+                return
+            
+            # Анализируем датасет
+            from datasets import load_from_disk
+            dataset = load_from_disk(dataset_path)
+            
+            # Формируем информацию
+            info_parts = []
+            
+            if hasattr(dataset, 'keys'):  # DatasetDict
+                for split_name, split_data in dataset.items():
+                    info_parts.append(f"📊 {split_name}: {len(split_data)} примеров")
+                    
+                    # Анализируем первый элемент для структуры
+                    if len(split_data) > 0:
+                        sample = split_data[0]
+                        fields = list(sample.keys())
+                        info_parts.append(f"🏷️ Поля: {', '.join(fields)}")
+                        
+                        # Размер изображений если есть
+                        if 'image' in sample:
+                            img = sample['image']
+                            info_parts.append(f"🖼️ Размер изображений: {img.size}")
+                        break
+            else:  # Dataset
+                info_parts.append(f"📊 Примеров: {len(dataset)}")
+                
+                if len(dataset) > 0:
+                    sample = dataset[0]
+                    fields = list(sample.keys())
+                    info_parts.append(f"🏷️ Поля: {', '.join(fields)}")
+                    
+                    # Размер изображений если есть
+                    if 'image' in sample:
+                        img = sample['image']
+                        info_parts.append(f"🖼️ Размер изображений: {img.size}")
+            
+            info_text = "\n".join(info_parts)
+            info_label.setText(info_text)
+            info_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+            
+        except Exception as e:
+            info_label.setText(f"❌ Ошибка чтения датасета: {str(e)}")
+            info_label.setStyleSheet("color: #e74c3c;")
         
 # Для обратной совместимости
 TrainingDialog = ModernTrainingDialog

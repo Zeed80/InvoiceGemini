@@ -182,5 +182,6 @@ class ImageViewerWidget(QWidget):
         """Cleanup temporary directory."""
         try:
             self._temp_dir.cleanup()
-        except:
+        except (OSError, AttributeError) as e:
+            # Temporary directory может быть уже очищен или недоступен
             pass 

@@ -3,7 +3,7 @@ Pydantic models for data validation and serialization.
 """
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime, date
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from enum import Enum
 from pathlib import Path
 
@@ -89,7 +89,8 @@ class InvoiceField(BaseModel):
                 # Remove currency symbols and spaces
                 cleaned = str(v).replace('$', '').replace('€', '').replace('₽', '').replace(' ', '').replace(',', '.')
                 return Decimal(cleaned)
-            except:
+            except (ValueError, TypeError, DecimalException) as e:
+                # Неправильный формат валюты - выбрасываем специфичную ошибку
                 raise ValueError(f"Invalid currency value: {v}")
                 
         return str(v)

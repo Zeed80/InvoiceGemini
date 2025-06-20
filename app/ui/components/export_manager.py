@@ -210,7 +210,8 @@ class ExportManager:
                         try:
                             if len(str(cell.value)) > max_length:
                                 max_length = len(str(cell.value))
-                        except:
+                        except (AttributeError, TypeError, ValueError) as e:
+                            # Ячейка может содержать None или несовместимый тип
                             pass
                             
                     adjusted_width = min(max_length + 2, 50)
@@ -403,7 +404,8 @@ class ExportManager:
                         try:
                             amount = float(str(value).replace(',', '.').replace(' ', ''))
                             total_amounts.append(amount)
-                        except:
+                        except (ValueError, TypeError, AttributeError) as e:
+                            # Значение не может быть конвертировано в число
                             pass
                             
             if total_amounts:

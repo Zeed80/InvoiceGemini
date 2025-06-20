@@ -46,6 +46,23 @@ class ProcessingThread(QThread):
         if model_manager is None:
             raise ValueError("ModelManager instance must be provided to ProcessingThread")
         self.model_manager = model_manager
+        self._should_stop = False  # Флаг для корректной остановки
+
+    def stop(self):
+        """Безопасная остановка потока."""
+        self._should_stop = True
+        self.quit()
+        self.wait(5000)  # Ждем до 5 секунд завершения
+    
+    def cleanup(self):
+        """Очистка ресурсов потока."""
+        try:
+            self.stop()
+            # Очищаем ссылки
+            self.model_manager = None
+            self.deleteLater()
+        except Exception as e:
+            logger.error(f"Ошибка при очистке ProcessingThread: {e}")
 
     def run(self):
         """Запуск обработки в потоке."""
@@ -487,7 +504,24 @@ class ModelDownloadThread(QThread):
             raise ValueError("ModelManager instance must be provided to ModelDownloadThread")
         self.model_manager = model_manager
         self.cache_path = os.path.join(config.MODELS_PATH, model_type.lower())
+        self._should_stop = False  # Флаг для корректной остановки
     
+    def stop(self):
+        """Безопасная остановка потока."""
+        self._should_stop = True
+        self.quit()
+        self.wait(5000)  # Ждем до 5 секунд завершения
+    
+    def cleanup(self):
+        """Очистка ресурсов потока."""
+        try:
+            self.stop()
+            # Очищаем ссылки
+            self.model_manager = None
+            self.deleteLater()
+        except Exception as e:
+            logger.error(f"Ошибка при очистке ModelDownloadThread: {e}")
+
     def run(self):
         """Выполняет загрузку модели в отдельном потоке."""
         try:
@@ -567,7 +601,24 @@ class TesseractCheckThread(QThread):
         """
         super().__init__()
         self.path = path
+        self._should_stop = False  # Флаг для корректной остановки
     
+    def stop(self):
+        """Безопасная остановка потока."""
+        self._should_stop = True
+        self.quit()
+        self.wait(5000)  # Ждем до 5 секунд завершения
+    
+    def cleanup(self):
+        """Очистка ресурсов потока."""
+        try:
+            self.stop()
+            # Очищаем ссылки
+            self.path = None
+            self.deleteLater()
+        except Exception as e:
+            logger.error(f"Ошибка при очистке TesseractCheckThread: {e}")
+
     def run(self):
         """Выполнение проверки Tesseract OCR."""
         try:
