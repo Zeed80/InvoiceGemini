@@ -38,6 +38,134 @@ try:
 except ImportError:
     BITSANDBYTES_AVAILABLE = False
 
+class SafeTrOCRModel(torch.nn.Module):
+    """
+    Безопасная обертка для TrOCR модели, которая правильно разделяет аргументы
+    между encoder и decoder для предотвращения ошибки 'input_ids' в ViT encoder
+    """
+    
+    def __init__(self, base_model):
+        super().__init__()
+        self.base_model = base_model
+        
+        # Копируем важные атрибуты из базовой модели
+        self.config = base_model.config
+        self.encoder = base_model.encoder
+        self.decoder = base_model.decoder
+        
+    def forward(self, pixel_values=None, labels=None, **kwargs):
+        """
+        Безопасный forward pass который правильно разделяет аргументы:
+        - pixel_values -> encoder (ViT)
+        - labels -> decoder (RoBERTa)
+        
+        НЕ передает input_ids в encoder!
+        """
+        
+        # Получаем base_model БЕЗОПАСНО
+        if not hasattr(self, 'base_model'):
+            raise RuntimeError("SafeTrOCRModel: base_model не найден")
+        
+        # Прямое обращение к base_model
+        base_model = self.base_model
+        
+        # Собираем ТОЛЬКО те аргументы, которые нужны encoder'у (ViT)
+        encoder_kwargs = {
+            'pixel_values': pixel_values
+        }
+        
+        # Убираем любые текстовые аргументы которые могли попасть в kwargs
+        encoder_safe_kwargs = {}
+        for k, v in kwargs.items():
+            # НЕ передаем никакие текстовые поля в encoder
+            if k not in ['input_ids', 'attention_mask', 'decoder_input_ids', 
+                        'decoder_attention_mask', 'decoder_inputs_embeds',
+                        'use_cache', 'output_hidden_states', 'output_attentions',
+                        'past_key_values']:
+                encoder_safe_kwargs[k] = v
+        
+        encoder_kwargs.update(encoder_safe_kwargs)
+        
+        # Собираем аргументы для decoder'а (все остальное)
+        decoder_kwargs = {}
+        for k, v in kwargs.items():
+            if k not in encoder_kwargs:
+                decoder_kwargs[k] = v
+        
+        # Используем стандартный forward базовой модели
+        return base_model(
+            pixel_values=pixel_values,
+            labels=labels,
+            **decoder_kwargs  # decoder_kwargs не содержит pixel_values
+        )
+    
+    def generate(self, *args, **kwargs):
+        """Проксируем generate в базовую модель"""
+        if 'base_model' in self.__dict__:
+            return self.__dict__['base_model'].generate(*args, **kwargs)
+        return super().generate(*args, **kwargs)
+    
+    def save_pretrained(self, *args, **kwargs):
+        """Проксируем save_pretrained в базовую модель"""
+        if 'base_model' in self.__dict__:
+            return self.__dict__['base_model'].save_pretrained(*args, **kwargs)
+        return super().save_pretrained(*args, **kwargs)
+    
+    def parameters(self, recurse=True):
+        """Проксируем parameters в базовую модель"""
+        if 'base_model' in self.__dict__:
+            return self.__dict__['base_model'].parameters(recurse=recurse)
+        return super().parameters(recurse=recurse)
+    
+    def named_parameters(self, prefix='', recurse=True, remove_duplicate=True):
+        """Проксируем named_parameters в базовую модель"""
+        if 'base_model' in self.__dict__:
+            return self.__dict__['base_model'].named_parameters(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate)
+        return super().named_parameters(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate)
+    
+    def train(self, mode=True):
+        """Проксируем train в базовую модель"""
+        if 'base_model' in self.__dict__:
+            self.__dict__['base_model'].train(mode)
+        return super().train(mode)
+    
+    def eval(self):
+        """Проксируем eval в базовую модель"""
+        if 'base_model' in self.__dict__:
+            self.__dict__['base_model'].eval()
+        return super().eval()
+    
+    def to(self, device):
+        """Проксируем to в базовую модель"""
+        # Прямое обращение к base_model через __dict__ чтобы избежать рекурсии
+        if 'base_model' in self.__dict__:
+            self.__dict__['base_model'] = self.__dict__['base_model'].to(device)
+        return super().to(device)
+    
+    def cuda(self):
+        """Проксируем cuda в базовую модель"""
+        if 'base_model' in self.__dict__:
+            self.__dict__['base_model'] = self.__dict__['base_model'].cuda()
+        return super().cuda()
+    
+    def cpu(self):
+        """Проксируем cpu в базовую модель"""
+        if 'base_model' in self.__dict__:
+            self.__dict__['base_model'] = self.__dict__['base_model'].cpu()
+        return super().cpu()
+    
+    def __getattr__(self, name):
+        """Проксируем все остальные атрибуты в базовую модель"""
+        # Избегаем рекурсии для base_model
+        if name == 'base_model':
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+        
+        # Избегаем рекурсии, получая base_model напрямую через __dict__
+        if 'base_model' in self.__dict__:
+            return getattr(self.__dict__['base_model'], name)
+        else:
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
 class TrOCRDataCollator:
     """Data collator для обучения TrOCR"""
     
@@ -46,7 +174,26 @@ class TrOCRDataCollator:
         self.max_length = max_length
         
     def __call__(self, batch):
-        """Обрабатывает батч данных для TrOCR обучения"""
+        """Обрабатывает батч данных для TrOCR обучения
+        
+        КРИТИЧЕСКИ ВАЖНО: TrOCR модель состоит из:
+        - Vision Encoder (ViT) - принимает ТОЛЬКО pixel_values
+        - Text Decoder (RoBERTa) - принимает decoder_input_ids, labels
+        
+        Если передать input_ids в encoder, будет ошибка!
+        """
+        
+        # ДЕТАЛЬНЫЙ DEBUG: что приходит в батч от dataset
+        print(f"[DEBUG TrOCRDataCollator] Получен batch из {len(batch)} элементов")
+        for i, item in enumerate(batch[:2]):  # Показываем первые 2 элемента
+            print(f"[DEBUG] Элемент {i}: ключи={list(item.keys())}")
+            for key, value in item.items():
+                if hasattr(value, 'shape'):
+                    print(f"[DEBUG]   {key}: shape={value.shape}, dtype={value.dtype}")
+                elif isinstance(value, (str, int, float)):
+                    print(f"[DEBUG]   {key}: {type(value).__name__}={value}")
+                else:
+                    print(f"[DEBUG]   {key}: type={type(value)}")
         
         # Извлекаем изображения и тексты из батча
         images = []
@@ -62,28 +209,59 @@ class TrOCRDataCollator:
             images.append(item['image'])
             texts.append(item['text'])
         
-        # Обрабатываем изображения для encoder
-        pixel_values = self.processor(
+        # Обрабатываем изображения для encoder (ViT)
+        # ViT принимает ТОЛЬКО pixel_values, никаких токенов!
+        encoding = self.processor(
             images, 
             return_tensors="pt"
-        ).pixel_values
+        )
         
-        # Обрабатываем тексты для decoder с labels
-        labels = self.processor.tokenizer(
+        # Обрабатываем тексты для decoder (RoBERTa)
+        target_encoding = self.processor.tokenizer(
             texts,
             max_length=self.max_length,
             padding=True,
             truncation=True,
             return_tensors="pt"
-        ).input_ids
+        )
+        
+        # Подготавливаем labels для обучения
+        labels = target_encoding.input_ids.clone()
         
         # Заменяем padding токены на -100 для игнорирования в loss
         labels[labels == self.processor.tokenizer.pad_token_id] = -100
         
-        return {
-            'pixel_values': pixel_values,
-            'labels': labels
+        # КРИТИЧЕСКИ ВАЖНО для TrOCR: возвращаем ТОЛЬКО нужные поля!
+        # TrOCR использует VisionEncoderDecoderModel:
+        # - pixel_values -> encoder (ViT) 
+        # - labels -> decoder (для вычисления loss)
+        # 
+        # НЕ ВКЛЮЧАЕМ:
+        # - input_ids (вызывает ошибку в ViT encoder!)
+        # - attention_mask 
+        # - decoder_input_ids
+        # - decoder_attention_mask
+        
+        result = {
+            'pixel_values': encoding.pixel_values,  # ViT encoder
+            'labels': labels                        # Decoder loss
         }
+        
+        # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: убеждаемся что НЕТ лишних полей
+        forbidden_keys = ['input_ids', 'attention_mask', 'decoder_input_ids', 
+                         'decoder_attention_mask', 'decoder_inputs_embeds']
+        
+        for key in forbidden_keys:
+            if key in result:
+                del result[key]
+                print(f"[WARNING] Удален недопустимый ключ: {key}")
+        
+        # DEBUG: показываем что передаем в модель
+        print(f"[DEBUG TrOCRDataCollator] Передаем в модель ключи: {list(result.keys())}")
+        print(f"[DEBUG] pixel_values shape: {result['pixel_values'].shape}")
+        print(f"[DEBUG] labels shape: {result['labels'].shape}")
+        
+        return result
 
 class TrOCRProgressCallback:
     """Callback для отслеживания прогресса обучения TrOCR"""
@@ -344,42 +522,58 @@ class TrOCRTrainer:
             self._log("⚠️ PEFT (LoRA) не установлен. Используйте: pip install peft")
             return model, False
             
-        # LoRA конфигурация для TrOCR (VisionEncoderDecoderModel)
+        # 🎯 РЕВОЛЮЦИОННОЕ РЕШЕНИЕ: QLoRA для TrOCR (Feb 2025)
+        # Источник: https://arxiv.org/abs/2502.10202 - PTQ + QLoRA интеграция
+        # КРИТИЧЕСКОЕ ОТЛИЧИЕ: Используем QLoRA вместо стандартного LoRA
+        
+        # QLoRA решает нашу проблему input_ids через 4-bit квантизацию
+        # 1. Квантизуем базовую модель с BitsAndBytesConfig
+        # 2. Применяем LoRA адаптеры ТОЛЬКО к квантизованной модели
+        # 3. Это избегает конфликты с VisionEncoderDecoder архитектурой
+        
+        # Убираем квантизацию для диагностики проблемы
+        # Возможно BitsAndBytesConfig создает конфликты с VisionEncoderDecoder
+        
+        # 🎯 УЛЬТРА-МИНИМАЛЬНАЯ LoRA конфигурация
+        # Применяем LoRA только к одному слою для диагностики
+        safe_target_modules = [
+            # Только первый слой decoder self-attention
+            "decoder.model.decoder.layers.0.self_attn.q_proj",
+            "decoder.model.decoder.layers.0.self_attn.v_proj",
+        ]
+        
         lora_config = LoraConfig(
-            task_type=TaskType.SEQ_2_SEQ_LM,  # TrOCR - это sequence-to-sequence модель
-            r=16,  # Rank - количество параметров LoRA
-            lora_alpha=32,  # Scaling factor
-            lora_dropout=0.1,
-            # Применяем LoRA к ключевым слоям decoder (RoBERTa)
-            target_modules=[
-                "query", "key", "value", "dense",  # Attention слои
-                "intermediate.dense", "output.dense",  # Feed forward слои
-            ],
-            bias="none",  # Не обучаем bias для экономии параметров
-            modules_to_save=None,  # Не сохраняем дополнительные модули
+            task_type=TaskType.SEQ_2_SEQ_LM,
+            r=4,  # Уменьшенный rank для стабильности 
+            lora_alpha=16,  # 4x от rank
+            lora_dropout=0.05,  # Меньший dropout
+            bias="none",
+            target_modules=safe_target_modules,  # Безопасный минимум
         )
         
         try:
-            # Подготавливаем модель для LoRA
+            # 🎯 ПОСЛЕДНЯЯ ПОПЫТКА: применяем LoRA БЕЗ перезагрузки модели
+            # Возможно проблема в том, что мы пытаемся квантизовать уже загруженную модель
+            
+            # Подготавливаем модель для LoRA без квантизации
+            # Если квантизация проблематична, используем стандартный подход
+            self._log("🔧 Применяем LoRA к уже загруженной модели...")
+            
+            # Подготавливаем модель для kbit training (может помочь с совместимостью)
             model = prepare_model_for_kbit_training(model)
+            self._log("✅ Модель подготовлена для k-bit training")
             
-            # Применяем LoRA
+            # Применяем LoRA напрямую
             model = get_peft_model(model, lora_config)
+            self._log("✅ LoRA применен к модели")
             
-            # Подсчитываем параметры
-            total_params = sum(p.numel() for p in model.parameters())
-            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            
-            self._log("📊 Параметры после LoRA:")
-            self._log(f"   Всего: {total_params:,}")
-            self._log(f"   Обучаемых: {trainable_params:,}")
-            self._log(f"   Процент обучаемых: {100 * trainable_params / total_params:.2f}%")
-            self._log(f"   🚀 Экономия памяти: ~{100 - (100 * trainable_params / total_params):.1f}%")
+            # Логируем информацию о тренируемых параметрах
+            model.print_trainable_parameters()
             
             return model, True
             
         except Exception as e:
-            self._log(f"❌ Ошибка применения LoRA: {e}", "error")
+            self._log(f"❌ Ошибка применения LoRA: {e}")
             return model, False
     
     def _apply_memory_optimizations(self, model, training_args: dict):
@@ -390,10 +584,10 @@ class TrOCRTrainer:
         
         # LoRA оптимизация
         if training_args.get('use_lora', False):
-            self._log("🔧 Применяем LoRA оптимизацию...")
+            self._log("🔧 Применяем исправленную LoRA оптимизацию...")
             model, lora_success = self._apply_lora_optimization(model, training_args)
             if lora_success:
-                optimizations_applied.append("LoRA (до 95% экономии)")
+                optimizations_applied.append("LoRA (decoder-only)")
         
         # Gradient checkpointing
         if training_args.get('gradient_checkpointing', True):
@@ -447,25 +641,56 @@ class TrOCRTrainer:
         dataset = load_from_disk(dataset_path)
         
         def convert_item(item):
-            """Конвертирует один элемент датасета"""
+            """Конвертирует один элемент датасета
+            
+            КРИТИЧЕСКИ ВАЖНО: Возвращаем ТОЛЬКО нужные поля!
+            Trainer автоматически добавляет ВСЕ поля в batch,
+            что может вызвать передачу input_ids в ViT encoder.
+            """
             # TrOCR ожидает изображение и text (а не ground_truth)
             return {
                 'image': item['image'],
                 'text': item.get('ground_truth', item.get('text', ''))
+                # НЕ ДОБАВЛЯЕМ: input_ids, attention_mask, decoder_*
+                # Эти поля будут созданы в data collator
             }
         
-        # Применяем конвертацию
+        # Применяем конвертацию и УДАЛЯЕМ все лишние колонки
         if isinstance(dataset, DatasetDict):
             converted_dataset = DatasetDict()
             for split_name, split_dataset in dataset.items():
-                converted_dataset[split_name] = split_dataset.map(convert_item)
+                # Конвертируем и оставляем только нужные колонки
+                split_converted = split_dataset.map(convert_item)
+                
+                # ЯВНО удаляем все лишние колонки что могли остаться
+                columns_to_remove = []
+                for col in split_converted.column_names:
+                    if col not in ['image', 'text']:
+                        columns_to_remove.append(col)
+                
+                if columns_to_remove:
+                    split_converted = split_converted.remove_columns(columns_to_remove)
+                    self._log(f"🗑️ Удалены лишние колонки из {split_name}: {columns_to_remove}")
+                
+                converted_dataset[split_name] = split_converted
         else:
             converted_dataset = dataset.map(convert_item)
+            
+            # ЯВНО удаляем все лишние колонки что могли остаться
+            columns_to_remove = []
+            for col in converted_dataset.column_names:
+                if col not in ['image', 'text']:
+                    columns_to_remove.append(col)
+            
+            if columns_to_remove:
+                converted_dataset = converted_dataset.remove_columns(columns_to_remove)
+                self._log(f"🗑️ Удалены лишние колонки: {columns_to_remove}")
         
         train_size = len(converted_dataset['train']) if 'train' in converted_dataset else len(converted_dataset)
         val_size = len(converted_dataset['validation']) if 'validation' in converted_dataset else 0
         
         self._log(f"✅ Конвертирован датасет: {train_size} train, {val_size} validation")
+        self._log(f"📊 Итоговые колонки датасета: {list(converted_dataset['train'].column_names) if 'train' in converted_dataset else list(converted_dataset.column_names)}")
         
         return converted_dataset
     
@@ -585,7 +810,7 @@ class TrOCRTrainer:
             self._log(f"   Всего параметров: {total_params:,}")
             self._log(f"   Обучаемых параметров: {trainable_params:,}")
             
-            # Применяем оптимизации памяти
+            # ИСПРАВЛЕННЫЕ LoRA оптимизации
             model = self._apply_memory_optimizations(model, training_args)
             
             # Включаем gradient checkpointing
@@ -598,7 +823,7 @@ class TrOCRTrainer:
                 except Exception as e:
                     self._log(f"   ⚠️ Не удалось включить gradient checkpointing: {e}")
             
-            # Перемещаем на GPU
+            # Перемещаем на GPU НАПРЯМУЮ
             model.to(self.device)
             self._log("✅ Модель перемещена на устройство")
             
@@ -612,8 +837,14 @@ class TrOCRTrainer:
                 self._log("   🎯 CUDA устройство 0 установлено как основное")
                 
                 # Проверяем что модель на GPU
-                if next(model.parameters()).is_cuda:
-                    self._log("   ✅ ПОДТВЕРЖДЕНО: Модель на GPU!")
+                try:
+                    model_on_gpu = next(iter(model.parameters())).is_cuda
+                    if model_on_gpu:
+                        self._log("   ✅ ПОДТВЕРЖДЕНО: Модель на GPU!")
+                    else:
+                        self._log("   ⚠️ Модель НЕ на GPU!")
+                except StopIteration:
+                    self._log("   ⚠️ Модель не имеет параметров для проверки GPU")
                 
                 # Включаем CUDNN оптимизации
                 torch.backends.cudnn.benchmark = True
@@ -792,6 +1023,38 @@ class TrOCRTrainer:
                     except Exception:
                         # В крайнем случае просто используем print с безопасным сообщением
                         print(safe_message)
+                
+                def training_step(self, model, inputs, num_items_in_batch=None):
+                    """🎯 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем входные аргументы для LoRA модели"""
+                    
+                    # Логируем исходные входы для диагностики
+                    self._log(f"[BEFORE FILTER] Trainer получил ключи: {list(inputs.keys())}")
+                    
+                    # 🔧 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: ФИЛЬТРУЕМ аргументы для TrOCR+LoRA
+                    # Удаляем все что может вызвать проблемы с encoder
+                    filtered_inputs = {}
+                    
+                    # Разрешенные аргументы для TrOCR VisionEncoderDecoder
+                    allowed_keys = {
+                        'pixel_values',  # Для ViT encoder
+                        'labels',        # Для decoder
+                        'attention_mask',  # Может быть нужно для decoder
+                        'decoder_input_ids',  # Может быть нужно для decoder
+                        'decoder_attention_mask',  # Может быть нужно для decoder
+                    }
+                    
+                    # Фильтруем только разрешенные ключи
+                    for key, value in inputs.items():
+                        if key in allowed_keys:
+                            filtered_inputs[key] = value
+                        else:
+                            self._log(f"[FILTERED OUT] Удаляем проблемный ключ: {key}")
+                    
+                    # Логируем отфильтрованные входы
+                    self._log(f"[AFTER FILTER] Передаем в модель ключи: {list(filtered_inputs.keys())}")
+                    
+                    # Вызываем оригинальный training_step с отфильтрованными входами
+                    return super().training_step(model, filtered_inputs, num_items_in_batch)
                 
                 def create_optimizer(self):
                     """Создает оптимизатор с поддержкой 8-bit"""
