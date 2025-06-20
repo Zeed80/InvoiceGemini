@@ -227,6 +227,28 @@ def create_main_window():
             improve_table_display(main_window.results_table)
             logger.info("Применены улучшения отображения таблицы")
         
+        # 🚀 АКТИВАЦИЯ ОПТИМИЗАЦИЙ
+        logger.info("🚀 Активируем оптимизированные компоненты...")
+        try:
+            from app.core.optimization_integration import apply_optimizations_to_main_window
+            
+            success = apply_optimizations_to_main_window(main_window)
+            if success:
+                logger.info("✅ Все оптимизации успешно применены!")
+                logger.info("   🔍 Preview Dialog v2.0 активирован")
+                logger.info("   ⚡ Optimized File Processor активирован") 
+                logger.info("   🔧 Unified Plugin Manager активирован")
+                logger.info("   🎯 Performance Monitoring активирован")
+            else:
+                logger.warning("⚠️ Некоторые оптимизации не удалось применить")
+                
+        except ImportError as e:
+            logger.warning(f"⚠️ Модули оптимизации недоступны: {e}")
+            logger.info("Приложение будет работать в стандартном режиме")
+        except Exception as e:
+            logger.error(f"❌ Ошибка применения оптимизаций: {e}")
+            logger.info("Приложение будет работать в стандартном режиме")
+        
         return main_window
         
     except Exception as e:
