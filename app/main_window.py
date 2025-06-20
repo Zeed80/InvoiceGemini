@@ -2502,13 +2502,13 @@ Analyze:"""
             self.trocr_model_selector.addItem(display_text, model['id'])
         
         # Проверяем наличие дообученных моделей
-        trained_models_path = os.path.join(app_config.TRAINED_MODELS_PATH, 'trocr')
+        trained_models_path = app_config.TRAINED_MODELS_PATH
         if os.path.exists(trained_models_path):
             trained_models = []
             
             for d in os.listdir(trained_models_path):
                 model_dir = os.path.join(trained_models_path, d)
-                if os.path.isdir(model_dir):
+                if os.path.isdir(model_dir) and d.startswith('trocr_'):
                     # Проверяем наличие финальной модели
                     final_model_path = os.path.join(model_dir, 'final_model')
                     if os.path.exists(final_model_path):
