@@ -253,19 +253,24 @@ class ProcessingThread(QThread):
             return self._map_gemini_fields_fallback(result)
         
         try:
-            # Если FieldManager загружен, используем его
-            table_fields = field_manager.get_fields()
+            # ИСПРАВЛЕНИЕ: Используем правильный метод get_enabled_fields()
+            table_fields = field_manager.get_enabled_fields()
             if not table_fields:
                 # Если поля не настроены, используем fallback
                 return self._map_gemini_fields_fallback(result)
             
-            # Создаем маппинг имен полей к названиям колонок
+            # ИСПРАВЛЕНИЕ: Создаем маппинг используя правильную структуру TableField
             field_mapping = {}
             for field in table_fields:
-                field_name = field.get('name', '')
-                column_name = field.get('column_name', field_name)
-                if field_name and column_name:
-                    field_mapping[field_name.lower()] = column_name
+                # field - это объект TableField, используем его атрибуты
+                field_name = field.display_name
+                field_id = field.id
+                # Добавляем маппинг по display_name и ключевым словам Gemini
+                if field_name:
+                    field_mapping[field_name.lower()] = field_name
+                # Добавляем маппинг по Gemini keywords
+                for keyword in field.gemini_keywords:
+                    field_mapping[keyword.lower()] = field_name
             
             # Если Gemini вернул структуру с полем 'fields'
             if 'fields' in result and isinstance(result['fields'], list):
@@ -273,8 +278,9 @@ class ProcessingThread(QThread):
                 
                 for field_data in result['fields']:
                     if isinstance(field_data, dict):
-                        field_name = field_data.get('name', '').lower()
-                        field_value = field_data.get('value', '')
+                        # ИСПРАВЛЕНИЕ: Gemini возвращает 'field_name' и 'field_value', а не 'name' и 'value'
+                        field_name = field_data.get('field_name', field_data.get('name', '')).lower()
+                        field_value = field_data.get('field_value', field_data.get('value', ''))
                         
                         # Ищем соответствующее название колонки
                         if field_name in field_mapping:
@@ -288,7 +294,8 @@ class ProcessingThread(QThread):
                                     break
                             else:
                                 # Если совпадения не найдено, используем оригинальное имя
-                                mapped_result[field_data.get('name', field_name)] = field_value
+                                original_name = field_data.get('field_name', field_data.get('name', field_name))
+                                mapped_result[original_name] = field_value
                 
                 logger.debug(f"Маппинг Gemini полей завершен: {len(mapped_result)} полей")
                 return mapped_result
@@ -334,42 +341,43 @@ class ProcessingThread(QThread):
             # Пытаемся использовать FieldManager для маппинга
             try:
                 from .field_manager import field_manager
-                table_fields = field_manager.get_fields()
+                # ИСПРАВЛЕНИЕ: Используем правильный метод get_enabled_fields()
+                table_fields = field_manager.get_enabled_fields()
                 
                 if table_fields:
-                    # Создаем маппинг имен полей к названиям колонок
+                    # ИСПРАВЛЕНИЕ: Создаем маппинг используя правильную структуру TableField
                     field_mapping = {}
                     for field in table_fields:
-                        field_name = field.get('name', '')
-                        column_name = field.get('column_name', field_name)
-                        if field_name and column_name:
-                            # Для Donut часто используются английские названия
-                            field_mapping[field_name.lower()] = column_name
-                            # Добавляем возможные английские варианты
-                            if field_name == 'Поставщик':
-                                field_mapping['supplier'] = column_name
-                                field_mapping['vendor'] = column_name
-                            elif field_name == 'ИНН поставщика':
-                                field_mapping['supplier_inn'] = column_name
-                                field_mapping['vendor_inn'] = column_name
-                            elif field_name == 'Покупатель':
-                                field_mapping['customer'] = column_name
-                                field_mapping['buyer'] = column_name
-                            elif 'дата' in field_name.lower():
-                                field_mapping['date'] = column_name
-                                field_mapping['invoice_date'] = column_name
-                            elif 'номер' in field_name.lower() or '№' in field_name:
-                                field_mapping['number'] = column_name
-                                field_mapping['invoice_number'] = column_name
-                                field_mapping['invoice_no'] = column_name
-                            elif 'сумма' in field_name.lower():
-                                if 'ндс' in field_name.lower():
-                                    field_mapping['vat_amount'] = column_name
-                                    field_mapping['tax_amount'] = column_name
-                                else:
-                                    field_mapping['total'] = column_name
-                                    field_mapping['amount'] = column_name
-                                    field_mapping['total_amount'] = column_name
+                        # field - это объект TableField, используем его атрибуты
+                        field_name = field.display_name
+                        # Для Donut часто используются английские названия
+                        field_mapping[field_name.lower()] = field_name
+                        
+                        # Добавляем возможные английские варианты
+                        if field_name == 'Поставщик':
+                            field_mapping['supplier'] = field_name
+                            field_mapping['vendor'] = field_name
+                        elif field_name == 'ИНН поставщика':
+                            field_mapping['supplier_inn'] = field_name
+                            field_mapping['vendor_inn'] = field_name
+                        elif field_name == 'Покупатель':
+                            field_mapping['customer'] = field_name
+                            field_mapping['buyer'] = field_name
+                        elif 'дата' in field_name.lower():
+                            field_mapping['date'] = field_name
+                            field_mapping['invoice_date'] = field_name
+                        elif 'номер' in field_name.lower() or '№' in field_name:
+                            field_mapping['number'] = field_name
+                            field_mapping['invoice_number'] = field_name
+                            field_mapping['invoice_no'] = field_name
+                        elif 'сумма' in field_name.lower():
+                            if 'ндс' in field_name.lower():
+                                field_mapping['vat_amount'] = field_name
+                                field_mapping['tax_amount'] = field_name
+                            else:
+                                field_mapping['total'] = field_name
+                                field_mapping['amount'] = field_name
+                                field_mapping['total_amount'] = field_name
                     
                     # Маппим результат
                     mapped_result = {}
@@ -413,8 +421,12 @@ class ProcessingThread(QThread):
             # Преобразуем массив fields в плоскую структуру
             flat_result = {}
             for field in result['fields']:
-                if isinstance(field, dict) and 'name' in field and 'value' in field:
-                    flat_result[field['name']] = field['value']
+                if isinstance(field, dict):
+                    # ИСПРАВЛЕНИЕ: Поддерживаем оба формата ключей
+                    field_name = field.get('field_name', field.get('name', ''))
+                    field_value = field.get('field_value', field.get('value', ''))
+                    if field_name:
+                        flat_result[field_name] = field_value
             return flat_result
         
         # Если результат уже плоский, возвращаем как есть

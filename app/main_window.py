@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QSizePolicy, QApplication,
     QMenuBar, QMenu, QFileDialog, QMessageBox, QProgressBar,
     QStatusBar, QSpacerItem, QDialog,
-    QTabWidget
+    QTabWidget, QButtonGroup  # ИСПРАВЛЕНИЕ: Добавляем QButtonGroup
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QUrl, QTimer, QThread
 from PyQt6.QtGui import QPixmap, QImage, QAction, QIcon, QFont
@@ -266,20 +266,32 @@ class MainWindow(QMainWindow):
         model_layout = QVBoxLayout()
         model_layout.setSpacing(4)  # Уменьшаем отступы
         
+        # ИСПРАВЛЕНИЕ: Создаем группу для RadioButton'ов ПЕРЕД их использованием
+        self.model_button_group = QButtonGroup()
+        
         # === ОБЛАЧНЫЕ МОДЕЛИ - СВОРАЧИВАЕМАЯ ГРУППА ===
         self.cloud_models_group = CollapsibleGroup("☁️ Облачные модели")
-        self.cloud_models_group.set_expanded(False)  # По умолчанию свернута
+        self.cloud_models_group.set_expanded(False)  # ИЗМЕНЕНИЕ: По умолчанию свернута, будет развернута при загрузке настроек
         
-        # Gemini - компактная версия
+        # Gemini - компактная версия с индикатором состояния
         gemini_layout = QHBoxLayout()
         gemini_layout.setSpacing(4)
         self.gemini_radio = QRadioButton("Google Gemini")
         self.gemini_radio.toggled.connect(self.on_model_changed)
+        self.model_button_group.addButton(self.gemini_radio)
+        
+        # ИСПРАВЛЕНИЕ: Добавляем индикатор состояния API ключа
+        self.gemini_status_indicator = QLabel("❓")
+        self.gemini_status_indicator.setFixedSize(16, 16)
+        self.gemini_status_indicator.setToolTip("Статус API ключа")
+        
         self.gemini_prompt_button = QPushButton("📝")
         self.gemini_prompt_button.setFixedSize(24, 24)
         self.gemini_prompt_button.clicked.connect(lambda: self.show_model_prompt('gemini'))
         self.gemini_prompt_button.setToolTip("Показать промпт")
+        
         gemini_layout.addWidget(self.gemini_radio)
+        gemini_layout.addWidget(self.gemini_status_indicator)
         gemini_layout.addWidget(self.gemini_prompt_button)
         self.cloud_models_group.add_layout(gemini_layout)
         
@@ -301,6 +313,7 @@ class MainWindow(QMainWindow):
         cloud_llm_layout.setSpacing(4)
         self.cloud_llm_radio = QRadioButton("Другие облачные LLM")
         self.cloud_llm_radio.toggled.connect(self.on_model_changed)
+        self.model_button_group.addButton(self.cloud_llm_radio)
         self.cloud_llm_prompt_button = QPushButton("📝")
         self.cloud_llm_prompt_button.setFixedSize(24, 24)
         self.cloud_llm_prompt_button.clicked.connect(lambda: self.show_model_prompt('cloud_llm'))
@@ -344,19 +357,21 @@ class MainWindow(QMainWindow):
         self.cloud_models_group.add_layout(cloud_selection_layout)
         model_layout.addWidget(self.cloud_models_group)
         
-        # Populate Gemini models
+        # Populate Gemini models и проверяем статус API ключа
         self.populate_gemini_models()
+        self.check_gemini_api_status()
         
         # === ЛОКАЛЬНЫЕ МОДЕЛИ - СВОРАЧИВАЕМАЯ ГРУППА ===
         self.local_models_group = CollapsibleGroup("🖥️ Локальные модели")
-        self.local_models_group.set_expanded(True)  # По умолчанию развернута
+        self.local_models_group.set_expanded(False)  # ИЗМЕНЕНИЕ: По умолчанию свернута, будет развернута при загрузке настроек
         
         # LayoutLM - компактная версия
         layoutlm_layout = QHBoxLayout()
         layoutlm_layout.setSpacing(4)
         self.layoutlm_radio = QRadioButton("LayoutLMv3")
-        self.layoutlm_radio.setChecked(True)  # По умолчанию выбрана
+        # ИСПРАВЛЕНИЕ: Убираем принудительную установку, будет выбираться из настроек
         self.layoutlm_radio.toggled.connect(self.on_model_changed)
+        self.model_button_group.addButton(self.layoutlm_radio)
         self.layoutlm_prompt_button = QPushButton("📝")
         self.layoutlm_prompt_button.setFixedSize(24, 24)
         self.layoutlm_prompt_button.clicked.connect(lambda: self.show_model_prompt('layoutlm'))
@@ -370,6 +385,7 @@ class MainWindow(QMainWindow):
         donut_layout.setSpacing(4)
         self.donut_radio = QRadioButton("Donut")
         self.donut_radio.toggled.connect(self.on_model_changed)
+        self.model_button_group.addButton(self.donut_radio)
         self.donut_prompt_button = QPushButton("📝")
         self.donut_prompt_button.setFixedSize(24, 24)
         self.donut_prompt_button.clicked.connect(lambda: self.show_model_prompt('donut'))
@@ -383,6 +399,7 @@ class MainWindow(QMainWindow):
         trocr_layout.setSpacing(4)
         self.trocr_radio = QRadioButton("TrOCR (Microsoft)")
         self.trocr_radio.toggled.connect(self.on_model_changed)
+        self.model_button_group.addButton(self.trocr_radio)
         self.trocr_prompt_button = QPushButton("📝")
         self.trocr_prompt_button.setFixedSize(24, 24)
         self.trocr_prompt_button.clicked.connect(lambda: self.show_model_prompt('trocr'))
@@ -420,6 +437,7 @@ class MainWindow(QMainWindow):
         local_llm_layout.setSpacing(4)
         self.local_llm_radio = QRadioButton("Локальные LLM (Ollama)")
         self.local_llm_radio.toggled.connect(self.on_model_changed)
+        self.model_button_group.addButton(self.local_llm_radio)
         self.local_llm_prompt_button = QPushButton("📝")
         self.local_llm_prompt_button.setFixedSize(24, 24)
         self.local_llm_prompt_button.clicked.connect(lambda: self.show_model_prompt('local_llm'))
@@ -692,6 +710,9 @@ class MainWindow(QMainWindow):
         
         # Загружаем и применяем сохраненные настройки
         self.load_saved_settings()
+        
+        # ИСПРАВЛЕНИЕ: Проверяем статус компонентов после загрузки настроек
+        self.update_model_component_visibility()
     
     def _init_post_ui_components(self):
         """Инициализирует компоненты, которые требуют готового UI."""
@@ -750,6 +771,14 @@ class MainWindow(QMainWindow):
         # Обновляем список файлов
         self.update_files_from_selection(file_path, False)
         
+        # ИСПРАВЛЕНИЕ: Активируем кнопку обработки при выборе файла
+        self.process_button.setText("🚀 Обработать")
+        self.process_button.setEnabled(True)
+        
+        # Обновляем статус
+        filename = os.path.basename(file_path)
+        self.status_bar.showMessage(f"Выбран файл: {filename}")
+        
         # Старый код для загрузки изображения (для совместимости)
         if hasattr(self, 'image_widget') and self.image_widget.isVisible():
             self.load_image(file_path)
@@ -763,7 +792,7 @@ class MainWindow(QMainWindow):
         self.update_files_from_selection(folder_path, True)
         
         # Enable batch processing
-        self.process_button.setText("Обработать папку")
+        self.process_button.setText("🚀 Обработать папку")
         self.process_button.setEnabled(True)
         self.status_bar.showMessage(f"Выбрана папка: {folder_path}")
     def on_batch_processing_started(self, total_files: int):
@@ -895,8 +924,19 @@ class MainWindow(QMainWindow):
     
     def load_saved_settings(self):
         """Загружает сохраненные пользовательские настройки и применяет их."""
+        # ИСПРАВЛЕНИЕ: Сначала снимаем выбор со всех кнопок
+        for button in self.model_button_group.buttons():
+            button.setChecked(False)
+            
         # Загрузка активной модели
         active_model = settings_manager.get_active_model()
+        print(f"🔧 Загружаем активную модель из настроек: {active_model}")
+        
+        # НОВОЕ: Определяем, какая группа должна быть развернута
+        is_cloud_model = active_model in ['gemini', 'cloud_llm']
+        is_local_model = active_model in ['layoutlm', 'donut', 'trocr', 'local_llm']
+        
+        # Устанавливаем выбранную модель
         if active_model == 'layoutlm':
             self.layoutlm_radio.setChecked(True)
         elif active_model == 'donut':
@@ -904,14 +944,24 @@ class MainWindow(QMainWindow):
         elif active_model == 'trocr':
             self.trocr_radio.setChecked(True)
         elif active_model == 'gemini':
+            print("🔍 Устанавливаем Gemini как активную модель")
             self.gemini_radio.setChecked(True)
         elif active_model == 'cloud_llm':
             self.cloud_llm_radio.setChecked(True)
         elif active_model == 'local_llm':
             self.local_llm_radio.setChecked(True)
         else:
-            # По умолчанию выбираем LayoutLM
+            # По умолчанию выбираем LayoutLM только если никакая модель не сохранена
+            print("⚠️ Неизвестная активная модель, устанавливаем LayoutLM по умолчанию")
             self.layoutlm_radio.setChecked(True)
+            is_local_model = True
+            is_cloud_model = False
+        
+        # НОВОЕ: Управляем видимостью групп в зависимости от выбранной модели
+        self.update_group_visibility_based_on_model(is_cloud_model, is_local_model)
+        
+        print(f"📂 Группы: Облачные={'развернуты' if is_cloud_model else 'свернуты'}, "
+              f"Локальные={'развернуты' if is_local_model else 'свернуты'}")
         
         # Загрузка языка OCR
         ocr_lang = settings_manager.get_string('OCR', 'language', 'rus+eng')
@@ -947,43 +997,19 @@ class MainWindow(QMainWindow):
             elif self.local_llm_radio.isChecked():
                 model_name = 'local_llm'
                 
-            # Сохраняем выбор в настройках
-            settings_manager.set_active_model(model_name)
+            # НОВОЕ: Сохраняем выбор и обновляем UI групп
+            self.save_model_selection_and_update_ui(model_name)
             
             # Обновляем доступность выбора языка OCR (только для LayoutLM)
             self.ocr_lang_combo.setEnabled(model_name == 'layoutlm')
             
-            # Обновляем видимость компонентов
-            trocr_enabled = (model_name == 'trocr')
-            gemini_enabled = (model_name == 'gemini')
-            cloud_llm_enabled = (model_name == 'cloud_llm')
-            local_llm_enabled = (model_name == 'local_llm')
-            
-            # TrOCR компоненты
-            self.trocr_model_label.setEnabled(trocr_enabled)
-            self.trocr_model_selector.setEnabled(trocr_enabled)
-            
-            # Gemini компоненты
-            self.gemini_sub_model_label.setEnabled(gemini_enabled)
-            self.gemini_model_selector.setEnabled(gemini_enabled)
-            
-            # Облачные LLM компоненты
-            self.cloud_provider_label.setEnabled(cloud_llm_enabled)
-            self.cloud_provider_selector.setEnabled(cloud_llm_enabled)
-            self.cloud_model_label.setEnabled(cloud_llm_enabled)
-            self.cloud_model_selector.setEnabled(cloud_llm_enabled and self.cloud_provider_selector.count() > 0)
-            
-            # Локальные LLM компоненты  
-            self.local_provider_label.setEnabled(local_llm_enabled)
-            self.local_provider_selector.setEnabled(local_llm_enabled)
-            self.local_model_label.setEnabled(local_llm_enabled)
-            self.local_model_selector.setEnabled(local_llm_enabled and self.local_provider_selector.count() > 0)
-            
             # Обновляем статусы LLM, если выбраны
-            if cloud_llm_enabled:
+            if model_name == 'cloud_llm':
                 self.update_cloud_llm_status()
-            if local_llm_enabled:
+            elif model_name == 'local_llm':
                 self.update_local_llm_status()
+            elif model_name == 'gemini':
+                self.check_gemini_api_status()
             
             print(f"Выбрана модель: {model_name}")
     
@@ -1672,14 +1698,25 @@ class MainWindow(QMainWindow):
     def stop_processing_ui(self):
         """Остановка UI режима обработки."""
         self.is_processing = False
-        self.process_button.setText("🚀 Обработать")
+        
+        # ИСПРАВЛЕНИЕ: Правильно восстанавливаем текст кнопки в зависимости от выбранного режима
+        if self.current_folder_path:
+            self.process_button.setText("🚀 Обработать папку")
+        else:
+            self.process_button.setText("🚀 Обработать")
+            
+        # ИСПРАВЛЕНИЕ: Активируем кнопку только если что-то выбрано
+        has_selection = bool(self.current_image_path or self.current_folder_path)
+        self.process_button.setEnabled(has_selection)
+        
         self.process_button.setProperty("mode", "process")
         self.process_button.style().unpolish(self.process_button)
         self.process_button.style().polish(self.process_button)
         
         # Скрываем прогресс-бар и статус
         self.progress_bar.setVisible(False)
-        self.process_status_label.setVisible(False)
+        if hasattr(self, 'process_status_label'):
+            self.process_status_label.setVisible(False)
         
         self.processing_thread = None
     
@@ -1710,6 +1747,9 @@ class MainWindow(QMainWindow):
     def show_results(self, results):
         """Отображение результатов обработки в таблице (для ОДИНОЧНОГО файла)."""
         try:
+            print("🔍 DEBUG: show_results() вызван")
+            print(f"🔍 DEBUG: Результаты присутствуют: {bool(results)}")
+            
             # Этот метод теперь используется только для отображения результата одного файла
             # Сохраняем результаты для дальнейшего использования
             self.processing_thread.result = results # Сохраняем для совместимости с сохранением одиночного файла
@@ -1729,7 +1769,9 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'save_excel_action'): self.save_excel_action.setEnabled(True)
             
             # NEW: Включаем кнопку предварительного просмотра
+            print("🔍 DEBUG: Активируем кнопку просмотра (preview_button.setEnabled(True))")
             self.preview_button.setEnabled(True)
+            print(f"🔍 DEBUG: Статус кнопки просмотра после активации: {self.preview_button.isEnabled()}")
             
             # NEW: Активируем кнопки новой системы плагинов
             if hasattr(self, 'validate_button'):
@@ -1752,6 +1794,11 @@ class MainWindow(QMainWindow):
         """Обработка ошибки при обработке изображения."""
         self.stop_processing_ui()
         self.status_bar.showMessage("Ошибка обработки")
+        
+        # ИСПРАВЛЕНИЕ: Обновляем статус файла в списке при ошибке
+        if self.current_image_path:
+            self.file_list_widget.set_file_error(self.current_image_path, error_msg)
+        
         utils.show_error_message(
             self, "Ошибка обработки", f"Произошла ошибка: {error_msg}"
         )
@@ -2509,7 +2556,15 @@ Analyze:"""
     def append_result_to_table(self, result):
         """Добавляет одну строку с результатами в таблицу."""
         if not result:
+            print("ОТЛАДКА: append_result_to_table вызван с пустым результатом")
             return
+
+        print(f"ОТЛАДКА: append_result_to_table вызван с результатом: {result}")
+        
+        # ИСПРАВЛЕНИЕ: Проверяем, что таблица правильно настроена
+        if self.results_table.columnCount() == 0:
+            print("ПРЕДУПРЕЖДЕНИЕ: Таблица результатов не настроена, выполняем настройку")
+            self.setup_results_table()
 
         row_position = self.results_table.rowCount()
         self.results_table.insertRow(row_position)
@@ -2521,11 +2576,15 @@ Analyze:"""
             if header_item:
                 column_mapping[header_item.text()] = col
 
+        print(f"ОТЛАДКА: Заголовки таблицы: {list(column_mapping.keys())}")
+
         # Создаем расширенное сопоставление полей для гибкого поиска
         field_aliases = self._create_field_aliases_mapping(column_mapping)
         
         # Заполняем данные по display_name или алиасам
         processed_fields = 0
+        result_fields = [k for k in result.keys() if not k.startswith('_')]
+        
         for field_name, value in result.items():
             # Пропускаем служебные поля
             if field_name.startswith('_'):
@@ -2536,30 +2595,34 @@ Analyze:"""
             # Сначала пытаемся точное совпадение
             if field_name in column_mapping:
                 column_index = column_mapping[field_name]
+                print(f"ОТЛАДКА: Точное совпадение '{field_name}' -> колонка {column_index}")
             else:
                 # Затем ищем по алиасам (нечувствительно к регистру)
                 field_name_lower = field_name.lower()
                 for alias, col_idx in field_aliases.items():
                     if field_name_lower == alias.lower():
                         column_index = col_idx
+                        print(f"ОТЛАДКА: Найден алиас '{field_name}' -> '{alias}' -> колонка {column_index}")
                         break
             
             if column_index is not None:
                 item = QTableWidgetItem(str(value))
                 
                 # Выравнивание для числовых колонок
-                if any(word in field_name for word in ["Amount", "Total", "VAT", "Сумма", "НДС", "№", "номер", "%"]):
+                if any(word in field_name.lower() for word in ["amount", "total", "vat", "сумма", "ндс", "№", "номер", "%"]):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 
                 self.results_table.setItem(row_position, column_index, item)
                 processed_fields += 1
+                print(f"ОТЛАДКА: Добавлено поле '{field_name}' = '{value}' в колонку {column_index}")
             else:
                 # Логируем неизвестные поля для отладки
-                print(f"ОТЛАДКА: Неизвестное поле '{field_name}' со значением '{value}' не добавлено в таблицу")
+                print(f"ПРЕДУПРЕЖДЕНИЕ: Неизвестное поле '{field_name}' со значением '{value}' не добавлено в таблицу")
 
         try:
             self.results_table.resizeRowsToContents()
-            print(f"ОТЛАДКА: Добавлена строка в таблицу. Полей обработано: {processed_fields}/{len([k for k in result.keys() if not k.startswith('_')])}")
+            success_rate = processed_fields / len(result_fields) * 100 if result_fields else 0
+            print(f"ОТЛАДКА: Добавлена строка в таблицу. Полей обработано: {processed_fields}/{len(result_fields)} ({success_rate:.1f}%)")
         except Exception as e:
             print(f"ОШИБКА при изменении размера строк таблицы: {e}")
             import traceback
@@ -2672,6 +2735,11 @@ Analyze:"""
     # NEW: Слот для обработки завершения всего процесса
     def processing_finished(self, result_or_none):
         """Вызывается, когда поток завершает обработку (файла или папки)."""
+        print("🔍 DEBUG: processing_finished() вызван")
+        print(f"🔍 DEBUG: result_or_none присутствует: {bool(result_or_none)}")
+        print(f"🔍 DEBUG: current_folder_path: {self.current_folder_path}")
+        print(f"🔍 DEBUG: current_image_path: {self.current_image_path}")
+        
         self.progress_bar.setVisible(False)
         if self.current_folder_path: # Если обрабатывали папку
             self.status_bar.showMessage(f"Пакетная обработка папки {os.path.basename(self.current_folder_path)} завершена.")
@@ -2695,20 +2763,25 @@ Analyze:"""
                 # NEW: Disable preview button  
                 self.preview_button.setEnabled(False)
         else: # Если обрабатывали один файл
+            print("🔍 DEBUG: Обрабатывали один файл")
             # NEW: Обновляем статус файла в списке
             if self.current_image_path:
                 if result_or_none:
+                    print("🔍 DEBUG: Результат есть, обновляем статус файла как COMPLETED")
                     # Файл успешно обработан
                     self.file_list_widget.update_file_progress(self.current_image_path, 100, ProcessingStatus.COMPLETED)
                     self.update_file_processing_fields(self.current_image_path, result_or_none)
                 else:
+                    print("🔍 DEBUG: Результата нет, отмечаем ошибку обработки")
                     # Ошибка обработки файла
                     self.file_list_widget.set_file_error(self.current_image_path, "Ошибка обработки")
             
             # Используем старый метод для отображения одного результата
             if result_or_none:
+                print("🔍 DEBUG: Вызываем show_results() для отображения результата")
                 self.show_results(result_or_none)
             else:
+                print("🔍 DEBUG: Результат None, отключаем кнопки")
                 # Если результат None (например, ошибка в потоке, но не исключение)
                 self.status_bar.showMessage("Ошибка обработки файла.")
                 self.save_button.setEnabled(False)
@@ -2716,6 +2789,7 @@ Analyze:"""
                 self.save_excel_button.setEnabled(False)
                 if hasattr(self, 'save_excel_action'): self.save_excel_action.setEnabled(False)
                 # NEW: Disable preview button on error
+                print("🔍 DEBUG: Отключаем кнопку просмотра из-за ошибки")
                 self.preview_button.setEnabled(False)
     
     def save_excel(self):
@@ -3699,7 +3773,13 @@ Analyze:"""
     
     def show_preview_dialog(self):
         """Показывает диалог предварительного просмотра результатов"""
+        print("🔍 DEBUG: show_preview_dialog() вызван")
         try:
+            print("🔍 DEBUG: Начинаем определение данных для preview")
+            print(f"🔍 DEBUG: current_folder_path = {self.current_folder_path}")
+            print(f"🔍 DEBUG: results_table.rowCount() = {self.results_table.rowCount()}")
+            print(f"🔍 DEBUG: current_image_path = {getattr(self, 'current_image_path', 'None')}")
+            
             # Определяем данные для preview
             preview_data = None
             model_type = "unknown"
@@ -3728,19 +3808,32 @@ Analyze:"""
                     batch_results.append(row_data)
                 
                 preview_data = {"batch_results": batch_results}
+                print(f"🔍 DEBUG: Собрано {len(batch_results)} записей для пакетной обработки")
                 file_path = self.current_folder_path
                 
             else:
-                # Одиночная обработка
-                if not hasattr(self, 'processing_thread') or not self.processing_thread or \
-                   not hasattr(self.processing_thread, 'result') or not self.processing_thread.result:
+                # Одиночная обработка - проверяем наличие данных в таблице
+                if self.results_table.rowCount() == 0:
                     utils.show_info_message(
                         self, "Информация", 
                         "Нет результатов для предварительного просмотра. Сначала обработайте файл."
                     )
                     return
                 
-                preview_data = self.processing_thread.result
+                # Собираем данные из таблицы результатов (одна строка, много колонок)
+                preview_data = {}
+                if self.results_table.rowCount() > 0:
+                    row = 0  # Берем первую (и единственную) строку
+                    for col in range(self.results_table.columnCount()):
+                        header_item = self.results_table.horizontalHeaderItem(col)
+                        cell_item = self.results_table.item(row, col)
+                        if header_item and cell_item:
+                            field_name = header_item.text()
+                            field_value = cell_item.text()
+                            if field_value:  # Только непустые поля
+                                preview_data[field_name] = field_value
+                
+                print(f"🔍 DEBUG: Собрано {len(preview_data)} полей из таблицы: {list(preview_data.keys())}")
                 file_path = self.current_image_path or ""
             
             # Определяем активную модель
@@ -3755,25 +3848,46 @@ Analyze:"""
             elif self.local_llm_radio.isChecked():
                 model_type = f"Local LLM ({self.local_model_selector.currentText()})"
             
-            # Создаем и показываем диалог preview
-            preview_dialog = PreviewDialog(
-                results=preview_data,
-                model_type=model_type,
-                file_path=file_path,
-                parent=self
-            )
+            print(f"🔍 DEBUG: Создаем PreviewDialog с данными: model_type={model_type}, file_path={file_path}")
+            print(f"🔍 DEBUG: preview_data тип: {type(preview_data)}")
+            
+            # Создаем и показываем диалог preview с дополнительной обработкой ошибок
+            try:
+                print("🔍 DEBUG: Импортируем PreviewDialog...")
+                from .ui.preview_dialog import PreviewDialog
+                print("🔍 DEBUG: PreviewDialog импортирован успешно")
+                
+                print("🔍 DEBUG: Создаем экземпляр PreviewDialog...")
+                preview_dialog = PreviewDialog(
+                    results=preview_data,
+                    model_type=model_type,
+                    file_path=file_path,
+                    parent=self
+                )
+                print("🔍 DEBUG: PreviewDialog создан успешно")
+            except Exception as create_error:
+                print(f"🔍 DEBUG: ОШИБКА создания PreviewDialog: {create_error}")
+                import traceback
+                traceback.print_exc()
+                raise create_error
             
             # Подключаем сигналы
             preview_dialog.results_edited.connect(self.on_preview_results_edited)
             preview_dialog.export_requested.connect(self.on_preview_export_requested)
+            print("🔍 DEBUG: Сигналы подключены")
             
             # Показываем диалог
+            print("🔍 DEBUG: Показываем диалог")
             result = preview_dialog.exec()
+            print(f"🔍 DEBUG: Диалог закрыт с результатом: {result}")
             
             if result == QDialog.DialogCode.Accepted:
                 self.status_bar.showMessage("Изменения из предварительного просмотра применены")
             
         except Exception as e:
+            print(f"🔍 DEBUG: ОШИБКА в show_preview_dialog(): {e}")
+            import traceback
+            traceback.print_exc()
             utils.show_error_message(
                 self,
                 "Ошибка предварительного просмотра",
@@ -3788,13 +3902,15 @@ Analyze:"""
                 # Для пакетного режима нужна более сложная логика обновления
                 self.status_bar.showMessage("Результаты пакетной обработки обновлены")
             else:
-                # Single mode - обновляем processing_thread.result и таблицу
+                # Single mode - обновляем таблицу результатов
+                # Обновляем отображение в таблице
+                self.show_results(edited_results)
+                
+                # Также обновляем processing_thread.result если он существует
                 if hasattr(self, 'processing_thread') and self.processing_thread and \
                    hasattr(self.processing_thread, 'result'):
                     self.processing_thread.result = edited_results
                 
-                # Обновляем отображение в таблице
-                self.show_results(edited_results)
                 self.status_bar.showMessage("Результаты обновлены из предварительного просмотра")
                 
         except Exception as e:
@@ -4335,13 +4451,14 @@ Analyze:"""
         if hasattr(self, 'image_widget') and self.image_widget.isVisible():
             self.load_image(file_path)
         
-        # Включаем кнопку обработки
+        # ИСПРАВЛЕНИЕ: Включаем кнопку обработки при выборе из списка
         self.process_button.setText("🚀 Обработать")
         self.process_button.setEnabled(True)
         
         # Обновляем статус
         filename = os.path.basename(file_path)
         self.status_bar.showMessage(f"Выбран файл: {filename}")
+        print(f"ОТЛАДКА: Выбран файл из списка, кнопка активирована: {file_path}")
         
     def on_process_single_file_requested(self, file_path: str):
         """Обработчик запроса на обработку одного файла."""
@@ -4410,13 +4527,14 @@ Analyze:"""
         total_fields = 0
         
         # Получаем все ожидаемые поля из field_manager
-        expected_fields = field_manager.get_visible_fields()
+        expected_fields = field_manager.get_enabled_fields()
         total_fields = len(expected_fields)
         
         # Проверяем какие поля были распознаны
         for field_config in expected_fields:
-            field_key = field_config.get('key', '')
-            aliases = field_config.get('aliases', [])
+            # ИСПРАВЛЕНИЕ: TableField - это объект, используем его атрибуты напрямую
+            field_key = field_config.id
+            aliases = getattr(field_config, 'gemini_keywords', [])
             
             # Проверяем основное поле и его алиасы
             found = False
@@ -4456,6 +4574,192 @@ Analyze:"""
         else:
             # Один файл
             self.file_list_widget.set_files([path])
+
+    def check_gemini_api_status(self):
+        """Проверяет статус API ключа Gemini и обновляет индикатор."""
+        try:
+            # ИСПРАВЛЕНИЕ: Проверяем API ключ через новую систему секретов с fallback
+            api_key = None
+            
+            # Проверяем новую систему секретов
+            try:
+                from config.secrets import SecretsManager
+                secrets_manager = SecretsManager()
+                api_key = secrets_manager.get_secret("GOOGLE_API_KEY")
+                if api_key:
+                    print("🔑 Gemini API ключ найден в зашифрованном хранилище")
+                else:
+                    print("🔍 Gemini API ключ не найден в зашифрованном хранилище")
+            except ImportError:
+                print("⚠️ Система секретов недоступна, используем fallback")
+            except Exception as e:
+                print(f"⚠️ Ошибка доступа к системе секретов: {e}")
+            
+            # Fallback на старую систему
+            if not api_key:
+                try:
+                    api_key = settings_manager.get_gemini_api_key()
+                    if api_key:
+                        print("🔑 Gemini API ключ найден в настройках (старая система)")
+                    else:
+                        # Дополнительная проверка через environment
+                        import os
+                        api_key = os.environ.get('GOOGLE_API_KEY')
+                        if api_key:
+                            print("🔑 Gemini API ключ найден в переменных окружения")
+                except Exception as e:
+                    print(f"⚠️ Ошибка проверки старой системы настроек: {e}")
+            
+            if api_key and len(api_key.strip()) > 10:
+                # API ключ настроен
+                self.gemini_status_indicator.setText("✅")
+                self.gemini_status_indicator.setToolTip("API ключ настроен и доступен")
+                self.gemini_radio.setEnabled(True)
+                self.gemini_model_selector.setEnabled(True)
+                print("✅ Gemini API ключ проверен успешно")
+            else:
+                # API ключ не настроен
+                self.gemini_status_indicator.setText("❌")
+                self.gemini_status_indicator.setToolTip("API ключ не настроен. Перейдите в Настройки → LLM провайдеры → Google")
+                # Оставляем элементы активными для возможности настройки
+                self.gemini_radio.setEnabled(True)
+                self.gemini_model_selector.setEnabled(True)
+                print("❌ Gemini API ключ не настроен")
+                
+        except Exception as e:
+            self.gemini_status_indicator.setText("❓")
+            self.gemini_status_indicator.setToolTip(f"Ошибка проверки: {e}")
+            self.gemini_radio.setEnabled(True)  # Оставляем доступным для настройки
+            self.gemini_model_selector.setEnabled(True)
+            print(f"❓ Ошибка проверки API ключа Gemini: {e}")
+
+    def update_model_component_visibility(self):
+        """Обновляет видимость и активность компонентов в зависимости от выбранной модели."""
+        # Определяем активную модель
+        model_name = 'layoutlm'  # По умолчанию
+        if self.layoutlm_radio.isChecked():
+            model_name = 'layoutlm'
+        elif self.donut_radio.isChecked():
+            model_name = 'donut'
+        elif self.trocr_radio.isChecked():
+            model_name = 'trocr'
+        elif self.gemini_radio.isChecked():
+            model_name = 'gemini'
+        elif self.cloud_llm_radio.isChecked():
+            model_name = 'cloud_llm'
+        elif self.local_llm_radio.isChecked():
+            model_name = 'local_llm'
+            
+        print(f"🔧 Обновляем видимость компонентов для модели: {model_name}")
+            
+        # Обновляем доступность компонентов
+        is_gemini = (model_name == 'gemini')
+        is_trocr = (model_name == 'trocr')
+        is_cloud_llm = (model_name == 'cloud_llm')
+        is_local_llm = (model_name == 'local_llm')
+        is_layoutlm = (model_name == 'layoutlm')
+        is_donut = (model_name == 'donut')
+        
+        # ИСПРАВЛЕНИЕ: Gemini компоненты - всегда видимы и активны
+        if hasattr(self, 'gemini_sub_model_label'):
+            self.gemini_sub_model_label.setVisible(True)
+            self.gemini_sub_model_label.setEnabled(is_gemini)
+        if hasattr(self, 'gemini_model_selector'):
+            self.gemini_model_selector.setVisible(True)
+            self.gemini_model_selector.setEnabled(is_gemini)
+        
+        # TrOCR компоненты
+        if hasattr(self, 'trocr_model_label'):
+            self.trocr_model_label.setVisible(True)
+            self.trocr_model_label.setEnabled(is_trocr)
+        if hasattr(self, 'trocr_model_selector'):
+            self.trocr_model_selector.setVisible(True)
+            self.trocr_model_selector.setEnabled(is_trocr)
+        if hasattr(self, 'trocr_status_label'):
+            self.trocr_status_label.setVisible(True)
+        
+        # ИСПРАВЛЕНИЕ: Облачные LLM компоненты - исправляем логику активации
+        if hasattr(self, 'cloud_provider_label'):
+            self.cloud_provider_label.setEnabled(is_cloud_llm)
+        if hasattr(self, 'cloud_provider_selector'):
+            self.cloud_provider_selector.setEnabled(is_cloud_llm)
+            # ИСПРАВЛЕНИЕ: Если выбрана облачная модель, принудительно активируем селектор
+            if is_cloud_llm and self.cloud_provider_selector.count() == 0:
+                # Если нет провайдеров, перезагружаем их
+                self.populate_cloud_providers()
+        if hasattr(self, 'cloud_model_label'):
+            self.cloud_model_label.setEnabled(is_cloud_llm)
+        if hasattr(self, 'cloud_model_selector'):
+            # ИСПРАВЛЕНИЕ: Облачный селектор моделей активен, если выбрана облачная модель И есть провайдер
+            provider_selected = is_cloud_llm and self.cloud_provider_selector.currentData() is not None
+            self.cloud_model_selector.setEnabled(provider_selected)
+            print(f"🔧 Cloud model selector enabled: {provider_selected} (cloud_llm={is_cloud_llm}, provider_data={self.cloud_provider_selector.currentData() is not None})")
+        if hasattr(self, 'cloud_llm_status_label'):
+            self.cloud_llm_status_label.setVisible(True)
+        
+        # ИСПРАВЛЕНИЕ: Локальные LLM компоненты - исправляем логику активации
+        if hasattr(self, 'local_provider_label'):
+            self.local_provider_label.setEnabled(is_local_llm)
+        if hasattr(self, 'local_provider_selector'):
+            self.local_provider_selector.setEnabled(is_local_llm)
+            # ИСПРАВЛЕНИЕ: Если выбрана локальная модель, принудительно активируем селектор
+            if is_local_llm and self.local_provider_selector.count() == 0:
+                # Если нет провайдеров, перезагружаем их
+                self.populate_local_providers()
+        if hasattr(self, 'local_model_label'):
+            self.local_model_label.setEnabled(is_local_llm)
+        if hasattr(self, 'local_model_selector'):
+            # ИСПРАВЛЕНИЕ: Локальный селектор моделей активен, если выбрана локальная модель И есть провайдер
+            provider_selected = is_local_llm and self.local_provider_selector.currentData() is not None
+            self.local_model_selector.setEnabled(provider_selected)
+            print(f"🔧 Local model selector enabled: {provider_selected} (local_llm={is_local_llm}, provider_data={self.local_provider_selector.currentData() is not None})")
+        if hasattr(self, 'local_llm_status_label'):
+            self.local_llm_status_label.setVisible(True)
+        
+        # OCR язык только для LayoutLM
+        if hasattr(self, 'ocr_lang_combo'):
+            self.ocr_lang_combo.setEnabled(is_layoutlm)
+        
+        # ИСПРАВЛЕНИЕ: Автоматически разворачиваем соответствующую группу только если нужно
+        if is_gemini or is_cloud_llm:
+            if hasattr(self, 'cloud_models_group') and not self.cloud_models_group.expanded:
+                self.cloud_models_group.set_expanded(True)
+                print("☁️ Развернута группа облачных моделей")
+        elif is_layoutlm or is_donut or is_trocr or is_local_llm:
+            if hasattr(self, 'local_models_group') and not self.local_models_group.expanded:
+                self.local_models_group.set_expanded(True)
+                print("🖥️ Развернута группа локальных моделей")
+
+    def update_group_visibility_based_on_model(self, is_cloud_model: bool, is_local_model: bool):
+        """Обновляет видимость групп моделей в зависимости от выбранной модели."""
+        if is_cloud_model:
+            # Разворачиваем облачные модели, сворачиваем локальные
+            self.cloud_models_group.set_expanded(True)
+            self.local_models_group.set_expanded(False)
+            print("☁️ Развернута группа: Облачные модели")
+        elif is_local_model:
+            # Разворачиваем локальные модели, сворачиваем облачные
+            self.cloud_models_group.set_expanded(False)
+            self.local_models_group.set_expanded(True)
+            print("🖥️ Развернута группа: Локальные модели")
+        else:
+            # Если модель неизвестна, разворачиваем локальные по умолчанию
+            self.cloud_models_group.set_expanded(False)
+            self.local_models_group.set_expanded(True)
+            print("⚠️ Развернута группа по умолчанию: Локальные модели")
+
+    def save_model_selection_and_update_ui(self, model_name: str):
+        """Сохраняет выбор модели и обновляет UI группы."""
+        # Сохраняем выбор в настройках
+        settings_manager.set_active_model(model_name)
+        print(f"💾 Сохранена выбранная модель: {model_name}")
+        
+        # Определяем тип модели и обновляем видимость групп
+        is_cloud_model = model_name in ['gemini', 'cloud_llm']
+        is_local_model = model_name in ['layoutlm', 'donut', 'trocr', 'local_llm']
+        
+        # Обновляем видимость групп
+        self.update_group_visibility_based_on_model(is_cloud_model, is_local_model)
 
 
 # NEW: LLM Loading Thread
