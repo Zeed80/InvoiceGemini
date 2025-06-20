@@ -79,6 +79,55 @@ config/secrets.py
 api_keys.json
 
 # ============================================================================
+# SECURITY - CRITICAL: SECRET DATA EXCLUSION
+# ============================================================================
+
+# Encryption keys and secrets (NEVER commit these!)
+data/security/
+*.key
+*.enc
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.jks
+
+# All secret/credential files
+*secret*
+*credential*
+*password*
+*token*
+*api_key*
+.secrets*
+secrets_*
+*_secrets.*
+secrets.*
+
+# Environment files with potential secrets
+.env*
+env.*
+*env*
+
+# Cache and temporary data that may contain sensitive info
+data/cache/
+cache/
+*.cache
+*_cache*
+cache_*
+
+# User-specific configuration that may contain secrets
+config/user*
+config/local*
+user_config*
+local_config*
+
+# Backup files that may contain secrets
+*.backup
+*_backup
+backup_*
+*.bak
+
+# ============================================================================
 # Machine Learning
 # ============================================================================
 *.pkl
