@@ -138,26 +138,18 @@ class ModelManager:
             
         elif model_type_lower == 'trocr':
             # Поддержка TrOCR моделей
-            # Определяем какую модель TrOCR загружать
-            model_source = settings_manager.get_string('Models', 'trocr_model_source', 'huggingface')
+            # Получаем model_id из настроек
+            model_identifier = settings_manager.get_string('Models', 'trocr_model_id', 'microsoft/trocr-base-printed')
             
-            if model_source == 'custom':
-                # Загружаем кастомную дообученную модель
-                custom_model_name = settings_manager.get_string('Models', 'custom_trocr_model_name', '')
-                if custom_model_name:
-                    model_identifier = os.path.join(app_config.TRAINED_MODELS_PATH, custom_model_name)
-                else:
-                    # Fallback на базовую модель
-                    model_identifier = settings_manager.get_string('Models', 'trocr_model_id', 'microsoft/trocr-base-printed')
-            else:
-                # Загружаем модель с HuggingFace
-                model_identifier = settings_manager.get_string('Models', 'trocr_model_id', 'microsoft/trocr-base-printed')
+            # Определяем тип модели по пути
+            is_custom = not model_identifier.startswith('microsoft/')
             
             # Формируем кэш-ключ
-            cache_key = f"trocr_{model_source}_{model_identifier.replace(os.sep, '_')}"
+            cache_key = f"trocr_{model_identifier.replace(os.sep, '_').replace('/', '_')}"
             
             if cache_key not in self.models or self.models[cache_key] is None:
                 print(f"DEBUG: ModelManager: Создание нового TrOCRProcessor с model_id={model_identifier}")
+                print(f"DEBUG: ModelManager: Модель {'кастомная' if is_custom else 'HuggingFace'}")
                 from .trocr_processor import TrOCRProcessor
                 self.models[cache_key] = TrOCRProcessor(model_name=model_identifier)
                 

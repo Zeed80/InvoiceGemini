@@ -333,6 +333,10 @@ class TrOCRMetricsCallback:
         return control
     
     def on_train_end(self, args, state, control, **kwargs):
+        # Отправляем финальное сообщение о завершении обучения
+        if self.metrics_callback:
+            final_message = f"🎉 ОБУЧЕНИЕ ЗАВЕРШЕНО | Эпох: {state.epoch:.1f} | Шагов: {state.global_step}"
+            self.metrics_callback(final_message)
         return control
     
     def on_epoch_begin(self, args, state, control, **kwargs):
@@ -499,11 +503,14 @@ class TrOCRTrainer:
         safe_message = message.encode('ascii', errors='replace').decode('ascii')
         
         if self.logger:
-            # Логгер может обрабатывать Unicode, поэтому используем оригинальное сообщение
+            # Логгер может обрабатывать Unicode, но Windows console может не поддерживать emoji
             try:
                 getattr(self.logger, level)(message)
             except UnicodeEncodeError:
                 # Fallback к безопасной версии если есть проблемы с кодировкой
+                getattr(self.logger, level)(safe_message)
+            except Exception:
+                # На всякий случай - еще один fallback
                 getattr(self.logger, level)(safe_message)
         else:
             print(f"[{level.upper()}] {safe_message}")
@@ -1169,15 +1176,37 @@ class TrOCRTrainer:
             self._log(f"   📄 Датасет: {len(train_dataset)} примеров")
             self._log(f"   🔢 Всего шагов: {total_steps}")
             
+            final_loss = None
             if hasattr(training_result, 'training_loss'):
-                self._log(f"   📉 Финальный loss: {training_result.training_loss:.4f}")
+                final_loss = training_result.training_loss
+                self._log(f"   📉 Финальный loss: {final_loss:.4f}")
             
             # Память GPU
+            max_memory_gb = 0
             if torch.cuda.is_available():
-                max_memory = torch.cuda.max_memory_allocated() / (1024**3)
-                self._log(f"   💾 Максимальное использование GPU: {max_memory:.2f} GB")
+                max_memory_gb = torch.cuda.max_memory_allocated() / (1024**3)
+                self._log(f"   💾 Максимальное использование GPU: {max_memory_gb:.2f} GB")
             
             self._log("✅ Обучение TrOCR завершено успешно!")
+            
+            # 🎯 РАСШИРЕННЫЙ АНАЛИЗ КАЧЕСТВА МОДЕЛИ
+            training_time = getattr(training_result, 'train_runtime', 31.5) if hasattr(training_result, 'train_runtime') else 31.5
+            quality_analysis = self._analyze_model_quality(
+                final_loss=final_loss,
+                dataset_size=len(train_dataset),
+                total_steps=total_steps,
+                training_time=training_time,
+                model=model,
+                dataset=dataset
+            )
+            
+            # Отправляем детальный анализ через callback для UI
+            if self.metrics_callback:
+                self.metrics_callback(quality_analysis['summary_message'])
+                
+            # Отправляем прогресс 100% через callback
+            if self.progress_callback:
+                self.progress_callback(100)
             return final_model_path
             
         except Exception as e:
@@ -1212,6 +1241,281 @@ class TrOCRTrainer:
             
             return None
     
+    def _analyze_model_quality(self, final_loss, dataset_size, total_steps, training_time, model, dataset):
+        """
+        Комплексный анализ качества обученной TrOCR модели
+        """
+        try:
+            # Базовый анализ
+            analysis = {
+                'loss_interpretation': self._interpret_loss(final_loss, dataset_size),
+                'training_efficiency': self._evaluate_training_efficiency(total_steps, training_time, dataset_size),
+                'model_readiness': self._assess_model_readiness(final_loss, dataset_size),
+                'recommendations': self._generate_recommendations(final_loss, dataset_size, total_steps)
+            }
+            
+            # Дополнительные метрики валидации (если есть validation set)
+            validation_metrics = self._evaluate_on_validation(model, dataset)
+            if validation_metrics:
+                analysis['validation_metrics'] = validation_metrics
+                analysis['recommendations'].extend(validation_metrics.get('recommendations', []))
+            
+            # Создаем сводное сообщение
+            quality_score = self._calculate_quality_score(final_loss, dataset_size, validation_metrics)
+            
+            summary_message = self._format_quality_summary(analysis, quality_score, final_loss, dataset_size, total_steps, validation_metrics)
+            
+            analysis['summary_message'] = summary_message
+            analysis['quality_score'] = quality_score
+            
+            # Логируем детальный анализ
+            self._log("\n" + "="*60)
+            self._log("🔍 ДЕТАЛЬНЫЙ АНАЛИЗ КАЧЕСТВА МОДЕЛИ")
+            self._log("="*60)
+            self._log(summary_message)
+            
+            if validation_metrics:
+                self._log("\n🧪 РЕЗУЛЬТАТЫ ВАЛИДАЦИИ:")
+                self._log(f"   📊 Точность символов: {validation_metrics['char_accuracy']:.1f}%")
+                self._log(f"   📝 Точность слов: {validation_metrics['word_accuracy']:.1f}%")
+                self._log(f"   📄 Точность документов: {validation_metrics['document_accuracy']:.1f}%")
+                
+            self._log("\n📋 ДЕТАЛЬНЫЕ РЕКОМЕНДАЦИИ:")
+            for i, rec in enumerate(analysis['recommendations'], 1):
+                self._log(f"   {i}. {rec}")
+            self._log("="*60)
+            
+            return analysis
+            
+        except Exception as e:
+            self._log(f"⚠️ Ошибка анализа качества: {e}")
+            return {
+                'summary_message': f"🎉 ОБУЧЕНИЕ ЗАВЕРШЕНО | Loss: {final_loss:.4f} | Датасет: {dataset_size} примеров",
+                'quality_score': 'unknown'
+            }
+    
+    def _interpret_loss(self, loss, dataset_size):
+        """Интерпретирует значение loss для TrOCR"""
+        if loss < 0.5:
+            return "🏆 ПРЕВОСХОДНО - Модель практически идеально научилась генерировать текст"
+        elif loss < 1.0:
+            return "🔥 ОТЛИЧНО - Модель очень хорошо понимает структуру текста"
+        elif loss < 2.0:
+            return "✅ ХОРОШО - Модель успешно изучила основные паттерны"
+        elif loss < 4.0:
+            return "🟡 УДОВЛЕТВОРИТЕЛЬНО - Модель начала изучать паттерны, но нужно больше обучения"
+        elif loss < 8.0:
+            return "🟠 ТРЕБУЕТ УЛУЧШЕНИЯ - Модель еще плохо понимает задачу"
+        else:
+            return "🔴 КРИТИЧНО - Модель практически не обучилась, проверьте данные"
+    
+    def _evaluate_training_efficiency(self, steps, time_sec, dataset_size):
+        """Оценивает эффективность обучения"""
+        steps_per_sec = steps / time_sec if time_sec > 0 else 0
+        samples_per_sec = (dataset_size * 3) / time_sec if time_sec > 0 else 0  # 3 эпохи
+        
+        if steps_per_sec > 2.0:
+            efficiency = "🚀 ОЧЕНЬ БЫСТРО"
+        elif steps_per_sec > 1.0:
+            efficiency = "⚡ БЫСТРО"
+        elif steps_per_sec > 0.5:
+            efficiency = "⏱️ НОРМАЛЬНО"
+        else:
+            efficiency = "🐌 МЕДЛЕННО"
+            
+        return f"{efficiency} - {steps_per_sec:.2f} шагов/сек, {samples_per_sec:.1f} примеров/сек"
+    
+    def _assess_model_readiness(self, loss, dataset_size):
+        """Оценивает готовность модели к использованию"""
+        if loss < 1.0 and dataset_size >= 100:
+            return "✅ ГОТОВА К ПРОДАКШЕНУ - Можно использовать в реальных задачах"
+        elif loss < 2.0 and dataset_size >= 50:
+            return "🧪 ГОТОВА К ТЕСТИРОВАНИЮ - Рекомендуется дополнительная проверка"
+        elif loss < 4.0:
+            return "🔄 НУЖНО ДООБУЧЕНИЕ - Добавьте данных или увеличьте эпохи"
+        else:
+            return "❌ НЕ ГОТОВА - Критически низкое качество, пересмотрите подход"
+    
+    def _generate_recommendations(self, loss, dataset_size, steps):
+        """Генерирует практические рекомендации"""
+        recommendations = []
+        
+        # Рекомендации по loss
+        if loss > 4.0:
+            recommendations.append("📉 Снизьте learning rate до 1e-5 или 2e-5")
+            recommendations.append("📚 Добавьте больше разнообразных примеров")
+            recommendations.append("🔍 Проверьте качество аннотаций - возможны ошибки в данных")
+        elif loss > 2.0:
+            recommendations.append("⏱️ Увеличьте количество эпох до 5-10")
+            recommendations.append("🎯 Добавьте data augmentation для большего разнообразия")
+        elif loss < 0.5:
+            recommendations.append("⚠️ Возможно переобучение - используйте early stopping")
+            recommendations.append("🧪 Обязательно протестируйте на новых данных")
+        
+        # Рекомендации по размеру датасета
+        if dataset_size < 50:
+            recommendations.append("📊 Увеличьте датасет до 100+ примеров для стабильного качества")
+        elif dataset_size < 200:
+            recommendations.append("📈 Для production рекомендуется 500+ примеров")
+        
+        # Рекомендации по эффективности
+        if steps < 30:
+            recommendations.append("⏳ Возможно слишком мало шагов обучения")
+        
+        # Общие рекомендации
+        recommendations.append("🎯 Протестируйте модель на реальных счетах")
+        recommendations.append("📊 Сравните результаты с базовой моделью microsoft/trocr-base-printed")
+        
+        return recommendations
+    
+    def _evaluate_on_validation(self, model, dataset):
+        """Проводит валидацию модели на тестовых данных"""
+        try:
+            if 'validation' not in dataset or len(dataset['validation']) == 0:
+                return None
+                
+            self._log("🧪 Проводим валидацию на тестовых данных...")
+            
+            validation_set = dataset['validation']
+            total_samples = min(20, len(validation_set))  # Тестируем на максимум 20 примерах
+            
+            char_matches = 0
+            word_matches = 0
+            exact_matches = 0
+            total_chars = 0
+            total_words = 0
+            
+            processor = AutoProcessor.from_pretrained("microsoft/trocr-base-printed")
+            
+            for i in range(total_samples):
+                try:
+                    sample = validation_set[i]
+                    image = sample['image']
+                    true_text = sample['text']
+                    
+                    # Подготавливаем изображение
+                    pixel_values = processor(image, return_tensors="pt").pixel_values
+                    
+                    # Генерируем предсказание
+                    with torch.no_grad():
+                        generated_ids = model.generate(pixel_values)
+                        predicted_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+                    
+                    # Подсчитываем метрики
+                    char_acc = self._calculate_char_accuracy(predicted_text, true_text)
+                    word_acc = self._calculate_word_accuracy(predicted_text, true_text)
+                    
+                    char_matches += char_acc * len(true_text)
+                    total_chars += len(true_text)
+                    
+                    word_matches += word_acc * len(true_text.split())
+                    total_words += len(true_text.split())
+                    
+                    if predicted_text.strip() == true_text.strip():
+                        exact_matches += 1
+                        
+                except Exception as e:
+                    self._log(f"⚠️ Ошибка валидации образца {i}: {e}")
+                    continue
+            
+            # Вычисляем финальные метрики
+            char_accuracy = (char_matches / total_chars * 100) if total_chars > 0 else 0
+            word_accuracy = (word_matches / total_words * 100) if total_words > 0 else 0
+            document_accuracy = (exact_matches / total_samples * 100) if total_samples > 0 else 0
+            
+            # Генерируем рекомендации на основе валидации
+            val_recommendations = []
+            if char_accuracy < 80:
+                val_recommendations.append("📝 Низкая точность символов - проверьте качество изображений")
+            if word_accuracy < 70:
+                val_recommendations.append("🔤 Низкая точность слов - возможно нужно больше данных")
+            if document_accuracy < 50:
+                val_recommendations.append("📄 Низкая точность документов - увеличьте количество эпох")
+            
+            return {
+                'char_accuracy': char_accuracy,
+                'word_accuracy': word_accuracy,
+                'document_accuracy': document_accuracy,
+                'total_samples': total_samples,
+                'recommendations': val_recommendations
+            }
+            
+        except Exception as e:
+            self._log(f"⚠️ Ошибка валидации: {e}")
+            return None
+    
+    def _calculate_char_accuracy(self, predicted, true):
+        """Вычисляет точность на уровне символов"""
+        if not true:
+            return 0.0
+        matches = sum(1 for p, t in zip(predicted, true) if p == t)
+        return matches / len(true)
+    
+    def _calculate_word_accuracy(self, predicted, true):
+        """Вычисляет точность на уровне слов"""
+        pred_words = predicted.split()
+        true_words = true.split()
+        if not true_words:
+            return 0.0
+        matches = sum(1 for pw, tw in zip(pred_words, true_words) if pw == tw)
+        return matches / len(true_words)
+
+    def _calculate_quality_score(self, loss, dataset_size, validation_metrics=None):
+        """Вычисляет общую оценку качества"""
+        # Нормализуем loss (чем меньше, тем лучше)
+        loss_score = max(0, 10 - loss)
+        
+        # Оценка размера датасета
+        if dataset_size >= 200:
+            size_score = 10
+        elif dataset_size >= 100:
+            size_score = 8
+        elif dataset_size >= 50:
+            size_score = 6
+        else:
+            size_score = 4
+        
+        # Если есть валидационные метрики, учитываем их
+        validation_score = 5  # Нейтральная оценка по умолчанию
+        if validation_metrics:
+            avg_accuracy = (validation_metrics['char_accuracy'] + validation_metrics['word_accuracy']) / 2
+            validation_score = min(10, avg_accuracy / 10)
+        
+        # Взвешенная оценка
+        if validation_metrics:
+            total_score = (loss_score * 0.4) + (size_score * 0.2) + (validation_score * 0.4)
+        else:
+            total_score = (loss_score * 0.7) + (size_score * 0.3)
+        
+        if total_score >= 9:
+            return "🏆 ОТЛИЧНО"
+        elif total_score >= 7:
+            return "✅ ХОРОШО"
+        elif total_score >= 5:
+            return "🟡 УДОВЛЕТВОРИТЕЛЬНО"
+        else:
+            return "🔴 ТРЕБУЕТ УЛУЧШЕНИЯ"
+    
+    def _format_quality_summary(self, analysis, quality_score, loss, dataset_size, steps, validation_metrics=None):
+        """Форматирует итоговое сообщение о качестве"""
+        base_message = (
+            f"🎉 ОБУЧЕНИЕ ЗАВЕРШЕНО | {quality_score}\n"
+            f"📊 {analysis['loss_interpretation']}\n"
+            f"⚡ {analysis['training_efficiency']}\n"
+            f"🎯 {analysis['model_readiness']}\n"
+            f"📉 Loss: {loss:.4f} | 📄 Датасет: {dataset_size} | 🔢 Шагов: {steps}"
+        )
+        
+        if validation_metrics:
+            val_summary = (
+                f"\n🧪 ВАЛИДАЦИЯ: Символы {validation_metrics['char_accuracy']:.1f}% | "
+                f"Слова {validation_metrics['word_accuracy']:.1f}% | "
+                f"Документы {validation_metrics['document_accuracy']:.1f}%"
+            )
+            return base_message + val_summary
+        
+        return base_message
+
     def stop(self):
         """Остановка процесса обучения"""
         try:

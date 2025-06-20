@@ -5537,6 +5537,8 @@ class ModernTrainingDialog(QDialog):
             self.layoutlm_progress_bar.setValue(progress)
         elif current_tab == 1:  # Donut
             self.donut_progress_bar.setValue(progress)
+        elif current_tab == 2:  # TrOCR
+            self.on_trocr_training_progress(progress)
             
     def on_training_log(self, message):
         """Обработчик лог сообщений"""
@@ -5547,6 +5549,8 @@ class ModernTrainingDialog(QDialog):
             self.add_log_message(self.layoutlm_log, message)
         elif current_tab == 1:  # Donut
             self.add_log_message(self.donut_log, message)
+        elif current_tab == 2:  # TrOCR
+            self.on_trocr_training_log(message)
             
         # Парсим метрики из лог сообщения и обновляем вкладку мониторинга
         self.parse_and_update_metrics(message)
@@ -5617,6 +5621,40 @@ class ModernTrainingDialog(QDialog):
     def on_trocr_mode_changed(self):
         """Заглушка для совместимости"""
         pass
+        
+    def on_trocr_training_log(self, message):
+        """Обработчик лог сообщений для TrOCR"""
+        # Добавляем в лог TrOCR
+        self.add_log_message(self.trocr_log, message)
+        
+        # Обновляем информацию о метриках TrOCR если есть специальные данные
+        if "📊" in message and ("Loss" in message or "Эпоха" in message):
+            # Это сообщение с метриками - обновляем специальную область
+            self.update_trocr_training_info(message)
+    
+    def on_trocr_training_progress(self, progress):
+        """Обработчик прогресса обучения для TrOCR"""
+        if hasattr(self, 'trocr_progress_bar'):
+            self.trocr_progress_bar.setValue(progress)
+            
+    def update_trocr_training_info(self, metrics_message):
+        """Обновляет информацию о TrOCR метриках"""
+        try:
+            if hasattr(self, 'trocr_training_info'):
+                # Обновляем виджет с метриками
+                self.trocr_training_info.setText(metrics_message)
+                self.trocr_training_info.setStyleSheet("""
+                    QLabel {
+                        background-color: #e8f5e8;
+                        border: 1px solid #27ae60;
+                        border-radius: 4px;
+                        padding: 8px;
+                        color: #2d5234;
+                        font-weight: bold;
+                    }
+                """)
+        except Exception as e:
+            print(f"Ошибка обновления TrOCR метрик: {e}")
 
 
     

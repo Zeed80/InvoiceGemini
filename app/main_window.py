@@ -421,8 +421,28 @@ class MainWindow(QMainWindow):
         self.trocr_model_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.trocr_model_selector.currentIndexChanged.connect(self.on_trocr_model_changed)
         self.trocr_model_selector.setToolTip("Выберите модель TrOCR для использования")
+        
+        # Кнопка обновления списка моделей
+        self.trocr_refresh_button = QPushButton("🔄")
+        self.trocr_refresh_button.setFixedSize(24, 24)
+        self.trocr_refresh_button.clicked.connect(self.refresh_trained_models)
+        self.trocr_refresh_button.setToolTip("Обновить список дообученных моделей")
+        self.trocr_refresh_button.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+        """)
+        
         trocr_model_layout.addWidget(self.trocr_model_label)
         trocr_model_layout.addWidget(self.trocr_model_selector, 1)
+        trocr_model_layout.addWidget(self.trocr_refresh_button)
         trocr_selection_layout.addLayout(trocr_model_layout)
         
         # TrOCR status indicator - компактный
@@ -2484,18 +2504,52 @@ Analyze:"""
         # Проверяем наличие дообученных моделей
         trained_models_path = os.path.join(app_config.TRAINED_MODELS_PATH, 'trocr')
         if os.path.exists(trained_models_path):
-            trained_models = [d for d in os.listdir(trained_models_path) 
-                            if os.path.isdir(os.path.join(trained_models_path, d))]
+            trained_models = []
+            
+            for d in os.listdir(trained_models_path):
+                model_dir = os.path.join(trained_models_path, d)
+                if os.path.isdir(model_dir):
+                    # Проверяем наличие финальной модели
+                    final_model_path = os.path.join(model_dir, 'final_model')
+                    if os.path.exists(final_model_path):
+                        # Читаем метаданные для отображения качества
+                        metadata_path = os.path.join(final_model_path, 'training_metadata.json')
+                        quality_info = ""
+                        if os.path.exists(metadata_path):
+                            try:
+                                import json
+                                with open(metadata_path, 'r', encoding='utf-8') as f:
+                                    metadata = json.load(f)
+                                    final_loss = metadata.get('final_loss', 0.0)
+                                    if final_loss < 1.0:
+                                        quality_info = " 🔥"
+                                    elif final_loss < 2.0:
+                                        quality_info = " ✅"
+                                    elif final_loss < 4.0:
+                                        quality_info = " 🟡"
+                                    else:
+                                        quality_info = " 🟠"
+                            except:
+                                pass
+                        
+                        trained_models.append({
+                            'name': d,
+                            'path': final_model_path,
+                            'quality': quality_info,
+                            'mtime': os.path.getmtime(model_dir)
+                        })
             
             if trained_models:
+                # Сортируем по дате (новые сверху)
+                trained_models.sort(key=lambda x: x['mtime'], reverse=True)
+                
                 # Добавляем разделитель
                 self.trocr_model_selector.insertSeparator(self.trocr_model_selector.count())
                 
                 # Добавляем дообученные модели
-                for model_name in trained_models:
-                    display_text = f"🎓 {model_name} (Дообученная)"
-                    model_path = os.path.join(trained_models_path, model_name)
-                    self.trocr_model_selector.addItem(display_text, model_path)
+                for model_info in trained_models:
+                    display_text = f"🎓 {model_info['name']}{model_info['quality']} (Дообученная)"
+                    self.trocr_model_selector.addItem(display_text, model_info['path'])
         
         # Восстанавливаем последний выбор
         last_model = settings_manager.get_string('Models', 'trocr_model_id', 'microsoft/trocr-base-printed')
@@ -3041,7 +3095,34 @@ Analyze:"""
             gemini_processor=gemini_processor,
             parent=self
         )
-        training_dialog.exec() 
+        
+        # Подключаем сигнал для обновления списка TrOCR моделей после обучения
+        try:
+            training_dialog.finished.connect(self._on_training_dialog_finished)
+        except AttributeError:
+            # Если сигнала нет, игнорируем
+            pass
+            
+        training_dialog.exec()
+        
+    def _on_training_dialog_finished(self):
+        """Обработчик завершения диалога обучения - обновляет списки моделей"""
+        try:
+            # Обновляем список TrOCR моделей для отображения новых дообученных моделей
+            self.populate_trocr_models()
+            print("✅ Список TrOCR моделей обновлен после завершения обучения")
+        except Exception as e:
+            print(f"❌ Ошибка обновления списка TrOCR моделей: {e}")
+    
+    def refresh_trained_models(self):
+        """Публичный метод для обновления списков обученных моделей"""
+        try:
+            self.populate_trocr_models()
+            self.status_bar.showMessage("Списки моделей обновлены", 3000)
+            print("✅ Списки моделей принудительно обновлены")
+        except Exception as e:
+            self.status_bar.showMessage(f"Ошибка обновления моделей: {e}", 5000)
+            print(f"❌ Ошибка принудительного обновления моделей: {e}")
 
     def setup_results_table(self):
         """Настраивает таблицу результатов на основе полей из FieldManager."""
