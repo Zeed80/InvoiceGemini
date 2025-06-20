@@ -25,6 +25,9 @@ APP_VERSION = "0.9.6"
 ORGANIZATION_NAME = "ТехноИнновации"
 SETTINGS_FILE = "settings.ini"
 
+# APP Description for better documentation
+APP_DESCRIPTION = "Приложение для автоматического извлечения данных из счетов-фактур с использованием ИИ"
+
 # Настройки компании-получателя по умолчанию
 DEFAULT_COMPANY_RECEIVER_NAME = 'ООО "Рога и копыта"'
 

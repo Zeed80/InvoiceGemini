@@ -1,0 +1,22 @@
+{
+  "6dab8735e6faefdddc4c30c99ce0bce32df27c5a12837fcdd80ac6a842ad333e_trocr": {
+    "file_hash": "6dab8735e6faefdddc4c30c99ce0bce32df27c5a12837fcdd80ac6a842ad333e",
+    "model_type": "trocr",
+    "result": {},
+    "file_path": "C:\\Users\\zeed\\AppData\\Local\\Temp\\tmpjpwbwtj_\\temp_pdf_page.jpg",
+    "file_size": 294861,
+    "created_at": "2025-06-20T07:29:02.197517",
+    "last_accessed": "2025-06-20T07:29:02.197517",
+    "access_count": 1
+  },
+  "38c7e1b2422841bfc76835d5e31b3e3aa0848c3a3e1b50904a50f73f45bfd3e3_trocr": {
+    "file_hash": "38c7e1b2422841bfc76835d5e31b3e3aa0848c3a3e1b50904a50f73f45bfd3e3",
+    "model_type": "trocr",
+    "result": {},
+    "file_path": "C:\\Users\\zeed\\AppData\\Local\\Temp\\tmpob5_pa9p\\temp_pdf_page.jpg",
+    "file_size": 310935,
+    "created_at": "2025-06-20T07:38:29.866454",
+    "last_accessed": "2025-06-20T07:38:29.866454",
+    "access_count": 1
+  }
+}

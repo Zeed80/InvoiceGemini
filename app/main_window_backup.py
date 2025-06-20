@@ -6,12 +6,12 @@ import sys
 import json
 from pathlib import Path
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter,
-    QLabel, QRadioButton, QPushButton, QComboBox, QTextEdit, QScrollArea,
-    QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QSizePolicy, QApplication,
-    QMenuBar, QMenu, QFileDialog, QMessageBox, QProgressBar,
-    QStatusBar, QSpacerItem, QDialog,
-    QTabWidget
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QPushButton, QRadioButton, QLabel, QGroupBox, 
+    QScrollArea, QFileDialog, QProgressBar, QComboBox,
+    QStatusBar, QSplitter, QMenuBar, QMenu, QApplication,
+    QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QTextEdit,
+    QSpacerItem, QSizePolicy, QFrame, QMessageBox, QGridLayout
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QUrl, QTimer, QThread
 from PyQt6.QtGui import QPixmap, QImage, QAction, QIcon, QFont
@@ -41,86 +41,9 @@ from .core.cache_manager import CacheManager
 from .core.retry_manager import RetryManager
 from .core.backup_manager import BackupManager
 from .ui.components.file_selector import FileSelector
-from .ui.components.file_list_widget import FileListWidget, ProcessingStatus, FileProcessingInfo
-from .ui.components.file_viewer_dialog import FileViewerDialog
-# from .ui.components.progress_indicator import ProgressIndicator  # Не используется
+from .ui.components.progress_indicator import ProgressIndicator
 from .ui.components.batch_processor_adapter import BatchProcessor
 from .ui.components.export_manager import ExportManager
-
-
-class CollapsibleGroup(QWidget):
-    """Сворачиваемая группа виджетов для экономии места."""
-    
-    def __init__(self, title="", parent=None):
-        super().__init__(parent)
-        self.expanded = True
-        
-        # Main layout
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(2)
-        
-        # Header with toggle button
-        self.header_frame = QFrame()
-        self.header_frame.setFrameStyle(QFrame.Shape.Box)
-        self.header_frame.setStyleSheet("QFrame { background-color: #f0f0f0; border: 1px solid #ccc; }")
-        
-        header_layout = QHBoxLayout(self.header_frame)
-        header_layout.setContentsMargins(8, 4, 8, 4)
-        
-        # Toggle button (arrow)
-        self.toggle_button = QPushButton("▼")
-        self.toggle_button.setFixedSize(20, 20)
-        self.toggle_button.setStyleSheet("""
-            QPushButton {
-                border: none;
-                background: transparent;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-                border-radius: 10px;
-            }
-        """)
-        self.toggle_button.clicked.connect(self.toggle_expanded)
-        
-        # Title label
-        self.title_label = QLabel(title)
-        self.title_label.setStyleSheet("font-weight: bold; font-size: 12px;")
-        
-        header_layout.addWidget(self.toggle_button)
-        header_layout.addWidget(self.title_label)
-        header_layout.addStretch()
-        
-        # Content widget
-        self.content_widget = QWidget()
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(8, 4, 8, 4)
-        self.content_layout.setSpacing(4)
-        
-        # Add to main layout
-        self.main_layout.addWidget(self.header_frame)
-        self.main_layout.addWidget(self.content_widget)
-        
-    def toggle_expanded(self):
-        """Переключает состояние развернутости."""
-        self.expanded = not self.expanded
-        self.content_widget.setVisible(self.expanded)
-        self.toggle_button.setText("▼" if self.expanded else "►")
-        
-    def add_widget(self, widget):
-        """Добавляет виджет в контент."""
-        self.content_layout.addWidget(widget)
-        
-    def add_layout(self, layout):
-        """Добавляет layout в контент."""
-        self.content_layout.addLayout(layout)
-        
-    def set_expanded(self, expanded):
-        """Устанавливает состояние развернутости."""
-        if self.expanded != expanded:
-            self.toggle_expanded()
 
 
 class MainWindow(QMainWindow):
@@ -166,7 +89,7 @@ class MainWindow(QMainWindow):
         
         # NEW: Initialize UI components
         self.file_selector = None  # Will be initialized in init_ui
-        # self.progress_indicator = None  # Не используется, заменен на progress_bar
+        self.progress_indicator = None  # Will be initialized in init_ui
         self.batch_processor = None  # Will be initialized after UI
         self.export_manager = None  # Will be initialized after UI
         
@@ -194,22 +117,28 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(200, self._init_post_ui_components)
     
     def init_ui(self):
-        """Инициализация пользовательского интерфейса."""
+        """Инициализация пользовательского интерфейса с responsive layout."""
         self.setWindowTitle(f"{app_config.APP_NAME} v{app_config.APP_VERSION}")
         self.setMinimumSize(1024, 768)
         
         # Создаем центральный виджет и главную компоновку
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
         
         # Создаем сплиттер для разделения экрана
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(8)
         
-        # Левая часть - для списка файлов
-        self.files_widget = QWidget()
-        files_layout = QVBoxLayout(self.files_widget)
+        # Левая часть - для изображения
+        self.image_widget = QWidget()
+        self.image_widget.setMinimumWidth(400)
+        image_layout = QVBoxLayout(self.image_widget)
+        image_layout.setContentsMargins(4, 4, 4, 4)
+        image_layout.setSpacing(8)
         
-        # NEW: Use FileSelector component for selection
+        # NEW: Use FileSelector component
         self.file_selector = FileSelector()
         self.file_selector.signals.file_selected.connect(self.on_file_selected)
         self.file_selector.signals.folder_selected.connect(self.on_folder_selected)
@@ -219,287 +148,114 @@ class MainWindow(QMainWindow):
         self.select_folder_button = self.file_selector.select_folder_button
         self.selected_path_label = self.file_selector.selection_label
         
-        # NEW: File list widget with processing indicators
-        self.file_list_widget = FileListWidget()
-        self.file_list_widget.file_selected.connect(self.on_file_list_selection_changed)
-        self.file_list_widget.process_file_requested.connect(self.on_process_single_file_requested)
-        self.file_list_widget.process_all_requested.connect(self.on_process_all_files_requested)
-        self.file_list_widget.filename_clicked.connect(self.on_filename_clicked)
-        
-        # Добавляем виджеты в левую часть
-        files_layout.addWidget(self.file_selector)
-        files_layout.addWidget(self.file_list_widget, 1)  # Растягивать при изменении размера окна
-        
-        # Keep image display for backward compatibility (hidden by default)
-        self.image_widget = QWidget()
-        self.image_widget.setVisible(False)  # Скрываем по умолчанию
-        image_layout = QVBoxLayout(self.image_widget)
-        
         # Область отображения изображения
         image_group = QGroupBox("Изображение")
         scroll_layout = QVBoxLayout()
+        scroll_layout.setContentsMargins(4, 4, 4, 4)
         
         self.image_scroll = QScrollArea()
         self.image_scroll.setWidgetResizable(True)
+        self.image_scroll.setMinimumHeight(300)
         self.image_label = QLabel("Изображение не загружено")
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_scroll.setWidget(self.image_label)
         
         scroll_layout.addWidget(self.image_scroll)
         image_group.setLayout(scroll_layout)
-        image_layout.addWidget(image_group, 1)
         
-        # Правая часть - для выбора модели и результатов с поддержкой прокрутки
-        self.controls_scroll = QScrollArea()
-        self.controls_scroll.setWidgetResizable(True)
-        self.controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Добавляем виджеты в левую часть с правильными stretch factors
+        image_layout.addWidget(self.file_selector, 0)  # Не растягивать
+        image_layout.addWidget(image_group, 1)  # Растягивать при изменении размера окна
         
+        # Правая часть - для выбора модели и результатов
         self.controls_widget = QWidget()
+        self.controls_widget.setMinimumWidth(450)
+        self.controls_widget.setMaximumWidth(600)  # Ограничиваем максимальную ширину
         controls_layout = QVBoxLayout(self.controls_widget)
+        controls_layout.setContentsMargins(4, 4, 4, 4)
+        controls_layout.setSpacing(8)
         
-        # Устанавливаем содержимое в scroll area
-        self.controls_scroll.setWidget(self.controls_widget)
+        # Создаем scroll area для правой панели для лучшей адаптивности
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         
-        # Компактная секция выбора модели
+        controls_content = QWidget()
+        controls_content_layout = QVBoxLayout(controls_content)
+        controls_content_layout.setContentsMargins(4, 4, 4, 4)
+        controls_content_layout.setSpacing(8)
+        
+        # Виджет для выбора модели с улучшенным layout
         model_group = QGroupBox("Выбор модели")
         model_layout = QVBoxLayout()
-        model_layout.setSpacing(4)  # Уменьшаем отступы
+        model_layout.setSpacing(6)
         
-        # === ОБЛАЧНЫЕ МОДЕЛИ - СВОРАЧИВАЕМАЯ ГРУППА ===
-        self.cloud_models_group = CollapsibleGroup("☁️ Облачные модели")
-        self.cloud_models_group.set_expanded(False)  # По умолчанию свернута
+        # === ОБЛАЧНЫЕ МОДЕЛИ ===
+        cloud_section_label = QLabel("☁️ Облачные модели")
+        cloud_section_label.setStyleSheet("font-weight: bold; color: #2196F3; font-size: 14px; padding: 4px 0px;")
+        model_layout.addWidget(cloud_section_label)
         
-        # Gemini - компактная версия
-        gemini_layout = QHBoxLayout()
-        gemini_layout.setSpacing(4)
-        self.gemini_radio = QRadioButton("Google Gemini")
-        self.gemini_radio.toggled.connect(self.on_model_changed)
-        self.gemini_prompt_button = QPushButton("📝")
-        self.gemini_prompt_button.setFixedSize(24, 24)
-        self.gemini_prompt_button.clicked.connect(lambda: self.show_model_prompt('gemini'))
-        self.gemini_prompt_button.setToolTip("Показать промпт")
-        gemini_layout.addWidget(self.gemini_radio)
-        gemini_layout.addWidget(self.gemini_prompt_button)
-        self.cloud_models_group.add_layout(gemini_layout)
+        # Создаем responsive layout для облачных моделей
+        cloud_models_widget = self._create_cloud_models_section()
+        model_layout.addWidget(cloud_models_widget)
         
-        # Gemini sub-model selector - компактный
-        gemini_sub_layout = QHBoxLayout()
-        gemini_sub_layout.setContentsMargins(16, 0, 0, 0)
-        gemini_sub_layout.setSpacing(4)
-        self.gemini_sub_model_label = QLabel("Модель:")
-        self.gemini_sub_model_label.setMinimumWidth(50)
-        self.gemini_model_selector = QComboBox()
-        self.gemini_model_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.gemini_model_selector.currentIndexChanged.connect(self.on_gemini_sub_model_changed)
-        gemini_sub_layout.addWidget(self.gemini_sub_model_label)
-        gemini_sub_layout.addWidget(self.gemini_model_selector, 1)
-        self.cloud_models_group.add_layout(gemini_sub_layout)
+
         
-        # Cloud LLM Provider Selection - компактная версия
-        cloud_llm_layout = QHBoxLayout()
-        cloud_llm_layout.setSpacing(4)
-        self.cloud_llm_radio = QRadioButton("Другие облачные LLM")
-        self.cloud_llm_radio.toggled.connect(self.on_model_changed)
-        self.cloud_llm_prompt_button = QPushButton("📝")
-        self.cloud_llm_prompt_button.setFixedSize(24, 24)
-        self.cloud_llm_prompt_button.clicked.connect(lambda: self.show_model_prompt('cloud_llm'))
-        self.cloud_llm_prompt_button.setToolTip("Показать промпт")
-        cloud_llm_layout.addWidget(self.cloud_llm_radio)
-        cloud_llm_layout.addWidget(self.cloud_llm_prompt_button)
-        self.cloud_models_group.add_layout(cloud_llm_layout)
+        # Разделитель между облачными и локальными
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("color: #ccc; margin: 8px 0;")
+        model_layout.addWidget(separator)
         
-        # Cloud provider and model selection - компактная версия
-        cloud_selection_layout = QVBoxLayout()
-        cloud_selection_layout.setContentsMargins(16, 0, 0, 0)
-        cloud_selection_layout.setSpacing(2)
+        # === ЛОКАЛЬНЫЕ МОДЕЛИ ===
+        local_section_label = QLabel("🖥️ Локальные модели")
+        local_section_label.setStyleSheet("font-weight: bold; color: #4CAF50; font-size: 14px; padding: 4px 0px;")
+        model_layout.addWidget(local_section_label)
         
-        cloud_provider_layout = QHBoxLayout()
-        cloud_provider_layout.setSpacing(4)
-        self.cloud_provider_label = QLabel("Провайдер:")
-        self.cloud_provider_label.setMinimumWidth(60)
-        self.cloud_provider_selector = QComboBox()
-        self.cloud_provider_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.cloud_provider_selector.currentIndexChanged.connect(self.on_cloud_provider_changed)
-        cloud_provider_layout.addWidget(self.cloud_provider_label)
-        cloud_provider_layout.addWidget(self.cloud_provider_selector, 1)
-        cloud_selection_layout.addLayout(cloud_provider_layout)
+        # Создаем responsive layout для локальных моделей
+        local_models_widget = self._create_local_models_section()
+        model_layout.addWidget(local_models_widget)
         
-        cloud_model_layout = QHBoxLayout()
-        cloud_model_layout.setSpacing(4)
-        self.cloud_model_label = QLabel("Модель:")
-        self.cloud_model_label.setMinimumWidth(60)
-        self.cloud_model_selector = QComboBox()
-        self.cloud_model_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.cloud_model_selector.currentIndexChanged.connect(self.on_cloud_model_changed)
-        cloud_model_layout.addWidget(self.cloud_model_label)
-        cloud_model_layout.addWidget(self.cloud_model_selector, 1)
-        cloud_selection_layout.addLayout(cloud_model_layout)
-        
-        # Cloud status indicator - компактный
-        self.cloud_llm_status_label = QLabel("Не настроено")
-        self.cloud_llm_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 1px 0;")
-        cloud_selection_layout.addWidget(self.cloud_llm_status_label)
-        
-        self.cloud_models_group.add_layout(cloud_selection_layout)
-        model_layout.addWidget(self.cloud_models_group)
-        
-        # Populate Gemini models
-        self.populate_gemini_models()
-        
-        # === ЛОКАЛЬНЫЕ МОДЕЛИ - СВОРАЧИВАЕМАЯ ГРУППА ===
-        self.local_models_group = CollapsibleGroup("🖥️ Локальные модели")
-        self.local_models_group.set_expanded(True)  # По умолчанию развернута
-        
-        # LayoutLM - компактная версия
-        layoutlm_layout = QHBoxLayout()
-        layoutlm_layout.setSpacing(4)
-        self.layoutlm_radio = QRadioButton("LayoutLMv3")
-        self.layoutlm_radio.setChecked(True)  # По умолчанию выбрана
-        self.layoutlm_radio.toggled.connect(self.on_model_changed)
-        self.layoutlm_prompt_button = QPushButton("📝")
-        self.layoutlm_prompt_button.setFixedSize(24, 24)
-        self.layoutlm_prompt_button.clicked.connect(lambda: self.show_model_prompt('layoutlm'))
-        self.layoutlm_prompt_button.setToolTip("Показать промпт")
-        layoutlm_layout.addWidget(self.layoutlm_radio)
-        layoutlm_layout.addWidget(self.layoutlm_prompt_button)
-        self.local_models_group.add_layout(layoutlm_layout)
-        
-        # Donut - компактная версия
-        donut_layout = QHBoxLayout()
-        donut_layout.setSpacing(4)
-        self.donut_radio = QRadioButton("Donut")
-        self.donut_radio.toggled.connect(self.on_model_changed)
-        self.donut_prompt_button = QPushButton("📝")
-        self.donut_prompt_button.setFixedSize(24, 24)
-        self.donut_prompt_button.clicked.connect(lambda: self.show_model_prompt('donut'))
-        self.donut_prompt_button.setToolTip("Показать промпт")
-        donut_layout.addWidget(self.donut_radio)
-        donut_layout.addWidget(self.donut_prompt_button)
-        self.local_models_group.add_layout(donut_layout)
-        
-        # TrOCR - компактная версия
-        trocr_layout = QHBoxLayout()
-        trocr_layout.setSpacing(4)
-        self.trocr_radio = QRadioButton("TrOCR (Microsoft)")
-        self.trocr_radio.toggled.connect(self.on_model_changed)
-        self.trocr_prompt_button = QPushButton("📝")
-        self.trocr_prompt_button.setFixedSize(24, 24)
-        self.trocr_prompt_button.clicked.connect(lambda: self.show_model_prompt('trocr'))
-        self.trocr_prompt_button.setToolTip("Показать промпт")
-        trocr_layout.addWidget(self.trocr_radio)
-        trocr_layout.addWidget(self.trocr_prompt_button)
-        self.local_models_group.add_layout(trocr_layout)
-        
-        # TrOCR model selection - компактная версия
-        trocr_selection_layout = QVBoxLayout()
-        trocr_selection_layout.setContentsMargins(16, 0, 0, 0)
-        trocr_selection_layout.setSpacing(2)
-        
-        trocr_model_layout = QHBoxLayout()
-        trocr_model_layout.setSpacing(4)
-        self.trocr_model_label = QLabel("Модель:")
-        self.trocr_model_label.setMinimumWidth(50)
-        self.trocr_model_selector = QComboBox()
-        self.trocr_model_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.trocr_model_selector.currentIndexChanged.connect(self.on_trocr_model_changed)
-        self.trocr_model_selector.setToolTip("Выберите модель TrOCR для использования")
-        trocr_model_layout.addWidget(self.trocr_model_label)
-        trocr_model_layout.addWidget(self.trocr_model_selector, 1)
-        trocr_selection_layout.addLayout(trocr_model_layout)
-        
-        # TrOCR status indicator - компактный
-        self.trocr_status_label = QLabel("Не загружено")
-        self.trocr_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 1px 0;")
-        trocr_selection_layout.addWidget(self.trocr_status_label)
-        
-        self.local_models_group.add_layout(trocr_selection_layout)
-        
-        # Local LLM Models Section - компактная версия
-        local_llm_layout = QHBoxLayout()
-        local_llm_layout.setSpacing(4)
-        self.local_llm_radio = QRadioButton("Локальные LLM (Ollama)")
-        self.local_llm_radio.toggled.connect(self.on_model_changed)
-        self.local_llm_prompt_button = QPushButton("📝")
-        self.local_llm_prompt_button.setFixedSize(24, 24)
-        self.local_llm_prompt_button.clicked.connect(lambda: self.show_model_prompt('local_llm'))
-        self.local_llm_prompt_button.setToolTip("Показать промпт")
-        local_llm_layout.addWidget(self.local_llm_radio)
-        local_llm_layout.addWidget(self.local_llm_prompt_button)
-        self.local_models_group.add_layout(local_llm_layout)
-        
-        # Local provider and model selection - компактная версия
-        local_selection_layout = QVBoxLayout()
-        local_selection_layout.setContentsMargins(16, 0, 0, 0)
-        local_selection_layout.setSpacing(2)
-        
-        local_provider_layout = QHBoxLayout()
-        local_provider_layout.setSpacing(4)
-        self.local_provider_label = QLabel("Провайдер:")
-        self.local_provider_label.setMinimumWidth(60)
-        self.local_provider_selector = QComboBox()
-        self.local_provider_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.local_provider_selector.currentIndexChanged.connect(self.on_local_provider_changed)
-        local_provider_layout.addWidget(self.local_provider_label)
-        local_provider_layout.addWidget(self.local_provider_selector, 1)
-        local_selection_layout.addLayout(local_provider_layout)
-        
-        local_model_layout = QHBoxLayout()
-        local_model_layout.setSpacing(4)
-        self.local_model_label = QLabel("Модель:")
-        self.local_model_label.setMinimumWidth(60)
-        self.local_model_selector = QComboBox()
-        self.local_model_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.local_model_selector.currentIndexChanged.connect(self.on_local_model_changed)
-        local_model_layout.addWidget(self.local_model_label)
-        local_model_layout.addWidget(self.local_model_selector, 1)
-        local_selection_layout.addLayout(local_model_layout)
-        
-        # Local status indicator - компактный
-        self.local_llm_status_label = QLabel("Не настроено")
-        self.local_llm_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 1px 0;")
-        local_selection_layout.addWidget(self.local_llm_status_label)
-        
-        self.local_models_group.add_layout(local_selection_layout)
-        model_layout.addWidget(self.local_models_group)
+
 
         model_group.setLayout(model_layout)
         
-        # Компактная секция OCR
-        ocr_lang_group = QGroupBox("Язык OCR")
-        ocr_lang_layout = QVBoxLayout()
-        ocr_lang_layout.setContentsMargins(8, 6, 8, 6)  # Уменьшенные отступы
+        # Виджет для выбора языка OCR с улучшенным layout
+        ocr_lang_group = QGroupBox("Язык OCR (для LayoutLMv3)")
+        ocr_lang_layout = QHBoxLayout()
+        ocr_lang_layout.setContentsMargins(8, 8, 8, 8)
+        
+        ocr_lang_label = QLabel("Язык:")
+        ocr_lang_label.setMinimumWidth(60)
         
         self.ocr_lang_combo = QComboBox()
-        self.ocr_lang_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.ocr_lang_combo.addItem("English", "eng")
         self.ocr_lang_combo.addItem("Русский", "rus")
         self.ocr_lang_combo.addItem("English + Русский", "eng+rus")
         self.ocr_lang_combo.currentIndexChanged.connect(self.on_ocr_language_changed)
+        self.ocr_lang_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         
-        ocr_lang_layout.addWidget(self.ocr_lang_combo)
+        ocr_lang_layout.addWidget(ocr_lang_label)
+        ocr_lang_layout.addWidget(self.ocr_lang_combo, 1)
         ocr_lang_group.setLayout(ocr_lang_layout)
         
-        # === КОМПАКТНАЯ СЕКЦИЯ ОБРАБОТКИ ===
-        process_section = QWidget()
-        process_layout = QVBoxLayout(process_section)
-        process_layout.setContentsMargins(0, 0, 0, 0)
-        process_layout.setSpacing(4)  # Минимальные отступы
-        
-        # Универсальная кнопка Обработать/Отменить
-        self.process_button = QPushButton("🚀 Обработать")
-        self.process_button.setEnabled(False)
-        self.process_button.clicked.connect(self.on_process_button_clicked)
-        self.process_button.setMinimumHeight(28)  # Еще более компактная высота
+        # Кнопка обработки с лучшей адаптивностью
+        self.process_button = QPushButton("Обработать")
+        self.process_button.setEnabled(False)  # Отключаем до загрузки изображения
+        self.process_button.clicked.connect(self.process_image)
+        self.process_button.setMinimumHeight(40)
+        self.process_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.process_button.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
                 font-weight: bold;
+                font-size: 14px;
                 border: none;
-                border-radius: 4px;
-                font-size: 12px;
-                padding: 4px 8px;
+                border-radius: 6px;
+                padding: 8px 16px;
             }
             QPushButton:hover {
                 background-color: #45a049;
@@ -508,170 +264,85 @@ class MainWindow(QMainWindow):
                 background-color: #cccccc;
                 color: #666666;
             }
-            QPushButton[mode="cancel"] {
-                background-color: #f44336;
-            }
-            QPushButton[mode="cancel"]:hover {
-                background-color: #d32f2f;
-            }
         """)
         
-        # Компактный прогресс-бар (без всего остального)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setMaximumHeight(12)  # Очень узкий прогресс-бар
-        self.progress_bar.setTextVisible(False)  # Без текста для экономии места
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #ddd;
-                border-radius: 6px;
-                background-color: #f5f5f5;
-                max-height: 12px;
-            }
-            QProgressBar::chunk {
-                background-color: #4CAF50;
-                border-radius: 5px;
-            }
-        """)
+        # NEW: Use ProgressIndicator component
+        self.progress_indicator = ProgressIndicator()
+        # For backward compatibility - используем встроенный progress_bar компонента
+        self.progress_bar = self.progress_indicator.progress_bar
         
-        # Статус обработки (компактный)
-        self.process_status_label = QLabel("")
-        self.process_status_label.setVisible(False)
-        self.process_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 2px 0;")
-        self.process_status_label.setWordWrap(True)
-        
-        # Добавляем в компактную секцию
-        process_layout.addWidget(self.process_button)
-        process_layout.addWidget(self.progress_bar)
-        process_layout.addWidget(self.process_status_label)
-        
-        # Переменные состояния обработки
-        self.is_processing = False
-        self.processing_thread = None
-        
-        # Компактная область результатов
+        # Область результатов с таблицей
         results_group = QGroupBox("Результаты")
         results_layout = QVBoxLayout()
-        results_layout.setContentsMargins(8, 6, 8, 6)  # Уменьшенные отступы
-        results_layout.setSpacing(4)  # Уменьшенные промежутки
+        results_layout.setContentsMargins(8, 8, 8, 8)
+        results_layout.setSpacing(8)
         
-        # Компактный заголовок с кнопками
+        # Заголовок таблицы с адаптивными кнопками
         table_header_layout = QHBoxLayout()
-        table_header_layout.setSpacing(4)
-        table_header_label = QLabel("Данные:")
-        table_header_label.setStyleSheet("font-weight: bold; font-size: 11px;")
-        table_header_layout.addWidget(table_header_label)
+        table_header_layout.setSpacing(8)
         
-        # Компактная кнопка управления полями
+        table_header_label = QLabel("Извлечённые данные:")
+        table_header_label.setStyleSheet("font-weight: bold; font-size: 12px;")
+        table_header_layout.addWidget(table_header_label, 1)  # Растягивается
+        
+        # Кнопка управления полями (компактная)
         self.edit_fields_button = QPushButton("🔧")
-        self.edit_fields_button.setFixedSize(24, 24)
         self.edit_fields_button.clicked.connect(self.show_field_manager_dialog)
-        self.edit_fields_button.setToolTip("Управление полями")
+        self.edit_fields_button.setToolTip("Управление полями таблицы и синхронизация промптов")
+        self.edit_fields_button.setFixedSize(30, 30)
         self.edit_fields_button.setStyleSheet("""
             QPushButton {
-                background-color: #2196F3;
+                background-color: #607D8B;
                 color: white;
                 border: none;
-                border-radius: 3px;
-                font-size: 10px;
+                border-radius: 4px;
+                font-size: 12px;
             }
             QPushButton:hover {
-                background-color: #1976D2;
+                background-color: #546E7A;
             }
         """)
-        table_header_layout.addWidget(self.edit_fields_button)
-        table_header_layout.addStretch()
+        table_header_layout.addWidget(self.edit_fields_button, 0)  # Не растягивается
         
         results_layout.addLayout(table_header_layout)
         
         # Создаем таблицу для отображения результатов
         self.results_table = QTableWidget()
+        self.results_table.setMinimumHeight(200)
+        self.results_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
         # Настраиваем таблицу исходя из полей в настройках
         self.setup_results_table()
         
-        results_layout.addWidget(self.results_table)
+        results_layout.addWidget(self.results_table, 1)  # Растягивается
         
-        # Компактные кнопки сохранения в Grid Layout
-        save_buttons_grid = QGridLayout()
-        save_buttons_grid.setSpacing(4)
-        
-        # Общий стиль для кнопок
-        button_style = """
-            QPushButton {
-                color: white;
-                font-weight: bold;
-                border: none;
-                border-radius: 3px;
-                font-size: 10px;
-                padding: 4px 6px;
-                min-height: 20px;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-                color: #666666;
-            }
-        """
-        
-        # Template Designer button - компактная версия
-        self.template_designer_button = QPushButton("🎨 Шаблоны")
-        self.template_designer_button.clicked.connect(self.show_template_designer)
-        self.template_designer_button.setToolTip("Дизайнер шаблонов")
-        self.template_designer_button.setStyleSheet(button_style + "QPushButton { background-color: #9C27B0; } QPushButton:hover { background-color: #8E24AA; }")
-        save_buttons_grid.addWidget(self.template_designer_button, 0, 0)
-        
-        # Preview button - компактная версия
-        self.preview_button = QPushButton("🔍 Просмотр")
-        self.preview_button.setEnabled(False)
-        self.preview_button.clicked.connect(self.show_preview_dialog)
-        self.preview_button.setStyleSheet(button_style + "QPushButton { background-color: #FF9800; } QPushButton:hover { background-color: #F57C00; }")
-        save_buttons_grid.addWidget(self.preview_button, 0, 1)
-        
-        # Save JSON button - компактная версия
-        self.save_button = QPushButton("💾 JSON")
-        self.save_button.setEnabled(False)
-        self.save_button.clicked.connect(self.save_results)
-        self.save_button.setStyleSheet(button_style + "QPushButton { background-color: #4CAF50; } QPushButton:hover { background-color: #43A047; }")
-        save_buttons_grid.addWidget(self.save_button, 1, 0)
-        
-        # Save Excel button - компактная версия
-        self.save_excel_button = QPushButton("📊 Excel")
-        self.save_excel_button.setEnabled(False)
-        self.save_excel_button.clicked.connect(self.save_excel)
-        self.save_excel_button.setStyleSheet(button_style + "QPushButton { background-color: #2196F3; } QPushButton:hover { background-color: #1976D2; }")
-        save_buttons_grid.addWidget(self.save_excel_button, 1, 1)
-        
-        results_layout.addLayout(save_buttons_grid)
+        # Адаптивные кнопки сохранения результатов
+        save_buttons_layout = self._create_save_buttons_layout()
+        results_layout.addLayout(save_buttons_layout)
         
         results_group.setLayout(results_layout)
         
-        # Добавляем виджеты в правую часть с компактным spacing
-        controls_layout.setSpacing(6)  # Уменьшенные отступы между секциями
-        controls_layout.setContentsMargins(4, 4, 4, 4)  # Уменьшенные отступы по краям
+        # Добавляем виджеты в правую часть с правильными stretch factors
+        controls_content_layout.addWidget(model_group, 0)           # Не растягивается
+        controls_content_layout.addWidget(ocr_lang_group, 0)        # Не растягивается  
+        controls_content_layout.addWidget(self.process_button, 0)   # Не растягивается
+        controls_content_layout.addWidget(self.progress_indicator, 0) # Не растягивается
+        controls_content_layout.addWidget(results_group, 1)         # Растягивается
         
-        controls_layout.addWidget(model_group)
-        controls_layout.addWidget(ocr_lang_group)
-        controls_layout.addWidget(process_section)  # Компактная секция обработки
-        controls_layout.addWidget(results_group, 1)  # Таблица результатов растягивается
+        # Добавляем stretch в конце для компактности верхней части
+        controls_content_layout.addStretch(0)
         
-        # Добавляем левую и правую части в сплиттер
-        splitter.addWidget(self.files_widget)  # Новый список файлов вместо изображения
-        splitter.addWidget(self.controls_scroll)
+        controls_scroll.setWidget(controls_content)
+        controls_layout.addWidget(controls_scroll)
         
-        # Улучшенная адаптивная настройка splitter
-        splitter.setHandleWidth(8)  # Увеличиваем ширину handle для удобства
-        splitter.setChildrenCollapsible(False)  # Запрещаем полное сжатие панелей
+        # Добавляем левую и правую части в сплиттер с размерами
+        splitter.addWidget(self.image_widget)
+        splitter.addWidget(self.controls_widget)
         
-        # Настройка пропорций с учетом адаптивности
-        splitter.setSizes([320, 680])  # Компактная левая панель, больше места для правой
-        splitter.setStretchFactor(0, 0)  # Левая панель фиксированной ширины
-        splitter.setStretchFactor(1, 1)  # Правая панель растягивается
-        
-        # Устанавливаем минимальные размеры панелей
-        self.files_widget.setMinimumWidth(300)  # Уменьшили ширину для компактного списка файлов
-        self.files_widget.setMaximumWidth(350)  # Ограничиваем максимальную ширину
-        self.controls_scroll.setMinimumWidth(350)
-        self.controls_scroll.setMaximumWidth(600)  # Ограничиваем максимальную ширину
+        # Устанавливаем размеры сплиттера - левая часть больше
+        splitter.setSizes([700, 400])  # Фиксированные пропорции
+        splitter.setStretchFactor(0, 1)  # Левая часть растягивается
+        splitter.setStretchFactor(1, 0)  # Правая часть фиксированной ширины
         
         # Добавляем сплиттер в главную компоновку
         main_layout.addWidget(splitter)
@@ -692,6 +363,9 @@ class MainWindow(QMainWindow):
         
         # Загружаем и применяем сохраненные настройки
         self.load_saved_settings()
+        
+        # Инициализируем провайдеров после настройки UI
+        QTimer.singleShot(100, self._initialize_providers)
     
     def _init_post_ui_components(self):
         """Инициализирует компоненты, которые требуют готового UI."""
@@ -709,9 +383,9 @@ class MainWindow(QMainWindow):
                 self.batch_processor.error_occurred.connect(self.on_batch_error)
                 
                 # Connect progress indicator to batch processor if it exists
-                if hasattr(self, 'progress_bar') and self.progress_bar:
-                    self.batch_processor.progress_updated.connect(self.update_progress)
-                    self.batch_processor.status_updated.connect(self.set_processing_status)
+                if hasattr(self, 'progress_indicator') and self.progress_indicator:
+                    self.batch_processor.progress_updated.connect(self.progress_indicator.set_progress)
+                    self.batch_processor.status_updated.connect(self.progress_indicator.set_stage)
                     
                 print("BatchProcessor инициализирован")
             else:
@@ -734,9 +408,9 @@ class MainWindow(QMainWindow):
                 self.batch_processor.processing_finished.connect(self.on_batch_processing_finished)
                 self.batch_processor.error_occurred.connect(self.on_batch_error)
                 
-                if hasattr(self, 'progress_bar') and self.progress_bar:
-                    self.batch_processor.progress_updated.connect(self.update_progress)
-                    self.batch_processor.status_updated.connect(self.set_processing_status)
+                if hasattr(self, 'progress_indicator') and self.progress_indicator:
+                    self.batch_processor.progress_updated.connect(self.progress_indicator.set_progress)
+                    self.batch_processor.status_updated.connect(self.progress_indicator.set_stage)
                     
                 print("BatchProcessor инициализирован (отложенная инициализация)")
         except Exception as e:
@@ -746,31 +420,28 @@ class MainWindow(QMainWindow):
         """Обработчик выбора файла через FileSelector."""
         self.current_image_path = file_path
         self.current_folder_path = None
-        
-        # Обновляем список файлов
-        self.update_files_from_selection(file_path, False)
-        
-        # Старый код для загрузки изображения (для совместимости)
-        if hasattr(self, 'image_widget') and self.image_widget.isVisible():
-            self.load_image(file_path)
+        self.load_image(file_path)
         
     def on_folder_selected(self, folder_path: str):
         """Обработчик выбора папки через FileSelector."""
         self.current_folder_path = folder_path
         self.current_image_path = None
         
-        # Обновляем список файлов
-        self.update_files_from_selection(folder_path, True)
-        
         # Enable batch processing
         self.process_button.setText("Обработать папку")
         self.process_button.setEnabled(True)
         self.status_bar.showMessage(f"Выбрана папка: {folder_path}")
+        
+
+            
     def on_batch_processing_started(self, total_files: int):
         """Обработчик начала пакетной обработки."""
         self.batch_results = []
-        self.start_processing_ui()
-        self.set_processing_status(f"Пакетная обработка: {total_files} файлов...")
+        self.progress_indicator.set_title(f"Пакетная обработка")
+        self.progress_indicator.set_stage(f"Обработка {total_files} файлов...")
+        self.progress_indicator.setVisible(True)
+        self.progress_indicator.start()
+        self.process_button.setEnabled(False)
         
     def on_batch_file_processed(self, file_path: str, result: dict, index: int, total: int):
         """Обработчик обработки одного файла из пакета."""
@@ -778,14 +449,13 @@ class MainWindow(QMainWindow):
             'file_path': file_path,
             'result': result
         })
-        # Обновляем прогресс
-        progress_value = int((index + 1) / total * 100)
-        self.update_progress(progress_value)
-        self.set_processing_status(f"Обработано {index + 1} из {total} файлов")
+        self.progress_indicator.set_stage(f"Обработано {index + 1} из {total} файлов")
         
     def on_batch_processing_finished(self):
         """Обработчик завершения пакетной обработки."""
-        self.stop_processing_ui()
+        self.progress_indicator.setVisible(False)
+        self.progress_indicator.stop()
+        self.process_button.setEnabled(True)
         
         if self.batch_results:
             # Show batch results
@@ -793,7 +463,9 @@ class MainWindow(QMainWindow):
             
     def on_batch_error(self, error_message: str):
         """Обработчик ошибки при пакетной обработке."""
-        self.stop_processing_ui()
+        self.progress_indicator.setVisible(False)
+        self.progress_indicator.stop()
+        self.process_button.setEnabled(True)
         QMessageBox.critical(self, "Ошибка обработки", error_message)
         
     def _process_folder_with_batch_processor(self, folder_path: str):
@@ -809,6 +481,8 @@ class MainWindow(QMainWindow):
         model_type = "layoutlm" if self.layoutlm_radio.isChecked() else "donut"
         if self.trocr_radio.isChecked():
             model_type = "trocr"
+        elif self.auto_llm_radio.isChecked():
+            model_type = "auto_llm"
         elif self.gemini_radio.isChecked():
             model_type = "gemini"
         elif self.cloud_llm_radio.isChecked():
@@ -905,6 +579,8 @@ class MainWindow(QMainWindow):
             self.trocr_radio.setChecked(True)
         elif active_model == 'gemini':
             self.gemini_radio.setChecked(True)
+        elif active_model == 'auto_llm':
+            self.auto_llm_radio.setChecked(True)
         elif active_model == 'cloud_llm':
             self.cloud_llm_radio.setChecked(True)
         elif active_model == 'local_llm':
@@ -940,6 +616,8 @@ class MainWindow(QMainWindow):
                 model_name = 'donut'
             elif self.trocr_radio.isChecked():
                 model_name = 'trocr'
+            elif self.auto_llm_radio.isChecked():
+                model_name = 'auto_llm'
             elif self.gemini_radio.isChecked():
                 model_name = 'gemini'
             elif self.cloud_llm_radio.isChecked():
@@ -955,6 +633,7 @@ class MainWindow(QMainWindow):
             
             # Обновляем видимость компонентов
             trocr_enabled = (model_name == 'trocr')
+            auto_llm_enabled = (model_name == 'auto_llm')
             gemini_enabled = (model_name == 'gemini')
             cloud_llm_enabled = (model_name == 'cloud_llm')
             local_llm_enabled = (model_name == 'local_llm')
@@ -980,6 +659,8 @@ class MainWindow(QMainWindow):
             self.local_model_selector.setEnabled(local_llm_enabled and self.local_provider_selector.count() > 0)
             
             # Обновляем статусы LLM, если выбраны
+            if auto_llm_enabled:
+                self.update_auto_llm_status()
             if cloud_llm_enabled:
                 self.update_cloud_llm_status()
             if local_llm_enabled:
@@ -1543,6 +1224,8 @@ class MainWindow(QMainWindow):
         model_type = "layoutlm" if self.layoutlm_radio.isChecked() else "donut"
         if self.trocr_radio.isChecked():
             model_type = "trocr"
+        elif self.auto_llm_radio.isChecked():
+            model_type = "auto_llm"
         elif self.gemini_radio.isChecked():
             model_type = "gemini"
         elif self.cloud_llm_radio.isChecked():
@@ -1553,40 +1236,64 @@ class MainWindow(QMainWindow):
         ocr_lang = self.ocr_lang_combo.currentData() if model_type == "layoutlm" else None
         
         # NEW: Обработка LLM плагинов с автоматической загрузкой
-        if model_type in ["cloud_llm", "local_llm"]:
-            # Проверяем, загружен ли уже плагин
-            if not hasattr(self, 'current_llm_plugin') or not self.current_llm_plugin:
-                # Пытаемся автоматически загрузить плагин
-                try:
-                    if model_type == "cloud_llm":
-                        provider_data = self.cloud_provider_selector.currentData()
-                        model_data = self.cloud_model_selector.currentData()
-                    else:  # local_llm
-                        provider_data = self.local_provider_selector.currentData()
-                        model_data = self.local_model_selector.currentData()
-                    
-                    if not provider_data or not model_data:
-                        utils.show_error_message(
-                            self, "Ошибка модели", "Выберите провайдера и модель для LLM плагина."
-                        )
-                        return
-                    
-                    # Автоматическая загрузка плагина
-                    self.status_bar.showMessage(f"Загружается {model_type} плагин...")
-                    success = self.auto_load_llm_plugin(model_type, provider_data, model_data)
-                    
-                    if not success:
-                        utils.show_error_message(
-                            self, "Ошибка LLM", 
-                            f"Не удалось автоматически загрузить {model_type} плагин. Проверьте настройки API ключей."
-                        )
-                        return
-                        
-                except Exception as e:
+        if model_type in ["auto_llm", "cloud_llm", "local_llm"]:
+            # Для auto_llm создаем плагин автоматически
+            if model_type == "auto_llm":
+                self.status_bar.showMessage("Выбирается лучший доступный LLM...")
+                plugin = self._get_auto_llm_plugin()
+                
+                if not plugin:
                     utils.show_error_message(
-                        self, "Ошибка загрузки", f"Ошибка автоматической загрузки плагина: {str(e)}"
+                        self, "Ошибка LLM", 
+                        "Нет доступных LLM провайдеров. Настройте API ключи в настройках."
                     )
                     return
+                
+                # Инициализируем плагин
+                if plugin.load_model():
+                    self.current_llm_plugin = plugin
+                    self.status_bar.showMessage(f"Используется {plugin.provider_config.display_name}...")
+                else:
+                    utils.show_error_message(
+                        self, "Ошибка LLM", 
+                        f"Не удалось инициализировать {plugin.provider_config.display_name}."
+                    )
+                    return
+            else:
+                # Для cloud_llm и local_llm используем старую логику
+                # Проверяем, загружен ли уже плагин
+                if not hasattr(self, 'current_llm_plugin') or not self.current_llm_plugin:
+                    # Пытаемся автоматически загрузить плагин
+                    try:
+                        if model_type == "cloud_llm":
+                            provider_data = self.cloud_provider_selector.currentData()
+                            model_data = self.cloud_model_selector.currentData()
+                        else:  # local_llm
+                            provider_data = self.local_provider_selector.currentData()
+                            model_data = self.local_model_selector.currentData()
+                        
+                        if not provider_data or not model_data:
+                            utils.show_error_message(
+                                self, "Ошибка модели", "Выберите провайдера и модель для LLM плагина."
+                            )
+                            return
+                        
+                        # Автоматическая загрузка плагина
+                        self.status_bar.showMessage(f"Загружается {model_type} плагин...")
+                        success = self.auto_load_llm_plugin(model_type, provider_data, model_data)
+                        
+                        if not success:
+                            utils.show_error_message(
+                                self, "Ошибка LLM", 
+                                f"Не удалось автоматически загрузить {model_type} плагин. Проверьте настройки API ключей."
+                            )
+                            return
+                            
+                    except Exception as e:
+                        utils.show_error_message(
+                            self, "Ошибка загрузки", f"Ошибка автоматической загрузки плагина: {str(e)}"
+                        )
+                        return
             
             # Используем LLM плагин для обработки
             self.process_with_llm_plugin(input_path, is_folder)
@@ -1618,9 +1325,13 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Ошибка получения промпта")
             return
         
-        # Запускаем UI режим обработки
-        self.start_processing_ui()
-        self.set_processing_status(f"Обработка моделью {model_type.upper()}...")
+        # Показываем индикатор прогресса
+        self.status_bar.showMessage(f"Обработка изображения моделью {model_type.upper()}...")
+        if hasattr(self, 'progress_indicator') and self.progress_indicator:
+            self.progress_indicator.setVisible(True)
+            self.progress_indicator.set_progress(0)
+            self.progress_indicator.set_title(f"Обработка моделью {model_type.upper()}")
+            self.progress_indicator.start()
         
         # Сохраняем выбранную модель в настройках
         settings_manager.set_active_model(model_type)
@@ -1643,69 +1354,10 @@ class MainWindow(QMainWindow):
         self.processing_thread.error_signal.connect(self.show_processing_error)
         self.processing_thread.start()
     
-    def on_process_button_clicked(self):
-        """Обработчик клика на кнопку Обработать/Отменить."""
-        if self.is_processing:
-            # Отменяем обработку
-            self.cancel_processing()
-        else:
-            # Запускаем обработку
-            self.process_image()
-    
-    def start_processing_ui(self):
-        """Запуск UI режима обработки."""
-        self.is_processing = True
-        self.process_button.setText("⛔ Отменить")
-        self.process_button.setProperty("mode", "cancel")
-        self.process_button.style().unpolish(self.process_button)
-        self.process_button.style().polish(self.process_button)
-        
-        # Показываем прогресс-бар и статус
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
-        self.process_status_label.setVisible(True)
-        self.process_status_label.setText("Инициализация...")
-        
-        # Сообщение в статус-баре
-        self.status_bar.showMessage("Обработка...")
-    
-    def stop_processing_ui(self):
-        """Остановка UI режима обработки."""
-        self.is_processing = False
-        self.process_button.setText("🚀 Обработать")
-        self.process_button.setProperty("mode", "process")
-        self.process_button.style().unpolish(self.process_button)
-        self.process_button.style().polish(self.process_button)
-        
-        # Скрываем прогресс-бар и статус
-        self.progress_bar.setVisible(False)
-        self.process_status_label.setVisible(False)
-        
-        self.processing_thread = None
-    
-    def cancel_processing(self):
-        """Отмена текущей обработки."""
-        if self.processing_thread and self.processing_thread.isRunning():
-            # Принудительная остановка потока
-            self.processing_thread.terminate()
-            self.processing_thread.wait(3000)  # Ждем до 3 секунд
-            
-        self.stop_processing_ui()
-        self.status_bar.showMessage("Обработка отменена")
-    
     def update_progress(self, value):
         """Обновление индикатора прогресса."""
-        if hasattr(self, 'progress_bar'):
-            self.progress_bar.setValue(value)
-            
-        # NEW: Обновляем прогресс в файловом списке для текущего файла
-        if self.current_image_path and not self.current_folder_path:
-            self.file_list_widget.update_file_progress(self.current_image_path, value, ProcessingStatus.PROCESSING)
-            
-    def set_processing_status(self, status: str):
-        """Установка статуса обработки."""
-        if hasattr(self, 'process_status_label'):
-            self.process_status_label.setText(status)
+        if hasattr(self, 'progress_indicator') and self.progress_indicator:
+            self.progress_indicator.set_progress(value)
     
     def show_results(self, results):
         """Отображение результатов обработки в таблице (для ОДИНОЧНОГО файла)."""
@@ -1739,8 +1391,10 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'plugin_export_button'):
                 self.plugin_export_button.setEnabled(True)
             
-            # Останавливаем UI режим обработки
-            self.stop_processing_ui()
+            # Скрываем индикатор прогресса
+            if hasattr(self, 'progress_indicator') and self.progress_indicator:
+                self.progress_indicator.setVisible(False)
+                self.progress_indicator.stop()
             self.status_bar.showMessage("Обработка завершена")
         except Exception as e:
             print(f"ОШИБКА в show_results: {e}")
@@ -1750,7 +1404,9 @@ class MainWindow(QMainWindow):
     
     def show_processing_error(self, error_msg):
         """Обработка ошибки при обработке изображения."""
-        self.stop_processing_ui()
+        if hasattr(self, 'progress_indicator') and self.progress_indicator:
+            self.progress_indicator.setVisible(False)
+            self.progress_indicator.stop()
         self.status_bar.showMessage("Ошибка обработки")
         utils.show_error_message(
             self, "Ошибка обработки", f"Произошла ошибка: {error_msg}"
@@ -2009,6 +1665,18 @@ class MainWindow(QMainWindow):
                     # Создаем базовый промпт для облачной модели
                     full_prompt = self._create_default_llm_prompt(provider_name)
                     
+            elif model_type == 'auto_llm':
+                # Автоматизированный LLM режим
+                model_display_name = "🤖 Автоматизированный LLM"
+                
+                # Получаем универсальный промпт
+                prompt_key = "auto_llm_prompt"
+                full_prompt = settings_manager.get_setting(prompt_key, "")
+                
+                if not full_prompt:
+                    # Создаем базовый универсальный промпт
+                    full_prompt = self._create_default_auto_llm_prompt()
+                    
             elif model_type == 'local_llm':
                 # Локальные LLM модели
                 provider_data = self.local_provider_selector.currentData()
@@ -2232,6 +1900,11 @@ Analyze:"""
                     default_prompt = self._create_default_llm_prompt(provider_name)
                     text_edit.setPlainText(default_prompt)
                     
+            elif model_type == 'auto_llm':
+                # Для автоматизированного LLM используем универсальный промпт
+                default_prompt = self._create_default_auto_llm_prompt()
+                text_edit.setPlainText(default_prompt)
+                
             elif model_type == 'local_llm':
                 provider_data = self.local_provider_selector.currentData()
                 if provider_data:
@@ -2280,6 +1953,13 @@ Analyze:"""
                 settings_manager.set_setting(prompt_key, prompt_text)
                 
                 model_display_name = f"Cloud LLM ({provider_name.upper()})"
+                
+            elif model_type == 'auto_llm':
+                # Автоматизированный LLM режим
+                prompt_key = "auto_llm_prompt"
+                settings_manager.set_setting(prompt_key, prompt_text)
+                
+                model_display_name = "🤖 Автоматизированный LLM"
                 
             elif model_type == 'local_llm':
                 # Локальные LLM модели
@@ -2695,16 +2375,6 @@ Analyze:"""
                 # NEW: Disable preview button  
                 self.preview_button.setEnabled(False)
         else: # Если обрабатывали один файл
-            # NEW: Обновляем статус файла в списке
-            if self.current_image_path:
-                if result_or_none:
-                    # Файл успешно обработан
-                    self.file_list_widget.update_file_progress(self.current_image_path, 100, ProcessingStatus.COMPLETED)
-                    self.update_file_processing_fields(self.current_image_path, result_or_none)
-                else:
-                    # Ошибка обработки файла
-                    self.file_list_widget.set_file_error(self.current_image_path, "Ошибка обработки")
-            
             # Используем старый метод для отображения одного результата
             if result_or_none:
                 self.show_results(result_or_none)
@@ -2968,7 +2638,7 @@ Analyze:"""
         training_dialog.exec() 
 
     def setup_results_table(self):
-        """Настраивает таблицу результатов на основе полей из FieldManager."""
+        """Настраивает таблицу результатов на основе полей из FieldManager с улучшенным отображением."""
         try:
             # Получаем колонки из FieldManager
             columns = field_manager.get_table_columns()
@@ -2981,15 +2651,9 @@ Analyze:"""
                 self.results_table.setHorizontalHeaderItem(
                     i, QTableWidgetItem(column["name"])
                 )
-                
-            # Настраиваем отображение таблицы - улучшенная адаптивная версия
-            self.results_table.setAlternatingRowColors(True)
-            self.results_table.verticalHeader().setVisible(False)
-            self.results_table.setWordWrap(True)
-            self.results_table.setMinimumHeight(200)  # Минимальная высота для предотвращения сжатия
             
-            # Применяем адаптивную настройку размеров колонок
-            self._configure_adaptive_table_columns(columns)
+            # Применяем улучшенную настройку отображения
+            self._apply_improved_table_layout(columns)
             
             # Сохраняем маппинг полей для последующего использования
             self.field_mapping = {column["id"]: i for i, column in enumerate(columns)}
@@ -3017,15 +2681,17 @@ Analyze:"""
             # Устанавливаем заголовки колонок
             for i, field in enumerate(visible_fields):
                 self.results_table.setHorizontalHeaderItem(i, QTableWidgetItem(field.get("name", "")))
-                
-            # Настраиваем отображение таблицы - улучшенная адаптивная версия
-            self.results_table.setAlternatingRowColors(True)
-            self.results_table.verticalHeader().setVisible(False)
-            self.results_table.setWordWrap(True)
-            self.results_table.setMinimumHeight(200)
             
-            # Применяем адаптивную настройку для fallback полей
-            self._configure_adaptive_table_columns_fallback(visible_fields)
+            # Преобразуем в формат columns для совместимости
+            columns = []
+            for field in visible_fields:
+                columns.append({
+                    "id": field.get("id", ""),
+                    "name": field.get("name", "")
+                })
+            
+            # Применяем улучшенную настройку отображения
+            self._apply_improved_table_layout(columns)
             
             # Сохраняем маппинг полей для последующего использования
             self.field_mapping = {field.get("id", ""): i for i, field in enumerate(visible_fields)}
@@ -3040,11 +2706,11 @@ Analyze:"""
     def _setup_basic_results_table(self):
         """Создает базовую таблицу результатов с минимальными колонками."""
         basic_columns = [
-            {"id": "sender", "name": "Sender"},
-            {"id": "invoice_number", "name": "№ Invoice"},
-            {"id": "invoice_date", "name": "Invoice Date"},
-            {"id": "total", "name": "Total"},
-            {"id": "note", "name": "Note"}
+            {"id": "sender", "name": "Поставщик"},
+            {"id": "invoice_number", "name": "№ счета"},
+            {"id": "invoice_date", "name": "Дата счета"},
+            {"id": "total", "name": "Сумма с НДС"},
+            {"id": "note", "name": "Примечание"}
         ]
         
         self.results_table.setColumnCount(len(basic_columns))
@@ -3054,23 +2720,24 @@ Analyze:"""
                 i, QTableWidgetItem(column["name"])
             )
         
-        self.results_table.setAlternatingRowColors(True)
-        self.results_table.verticalHeader().setVisible(False)
-        self.results_table.setWordWrap(True)
-        self.results_table.setMinimumHeight(200)
-        
-        # Применяем адаптивную настройку для базовых колонок
-        self._configure_adaptive_table_columns(basic_columns)
+        # Применяем улучшенную настройку отображения
+        self._apply_improved_table_layout(basic_columns)
         
         self.field_mapping = {column["id"]: i for i, column in enumerate(basic_columns)}
         
         print("Базовая таблица создана с 5 колонками")
-
-    def _configure_adaptive_table_columns(self, columns):
-        """Настраивает адаптивные размеры колонок таблицы на основе типа данных."""
+    
+    def _apply_improved_table_layout(self, columns):
+        """Применяет улучшенную настройку отображения таблицы с адаптивными размерами колонок."""
         try:
             header = self.results_table.horizontalHeader()
             
+            # Настройка общих свойств таблицы
+            self.results_table.setAlternatingRowColors(True)
+            self.results_table.verticalHeader().setVisible(False)
+            self.results_table.setWordWrap(True)
+            
+            # Улучшенная настройка размеров колонок
             for i, column in enumerate(columns):
                 column_name = column.get("name", "").lower()
                 column_id = column.get("id", "").lower()
@@ -3099,46 +2766,19 @@ Analyze:"""
                     header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
                     self.results_table.setColumnWidth(i, 100)
             
+            # Не растягиваем последнюю колонку принудительно
+            header.setStretchLastSection(False)
+            
             # Автоматическая подгонка высоты строк под содержимое
             self.results_table.resizeRowsToContents()
             
         except Exception as e:
-            print(f"Ошибка адаптивной настройки колонок: {e}")
+            print(f"Ошибка улучшения отображения таблицы: {e}")
             # Fallback к базовой настройке
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-            header.setStretchLastSection(True)
-
-    def _configure_adaptive_table_columns_fallback(self, visible_fields):
-        """Настраивает адаптивные размеры колонок для fallback полей."""
-        try:
-            header = self.results_table.horizontalHeader()
-            
-            for i, field in enumerate(visible_fields):
-                field_name = field.get("name", "").lower()
-                field_id = field.get("id", "").lower()
-                
-                # Аналогичная логика как в основном методе
-                if any(word in field_name or word in field_id for word in 
-                       ['№', 'number', 'дата', 'date', '%', 'ндс', 'vat', 'инн', 'inn']):
-                    header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-                    self.results_table.setColumnWidth(i, 120)
-                elif any(word in field_name or word in field_id for word in 
-                         ['сумма', 'amount', 'total', 'валюта', 'currency']):
-                    header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
-                    self.results_table.setColumnWidth(i, 140)
-                elif any(word in field_name or word in field_id for word in 
-                         ['поставщик', 'supplier', 'sender', 'описание', 'description', 'примечание', 'note']):
-                    header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
-                else:
-                    header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
-                    self.results_table.setColumnWidth(i, 100)
-            
-            self.results_table.resizeRowsToContents()
-            
-        except Exception as e:
-            print(f"Ошибка fallback настройки колонок: {e}")
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-            header.setStretchLastSection(True)
+            self.results_table.setAlternatingRowColors(True)
+            self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            self.results_table.horizontalHeader().setStretchLastSection(True)
+            self.results_table.verticalHeader().setVisible(False)
 
     # Метод show_table_fields_dialog удален - заменен на show_field_manager_dialog
     # Метод on_table_fields_changed удален - заменен на on_fields_updated
@@ -4324,138 +3964,152 @@ Analyze:"""
             f"Не удалось загрузить локальный LLM плагин:\n{error_message}"
         )
 
-    # NEW: Обработчики для FileListWidget
-    
-    def on_file_list_selection_changed(self, file_path: str):
-        """Обработчик выбора файла из списка."""
-        self.current_image_path = file_path
-        self.current_folder_path = None
-        
-        # Загружаем изображение для preview (если нужно)
-        if hasattr(self, 'image_widget') and self.image_widget.isVisible():
-            self.load_image(file_path)
-        
-        # Включаем кнопку обработки
-        self.process_button.setText("🚀 Обработать")
-        self.process_button.setEnabled(True)
-        
-        # Обновляем статус
-        filename = os.path.basename(file_path)
-        self.status_bar.showMessage(f"Выбран файл: {filename}")
-        
-    def on_process_single_file_requested(self, file_path: str):
-        """Обработчик запроса на обработку одного файла."""
-        # Устанавливаем текущий файл
-        self.current_image_path = file_path
-        self.current_folder_path = None
-        
-        # Обновляем статус в файловом списке
-        self.file_list_widget.update_file_progress(file_path, 0, ProcessingStatus.PROCESSING)
-        
-        # Запускаем обработку
-        self.process_image()
-        
-    def on_process_all_files_requested(self):
-        """Обработчик запроса на обработку всех файлов."""
-        unprocessed_files = self.file_list_widget.get_unprocessed_files()
-        
-        if not unprocessed_files:
-            utils.show_info_message(
-                self, "Информация", 
-                "Нет файлов для обработки. Все файлы уже обработаны или произошли ошибки."
-            )
-            return
-            
-        # Создаем временную папку с файлами для пакетной обработки
-        import tempfile
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Копируем файлы в временную папку
-            for file_path in unprocessed_files:
-                import shutil
-                shutil.copy2(file_path, temp_dir)
-                
-            # Запускаем пакетную обработку
-            self.current_folder_path = temp_dir
-            self.current_image_path = None
-            self._process_folder_with_batch_processor(temp_dir)
-            
-    def on_filename_clicked(self, file_path: str, processing_data: dict):
-        """Обработчик клика по имени файла - открывает окно просмотра."""
+    def update_auto_llm_status(self):
+        """Обновляет статус автоматизированного LLM режима."""
         try:
-            # Создаем и показываем диалог просмотра файла
-            viewer_dialog = FileViewerDialog(file_path, processing_data, self)
-            viewer_dialog.exec()
+            # Определяем лучший доступный провайдер
+            best_provider = self._get_best_available_llm_provider()
+            
+            if best_provider:
+                provider_name = best_provider['provider']
+                config = best_provider['config']
+                status_text = f"✅ Использует: {config.display_name}"
+                self.auto_llm_status_label.setText(status_text)
+                self.auto_llm_status_label.setStyleSheet("color: #4CAF50; font-size: 11px; padding: 2px 0;")
+            else:
+                self.auto_llm_status_label.setText("⚠️ Нет доступных LLM провайдеров")
+                self.auto_llm_status_label.setStyleSheet("color: #FF9800; font-size: 11px; padding: 2px 0;")
+                
+        except Exception as e:
+            print(f"Ошибка обновления статуса auto_llm: {e}")
+            self.auto_llm_status_label.setText("❌ Ошибка проверки статуса")
+            self.auto_llm_status_label.setStyleSheet("color: #F44336; font-size: 11px; padding: 2px 0;")
+
+    def _get_best_available_llm_provider(self):
+        """Возвращает лучший доступный LLM провайдер."""
+        from .plugins.base_llm_plugin import LLM_PROVIDERS
+        
+        # Приоритет провайдеров (в порядке предпочтения)
+        priority_order = ['google', 'openai', 'anthropic', 'mistral', 'deepseek', 'xai', 'ollama']
+        
+        for provider_name in priority_order:
+            if provider_name in LLM_PROVIDERS:
+                config = LLM_PROVIDERS[provider_name]
+                
+                # Проверяем доступность
+                if provider_name == "ollama":
+                    if self.check_ollama_availability():
+                        models = self.get_ollama_models()
+                        if models:
+                            return {
+                                'provider': provider_name,
+                                'config': config,
+                                'model': models[0]  # Первая доступная модель
+                            }
+                else:
+                    # Для облачных провайдеров проверяем API ключ
+                    if config.requires_api_key:
+                        api_key = settings_manager.get_encrypted_setting(f'{provider_name}_api_key')
+                        if api_key:
+                            return {
+                                'provider': provider_name,
+                                'config': config,
+                                'model': config.default_model
+                            }
+                    else:
+                        return {
+                            'provider': provider_name,
+                            'config': config,
+                            'model': config.default_model
+                        }
+        
+        return None
+
+    def _create_default_auto_llm_prompt(self) -> str:
+        """Создает базовый промпт для автоматизированного LLM режима."""
+        return """You are an advanced AI assistant specialized in extracting structured data from invoice images. 
+
+Your task:
+1. Analyze the provided invoice image carefully
+2. Extract ALL relevant invoice information
+3. Return the data in a clean, structured JSON format
+
+Extract the following fields (if present):
+- invoice_number: Invoice/bill number
+- date: Invoice date 
+- due_date: Payment due date
+- vendor_name: Supplier/vendor company name
+- vendor_address: Supplier address
+- customer_name: Customer/buyer name
+- customer_address: Customer address
+- total_amount: Total amount to pay
+- subtotal: Subtotal before taxes
+- tax_amount: Tax amount
+- tax_rate: Tax rate (%)
+- currency: Currency code (USD, EUR, RUB, etc.)
+- items: Array of line items with name, quantity, price, total
+
+Instructions:
+- Extract text EXACTLY as it appears in the image
+- For dates, use format YYYY-MM-DD if possible
+- For amounts, include only numbers and decimal points
+- If a field is not found, use null
+- Ensure valid JSON format
+- Double-check all extracted data for accuracy
+
+Return ONLY the JSON object, no additional text or explanations."""
+
+    def _get_auto_llm_plugin(self):
+        """Создает и возвращает плагин для автоматизированного LLM режима."""
+        try:
+            best_provider = self._get_best_available_llm_provider()
+            
+            if not best_provider:
+                return None
+            
+            provider_name = best_provider['provider']
+            model_name = best_provider['model']
+            config = best_provider['config']
+            
+            # Получаем настройки провайдера
+            llm_settings = settings_manager.get_setting('llm_providers', {})
+            provider_settings = llm_settings.get(provider_name, {})
+            
+            # Получаем API ключ если требуется
+            api_key = None
+            if config.requires_api_key:
+                api_key = settings_manager.get_encrypted_setting(f'{provider_name}_api_key')
+                if not api_key:
+                    return None
+            
+            # Создаем экземпляр универсального плагина
+            from .plugins.models.universal_llm_plugin import UniversalLLMPlugin
+            
+            # Дополнительные параметры
+            plugin_kwargs = {
+                'generation_config': {
+                    'temperature': provider_settings.get('temperature', 0.1),
+                    'max_tokens': provider_settings.get('max_tokens', 4096),
+                    'top_p': provider_settings.get('top_p', 0.9),
+                }
+            }
+            
+            # Для Ollama добавляем base_url
+            if provider_name == "ollama":
+                plugin_kwargs['base_url'] = provider_settings.get('base_url', 'http://localhost:11434')
+            
+            plugin = UniversalLLMPlugin(
+                provider_name=provider_name,
+                model_name=model_name,
+                api_key=api_key,
+                **plugin_kwargs
+            )
+            
+            return plugin
             
         except Exception as e:
-            utils.show_error_message(
-                self, 
-                "Ошибка открытия файла",
-                f"Не удалось открыть файл для просмотра:\n{str(e)}"
-            )
-            
-    def update_file_processing_progress(self, file_path: str, progress: int):
-        """Обновление прогресса обработки файла."""
-        if progress >= 100:
-            self.file_list_widget.update_file_progress(file_path, 100, ProcessingStatus.COMPLETED)
-        else:
-            self.file_list_widget.update_file_progress(file_path, progress, ProcessingStatus.PROCESSING)
-            
-    def update_file_processing_fields(self, file_path: str, result: dict):
-        """Обновление информации о распознанных полях файла."""
-        if not result:
-            return
-            
-        # Подсчитываем количество успешно распознанных полей
-        recognized_fields = 0
-        total_fields = 0
-        
-        # Получаем все ожидаемые поля из field_manager
-        expected_fields = field_manager.get_visible_fields()
-        total_fields = len(expected_fields)
-        
-        # Проверяем какие поля были распознаны
-        for field_config in expected_fields:
-            field_key = field_config.get('key', '')
-            aliases = field_config.get('aliases', [])
-            
-            # Проверяем основное поле и его алиасы
-            found = False
-            if field_key in result and result[field_key]:
-                found = True
-            else:
-                for alias in aliases:
-                    if alias in result and result[alias]:
-                        found = True
-                        break
-                        
-            if found:
-                recognized_fields += 1
-                
-        # Обновляем информацию в списке файлов
-        self.file_list_widget.update_file_fields(file_path, recognized_fields, total_fields)
-        
-    def update_files_from_selection(self, path: str, is_folder: bool):
-        """Обновление списка файлов на основе выбранного пути."""
-        if is_folder:
-            # Получаем список всех поддерживаемых файлов в папке
-            supported_extensions = ['.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.tiff']
-            file_paths = []
-            
-            for ext in supported_extensions:
-                import glob
-                pattern = os.path.join(path, f"**/*{ext}")
-                files = glob.glob(pattern, recursive=True)
-                file_paths.extend(files)
-                
-            # Сортируем файлы по имени
-            file_paths.sort()
-            
-            # Обновляем список файлов
-            self.file_list_widget.set_files(file_paths)
-            
-        else:
-            # Один файл
-            self.file_list_widget.set_files([path])
+            print(f"❌ Ошибка создания auto_llm плагина: {e}")
+            return None
 
 
 # NEW: LLM Loading Thread
@@ -4480,6 +4134,8 @@ class LLMLoadingThread(QThread):
             self.loading_started.emit(plugin_id)
             
             # Получаем настройки провайдера
+            from app.settings_manager import SettingsManager
+            settings_manager = SettingsManager()
             llm_settings = settings_manager.get_setting('llm_providers', {})
             provider_settings = llm_settings.get(provider_name, {})
             
@@ -4523,3 +4179,339 @@ class LLMLoadingThread(QThread):
         except Exception as e:
             plugin_id = f"{self.plugin_data.get('provider', 'unknown')}:{self.plugin_data.get('model', 'unknown')}"
             self.loading_error.emit(plugin_id, str(e))
+    
+    def _create_cloud_models_section(self):
+        """Создает responsive секцию облачных моделей."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        
+        # 🤖 Автоматизированный LLM режим
+        auto_llm_widget = self._create_model_option(
+            "🤖 Автоматизированный (LLM)",
+            'auto_llm',
+            lambda: self.show_model_prompt('auto_llm')
+        )
+        self.auto_llm_radio = auto_llm_widget.radio_button
+        layout.addWidget(auto_llm_widget)
+        
+        # Auto LLM status (with indent)
+        self.auto_llm_status_label = QLabel("Автоматический выбор лучшего доступного LLM")
+        self.auto_llm_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 2px 0; margin-left: 20px;")
+        layout.addWidget(self.auto_llm_status_label)
+
+        # Gemini
+        gemini_widget = self._create_model_option(
+            "Google Gemini",
+            'gemini',
+            lambda: self.show_model_prompt('gemini')
+        )
+        self.gemini_radio = gemini_widget.radio_button
+        layout.addWidget(gemini_widget)
+        
+        # Gemini sub-model selector
+        gemini_sub_widget = QWidget()
+        gemini_sub_layout = QHBoxLayout(gemini_sub_widget)
+        gemini_sub_layout.setContentsMargins(20, 0, 0, 0)
+        gemini_sub_layout.setSpacing(8)
+        
+        self.gemini_sub_model_label = QLabel("Модель:")
+        self.gemini_sub_model_label.setMinimumWidth(50)
+        self.gemini_model_selector = QComboBox()
+        self.gemini_model_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.gemini_model_selector.currentIndexChanged.connect(self.on_gemini_sub_model_changed)
+        
+        gemini_sub_layout.addWidget(self.gemini_sub_model_label)
+        gemini_sub_layout.addWidget(self.gemini_model_selector, 1)
+        layout.addWidget(gemini_sub_widget)
+        
+        # Populate Gemini models
+        self.populate_gemini_models()
+        
+        # Cloud LLM Provider Selection
+        cloud_llm_widget = self._create_model_option(
+            "Другие облачные LLM",
+            'cloud_llm',
+            lambda: self.show_model_prompt('cloud_llm')
+        )
+        self.cloud_llm_radio = cloud_llm_widget.radio_button
+        layout.addWidget(cloud_llm_widget)
+        
+        # Cloud provider and model selection
+        cloud_selection_widget = self._create_provider_selection_widget(True)  # True для облачных
+        layout.addWidget(cloud_selection_widget)
+        
+        return widget
+        
+    def _create_local_models_section(self):
+        """Создает responsive секцию локальных моделей."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        
+        # LayoutLM
+        layoutlm_widget = self._create_model_option(
+            "LayoutLMv3",
+            'layoutlm',
+            lambda: self.show_model_prompt('layoutlm')
+        )
+        self.layoutlm_radio = layoutlm_widget.radio_button
+        self.layoutlm_radio.setChecked(True)  # По умолчанию выбрана
+        layout.addWidget(layoutlm_widget)
+        
+        # Donut
+        donut_widget = self._create_model_option(
+            "Donut",
+            'donut',
+            lambda: self.show_model_prompt('donut')
+        )
+        self.donut_radio = donut_widget.radio_button
+        layout.addWidget(donut_widget)
+        
+        # TrOCR
+        trocr_widget = self._create_model_option(
+            "TrOCR (Microsoft)",
+            'trocr',
+            lambda: self.show_model_prompt('trocr')
+        )
+        self.trocr_radio = trocr_widget.radio_button
+        layout.addWidget(trocr_widget)
+        
+        # TrOCR model selection
+        trocr_selection_widget = QWidget()
+        trocr_selection_layout = QVBoxLayout(trocr_selection_widget)
+        trocr_selection_layout.setContentsMargins(20, 0, 0, 0)
+        trocr_selection_layout.setSpacing(4)
+        
+        trocr_model_layout = QHBoxLayout()
+        trocr_model_layout.setSpacing(8)
+        
+        self.trocr_model_label = QLabel("Модель:")
+        self.trocr_model_label.setMinimumWidth(50)
+        self.trocr_model_selector = QComboBox()
+        self.trocr_model_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.trocr_model_selector.currentIndexChanged.connect(self.on_trocr_model_changed)
+        self.trocr_model_selector.setToolTip("Выберите модель TrOCR для использования")
+        
+        trocr_model_layout.addWidget(self.trocr_model_label)
+        trocr_model_layout.addWidget(self.trocr_model_selector, 1)
+        trocr_selection_layout.addLayout(trocr_model_layout)
+        
+        # TrOCR status indicator
+        self.trocr_status_label = QLabel("Не загружено")
+        self.trocr_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 2px 0;")
+        trocr_selection_layout.addWidget(self.trocr_status_label)
+        
+        layout.addWidget(trocr_selection_widget)
+        
+        # Local LLM Models Section
+        local_llm_widget = self._create_model_option(
+            "Локальные LLM (Ollama)",
+            'local_llm',
+            lambda: self.show_model_prompt('local_llm')
+        )
+        self.local_llm_radio = local_llm_widget.radio_button
+        layout.addWidget(local_llm_widget)
+        
+        # Local provider and model selection
+        local_selection_widget = self._create_provider_selection_widget(False)  # False для локальных
+        layout.addWidget(local_selection_widget)
+        
+        return widget
+        
+    def _create_model_option(self, text, model_type, prompt_callback):
+        """Создает компактный виджет выбора модели с кнопкой промпта."""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        
+        radio_button = QRadioButton(text)
+        radio_button.toggled.connect(self.on_model_changed)
+        radio_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        
+        prompt_button = QPushButton("📝")
+        prompt_button.clicked.connect(prompt_callback)
+        prompt_button.setFixedSize(24, 24)
+        prompt_button.setToolTip("Показать промпт")
+        prompt_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        
+        layout.addWidget(radio_button, 1)
+        layout.addWidget(prompt_button, 0)
+        
+        # Store radio button reference
+        widget.radio_button = radio_button
+        
+        return widget
+        
+    def _create_provider_selection_widget(self, is_cloud=True):
+        """Создает адаптивный виджет выбора провайдера и модели."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(20, 0, 0, 0)
+        layout.setSpacing(4)
+        
+        # Provider selection
+        provider_layout = QHBoxLayout()
+        provider_layout.setSpacing(8)
+        
+        provider_label = QLabel("Провайдер:")
+        provider_label.setMinimumWidth(70)
+        
+        if is_cloud:
+            self.cloud_provider_label = provider_label
+            self.cloud_provider_selector = QComboBox()
+            self.cloud_provider_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.cloud_provider_selector.currentIndexChanged.connect(self.on_cloud_provider_changed)
+            provider_selector = self.cloud_provider_selector
+        else:
+            self.local_provider_label = provider_label
+            self.local_provider_selector = QComboBox()
+            self.local_provider_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.local_provider_selector.currentIndexChanged.connect(self.on_local_provider_changed)
+            provider_selector = self.local_provider_selector
+        
+        provider_layout.addWidget(provider_label)
+        provider_layout.addWidget(provider_selector, 1)
+        layout.addLayout(provider_layout)
+        
+        # Model selection
+        model_layout = QHBoxLayout()
+        model_layout.setSpacing(8)
+        
+        model_label = QLabel("Модель:")
+        model_label.setMinimumWidth(70)
+        
+        if is_cloud:
+            self.cloud_model_label = model_label
+            self.cloud_model_selector = QComboBox()
+            self.cloud_model_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.cloud_model_selector.currentIndexChanged.connect(self.on_cloud_model_changed)
+            model_selector = self.cloud_model_selector
+        else:
+            self.local_model_label = model_label
+            self.local_model_selector = QComboBox()
+            self.local_model_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.local_model_selector.currentIndexChanged.connect(self.on_local_model_changed)
+            model_selector = self.local_model_selector
+        
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(model_selector, 1)
+        layout.addLayout(model_layout)
+        
+        # Status indicator
+        status_label = QLabel("Не настроено")
+        status_label.setStyleSheet("color: #666; font-size: 10px; padding: 2px 0;")
+        
+        if is_cloud:
+            self.cloud_llm_status_label = status_label
+        else:
+            self.local_llm_status_label = status_label
+            
+        layout.addWidget(status_label)
+        
+        return widget
+        
+    def _create_save_buttons_layout(self):
+        """Создает адаптивный layout для кнопок сохранения."""
+        # Используем Grid Layout для лучшей адаптивности
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(6)
+        
+        # NEW: Template Designer button
+        self.template_designer_button = QPushButton("🎨 Шаблоны")
+        self.template_designer_button.clicked.connect(self.show_template_designer)
+        self.template_designer_button.setToolTip("Создать и настроить шаблоны экспорта")
+        self.template_designer_button.setStyleSheet(self._get_button_style("#9C27B0"))
+        self.template_designer_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        
+        # NEW: Preview button
+        self.preview_button = QPushButton("🔍 Просмотр")
+        self.preview_button.setEnabled(False)
+        self.preview_button.clicked.connect(self.show_preview_dialog)
+        self.preview_button.setStyleSheet(self._get_button_style("#FF9800"))
+        self.preview_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        
+        self.save_button = QPushButton("💾 JSON")
+        self.save_button.setEnabled(False)
+        self.save_button.clicked.connect(self.save_results)
+        self.save_button.setStyleSheet(self._get_button_style("#4CAF50"))
+        self.save_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        
+        self.save_excel_button = QPushButton("📊 Excel")
+        self.save_excel_button.setEnabled(False)
+        self.save_excel_button.clicked.connect(self.save_excel)
+        self.save_excel_button.setStyleSheet(self._get_button_style("#2196F3"))
+        self.save_excel_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        
+        # Размещаем кнопки в сетке 2x2 для лучшей адаптивности
+        grid_layout.addWidget(self.template_designer_button, 0, 0)
+        grid_layout.addWidget(self.preview_button, 0, 1)
+        grid_layout.addWidget(self.save_button, 1, 0)
+        grid_layout.addWidget(self.save_excel_button, 1, 1)
+        
+        return grid_layout
+        
+    def _get_button_style(self, bg_color):
+        """Возвращает единообразный стиль для кнопок."""
+        return f"""
+            QPushButton {{
+                background-color: {bg_color};
+                color: white;
+                font-weight: bold;
+                font-size: 11px;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 8px;
+                min-height: 24px;
+            }}
+            QPushButton:hover {{
+                background-color: {self._darken_color(bg_color)};
+            }}
+            QPushButton:disabled {{
+                background-color: #cccccc;
+                color: #666666;
+            }}
+        """
+        
+    def _darken_color(self, hex_color):
+        """Затемняет цвет для hover эффекта."""
+        color_map = {
+            "#9C27B0": "#8E24AA",
+            "#FF9800": "#F57C00", 
+            "#4CAF50": "#43A047",
+            "#2196F3": "#1976D2"
+                 }
+         return color_map.get(hex_color, hex_color)
+         
+    def _initialize_providers(self):
+        """Инициализирует провайдеров облачных и локальных LLM после создания UI."""
+        try:
+            # Заполняем облачных провайдеров
+            self.populate_cloud_providers()
+            
+            # Заполняем локальных провайдеров
+            self.populate_local_providers()
+            
+            # Обновляем статус автоматического LLM
+            self.update_auto_llm_status()
+            
+            print("[OK] Провайдеры инициализированы")
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка инициализации провайдеров: {e}")
+            import traceback
+            traceback.print_exc()

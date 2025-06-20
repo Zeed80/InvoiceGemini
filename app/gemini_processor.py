@@ -854,18 +854,35 @@ class GeminiProcessor(BaseProcessor):
         try:
             # Пытаемся напрямую разобрать полный текст как JSON
             try:
-                return json.loads(response_text)
+                parsed_data = json.loads(response_text)
+                log_message(f"✅ Успешно распарсен JSON: {type(parsed_data)}")
+                return parsed_data
             except json.JSONDecodeError:
+                log_message("⚠️ Прямой парсинг JSON не удался, ищем JSON в тексте")
                 # Если не удалось, ищем JSON в тексте
                 pass
                 
-            # Пытаемся найти JSON между фигурными скобками
+            # Пытаемся найти JSON между фигурными скобками (объект)
             start_idx = response_text.find('{')
             end_idx = response_text.rfind('}')
             
             if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
                 json_str = response_text[start_idx:end_idx+1]
-                return json.loads(json_str)
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    log_message("⚠️ Не удалось распарсить JSON объект")
+                    
+            # Пытаемся найти JSON между квадратными скобками (массив)
+            start_idx = response_text.find('[')
+            end_idx = response_text.rfind(']')
+            
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_str = response_text[start_idx:end_idx+1]
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    log_message("⚠️ Не удалось распарсить JSON массив")
                 
             # Пытаемся найти JSON между тройными обратными кавычками
             json_pattern = r'```json\s*([\s\S]*?)\s*```'
@@ -874,7 +891,9 @@ class GeminiProcessor(BaseProcessor):
             if matches:
                 for match in matches:
                     try:
-                        return json.loads(match)
+                        parsed_data = json.loads(match)
+                        log_message(f"✅ Найден JSON в блоке ```json: {type(parsed_data)}")
+                        return parsed_data
                     except json.JSONDecodeError:
                         continue
                         
@@ -885,14 +904,18 @@ class GeminiProcessor(BaseProcessor):
             if matches:
                 for match in matches:
                     try:
-                        return json.loads(match)
+                        parsed_data = json.loads(match)
+                        log_message(f"✅ Найден JSON в блоке ```: {type(parsed_data)}")
+                        return parsed_data
                     except json.JSONDecodeError:
                         continue
                         
             # Если все методы не сработали, очищаем текст и пробуем еще раз
             cleaned_text = self._clean_json_string(response_text)
             try:
-                return json.loads(cleaned_text)
+                parsed_data = json.loads(cleaned_text)
+                log_message(f"✅ Найден JSON после очистки: {type(parsed_data)}")
+                return parsed_data
             except json.JSONDecodeError:
                 # Если все методы извлечения JSON не сработали, создаем базовую структуру
                 log_message("ПРЕДУПРЕЖДЕНИЕ: Не удалось извлечь JSON из ответа API. Создаю базовую структуру.")
@@ -930,12 +953,26 @@ class GeminiProcessor(BaseProcessor):
             dict: Стандартизированные данные
         """
         try:
-            # Проверяем, что data - словарь
-            if not isinstance(data, dict):
-                log_message(f"ОШИБКА: Входные данные не являются словарем: {type(data)}")
+            # Проверяем тип входных данных и нормализуем их
+            if isinstance(data, list):
+                log_message(f"✅ Получен список данных от Gemini с {len(data)} элементами")
+                # Если получен список, берем первый элемент (обычно счет содержит одну запись)
+                if len(data) > 0 and isinstance(data[0], dict):
+                    data = data[0]
+                    log_message(f"✅ Используем первый элемент списка: {list(data.keys())}")
+                else:
+                    log_message("❌ Список пуст или первый элемент не является словарем")
+                    return {"fields": [], "error": "Empty list or invalid list format"}
+                    
+            elif not isinstance(data, dict):
+                log_message(f"ОШИБКА: Входные данные не являются словарем или списком: {type(data)}")
                 if isinstance(data, str):
                     try:
-                        data = json.loads(data)
+                        parsed_data = json.loads(data)
+                        # Если после парсинга получился список, обрабатываем рекурсивно
+                        if isinstance(parsed_data, list):
+                            return self._standardize_response_format(parsed_data)
+                        data = parsed_data
                     except json.JSONDecodeError:
                         return {"fields": [], "error": "Invalid data format"}
                 else:

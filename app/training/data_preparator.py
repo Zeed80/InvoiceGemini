@@ -5072,8 +5072,17 @@ class TrainingDataPreparator:
             
             dataset = Dataset.from_dict(dataset_dict)
             
-            # Разделяем на train/validation
-            train_test = dataset.train_test_split(test_size=0.1, seed=42)
+            # Разделяем на train/validation с учетом маленьких датасетов
+            if processed_count < 10:
+                # Для очень маленьких датасетов не разделяем
+                self._log(f"⚠️ Маленький датасет ({processed_count} образцов), используем весь для обучения")
+                train_test = DatasetDict({
+                    'train': dataset,
+                    'test': dataset  # Дублируем для совместимости
+                })
+            else:
+                # Нормальное разделение для больших датасетов
+                train_test = dataset.train_test_split(test_size=0.1, seed=42)
             
             # Сохраняем датасет
             dataset_path = os.path.join(dataset_dir, "dataset")

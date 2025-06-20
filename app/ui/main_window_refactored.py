@@ -336,8 +336,16 @@ class MainWindowRefactored(QMainWindow):
     def _show_training_dialog(self):
         """Show training dialog."""
         if not self.training_dialog:
+            # Получаем необходимые компоненты
             processors = self.processing_controller.model_manager.get_processors()
-            self.training_dialog = TrainingDialog(processors, self)
+            
+            # Создаем TrainingDialog с правильными параметрами
+            self.training_dialog = TrainingDialog(
+                app_config=app_config,
+                ocr_processor=processors.get('ocr_processor'),
+                gemini_processor=processors.get('gemini_processor'),
+                parent=self
+            )
         self.training_dialog.show()
         
     def _show_field_manager_dialog(self):
