@@ -5,7 +5,7 @@
 
 import os
 import base64
-import base64.binascii
+import binascii
 from pathlib import Path
 from typing import Optional, Union
 from cryptography.fernet import Fernet
@@ -195,7 +195,7 @@ class CryptoManager:
             base64.b64decode(data, validate=True)
             # Проверяем, что строка имеет правильный формат Fernet
             return data.startswith('gAAAAA') and len(data) > 100
-        except (ValueError, TypeError, base64.binascii.Error, Exception) as e:
+        except (ValueError, TypeError, binascii.Error, Exception) as e:
             # Ошибка проверки шифрования - данные не зашифрованы
             return False
     

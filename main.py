@@ -139,10 +139,8 @@ def setup_portable_mode():
     # Пытаемся использовать зашифрованное хранение, если доступно
     try:
         from app.security.secrets_manager import SecretsManager
-        from app.security.crypto_manager import CryptoManager
         
-        crypto_manager = CryptoManager()
-        secrets_manager = SecretsManager(crypto_manager)
+        secrets_manager = SecretsManager()
         google_api_key = secrets_manager.get_secret('google_api_key')
         
         if google_api_key:

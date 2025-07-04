@@ -159,13 +159,15 @@ class LLMProvidersDialog(QDialog):
         desc_label.setStyleSheet("color: #666; margin: 10px 0;")
         layout.addWidget(desc_label)
         
-        # Создаем табы для каждого провайдера
+        # Создаем табы только для провайдеров, поддерживающих файлы
         self.tab_widget = QTabWidget()
         
         for provider_name, config in LLM_PROVIDERS.items():
-            tab = self._create_provider_tab(provider_name, config)
-            icon_text = self._get_provider_icon(provider_name)
-            self.tab_widget.addTab(tab, f"{icon_text} {config.display_name}")
+            if config.supports_files:  # Показываем только провайдеров, поддерживающих файлы
+                tab = self._create_provider_tab(provider_name, config)
+                icon_text = self._get_provider_icon(provider_name)
+                files_icon = "📄" if config.supports_files else ""
+                self.tab_widget.addTab(tab, f"{icon_text} {config.display_name} {files_icon}".strip())
         
         layout.addWidget(self.tab_widget)
         
@@ -232,6 +234,10 @@ class LLMProvidersDialog(QDialog):
         # Показываем поддержку vision
         vision_support = self.tr("Да") if config.supports_vision else self.tr("Нет (только текст + OCR)")
         info_layout.addRow(self.tr("Поддержка изображений:"), QLabel(vision_support))
+        
+        # Показываем поддержку файлов
+        files_support = self.tr("Да 📄") if config.supports_files else self.tr("Нет ❌")
+        info_layout.addRow(self.tr("Поддержка файлов (PDF, JPG, PNG):"), QLabel(files_support))
         
         info_group.setLayout(info_layout)
         scroll_layout.addWidget(info_group)
@@ -437,10 +443,11 @@ class LLMProvidersDialog(QDialog):
             del self.test_threads[provider_name]
     
     def test_all_providers(self):
-        """Тестирует все настроенные провайдеры"""
-        for provider_name in LLM_PROVIDERS.keys():
+        """Тестирует все настроенные провайдеры, поддерживающие файлы"""
+        for provider_name, config in LLM_PROVIDERS.items():
+            if not config.supports_files:
+                continue
             widgets = self.provider_widgets.get(provider_name, {})
-            config = LLM_PROVIDERS[provider_name]
             
             # Проверяем, есть ли API ключ (если требуется)
             if config.requires_api_key:

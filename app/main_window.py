@@ -35,6 +35,7 @@ from .ui.export_template_designer import ExportTemplateDesigner
 from .ui.field_manager_dialog import FieldManagerDialog
 from .field_manager import field_manager
 from .ui.llm_providers_dialog import LLMProvidersDialog
+from .prompt_generator import PromptGenerator
 
 # NEW: Import new components for Phase 1 improvements
 from .core.cache_manager import CacheManager
@@ -163,6 +164,9 @@ class MainWindow(QMainWindow):
         self.cache_manager = CacheManager()
         self.retry_manager = RetryManager()
         self.backup_manager = BackupManager()
+        
+        # Initialize prompt generator
+        self.prompt_generator = PromptGenerator(settings_manager)
         
         # NEW: Initialize UI components
         self.file_selector = None  # Will be initialized in init_ui
@@ -731,6 +735,9 @@ class MainWindow(QMainWindow):
         # Загружаем и применяем сохраненные настройки
         self.load_saved_settings()
         
+        # ИСПРАВЛЕНИЕ: Инициализируем провайдеры при запуске
+        self.initialize_providers()
+        
         # ИСПРАВЛЕНИЕ: Проверяем статус компонентов после загрузки настроек
         self.update_model_component_visibility()
     
@@ -998,6 +1005,52 @@ class MainWindow(QMainWindow):
                 break
         
         print(f"Загружены настройки: модель={active_model}, OCR={ocr_lang}, Gemini={selected_gemini_model}")
+    
+    def initialize_providers(self):
+        """Инициализирует провайдеров при запуске приложения."""
+        try:
+            print("🔄 Инициализация провайдеров...")
+            
+            # Загружаем облачных провайдеров
+            if hasattr(self, 'cloud_provider_selector'):
+                self.populate_cloud_providers()
+                print("☁️ Облачные провайдеры инициализированы")
+            
+            # Загружаем локальных провайдеров
+            if hasattr(self, 'local_provider_selector'):
+                self.populate_local_providers()
+                print("🖥️ Локальные провайдеры инициализированы")
+                
+            print("✅ Провайдеры успешно инициализированы")
+            
+        except Exception as e:
+            print(f"❌ Ошибка при инициализации провайдеров: {e}")
+    
+    def _auto_select_cloud_provider(self):
+        """Автоматически выбирает первого доступного облачного провайдера."""
+        try:
+            if hasattr(self, 'cloud_provider_selector') and self.cloud_provider_selector.currentIndex() == 0 and self.cloud_provider_selector.count() > 1:
+                print("🔄 Автоматически выбираем первого облачного провайдера...")
+                self.cloud_provider_selector.setCurrentIndex(1)  # Выбираем первого реального провайдера
+                # Принудительно вызываем обработчик изменения провайдера
+                self.on_cloud_provider_changed()
+                # Обновляем видимость компонентов после выбора провайдера
+                QTimer.singleShot(50, self.update_model_component_visibility)
+        except Exception as e:
+            print(f"❌ Ошибка автоматического выбора облачного провайдера: {e}")
+
+    def _auto_select_local_provider(self):
+        """Автоматически выбирает первого локального провайдера (даже если недоступен)."""
+        try:
+            if hasattr(self, 'local_provider_selector') and self.local_provider_selector.currentIndex() == 0 and self.local_provider_selector.count() > 1:
+                print("🔄 Автоматически выбираем первого локального провайдера...")
+                self.local_provider_selector.setCurrentIndex(1)  # Выбираем первого реального провайдера
+                # Принудительно вызываем обработчик изменения провайдера
+                self.on_local_provider_changed()
+                # Обновляем видимость компонентов после выбора провайдера
+                QTimer.singleShot(50, self.update_model_component_visibility)
+        except Exception as e:
+            print(f"❌ Ошибка автоматического выбора локального провайдера: {e}")
     
     def on_model_changed(self, checked):
         """Обработчик события изменения модели."""
@@ -1921,12 +1974,54 @@ class MainWindow(QMainWindow):
         try:
             # Обновляем заголовки таблицы результатов
             self.setup_results_table()
+            
+            # Автогенерируем промпты для всех моделей
+            self.regenerate_all_prompts()
+            
             # Можно добавить уведомление об успешном обновлении
-            self.status_bar.showMessage("Поля таблицы обновлены", 3000)
+            self.status_bar.showMessage("Поля таблицы и промпты обновлены", 3000)
         except Exception as e:
             utils.show_error_message(
                 self, "Ошибка", f"Ошибка при обновлении таблицы: {str(e)}"
             )
+    
+    def regenerate_all_prompts(self):
+        """Регенерирует промпты для всех моделей на основе текущих полей таблицы."""
+        try:
+            print("🔄 Регенерация промптов для всех моделей...")
+            
+            # Генерируем промпты для всех облачных провайдеров
+            cloud_providers = ['openai', 'anthropic', 'google', 'mistral', 'deepseek', 'xai']
+            for provider in cloud_providers:
+                try:
+                    prompt = self.prompt_generator.generate_cloud_llm_prompt(provider)
+                    self.prompt_generator.save_prompt_to_file(f"cloud_llm_{provider}", prompt)
+                    print(f"✅ Промпт для {provider} обновлен")
+                except Exception as e:
+                    print(f"❌ Ошибка обновления промпта для {provider}: {e}")
+            
+            # Генерируем промпты для локальных провайдеров
+            local_providers = ['ollama']
+            for provider in local_providers:
+                try:
+                    prompt = self.prompt_generator.generate_local_llm_prompt(provider)
+                    self.prompt_generator.save_prompt_to_file(f"local_llm_{provider}", prompt)
+                    print(f"✅ Промпт для {provider} обновлен")
+                except Exception as e:
+                    print(f"❌ Ошибка обновления промпта для {provider}: {e}")
+            
+            # Генерируем промпт для Gemini
+            try:
+                prompt = self.prompt_generator.generate_gemini_prompt()
+                self.prompt_generator.save_prompt_to_file("gemini", prompt)
+                print("✅ Промпт для Gemini обновлен")
+            except Exception as e:
+                print(f"❌ Ошибка обновления промпта для Gemini: {e}")
+            
+            print("✅ Регенерация промптов завершена")
+            
+        except Exception as e:
+            print(f"❌ Ошибка регенерации промптов: {e}")
 
     def show_llm_plugins_dialog(self):
         """Показывает диалог настройки LLM плагинов."""
@@ -2154,7 +2249,7 @@ class MainWindow(QMainWindow):
     
     def _create_default_llm_prompt(self, provider_name: str) -> str:
         """
-        Создает базовый промпт для LLM провайдера.
+        Создает базовый промпт для LLM провайдера используя генератор промптов.
         
         Args:
             provider_name: Имя провайдера (openai, anthropic, google, etc.)
@@ -2162,119 +2257,35 @@ class MainWindow(QMainWindow):
         Returns:
             str: Базовый промпт для извлечения данных из инвойсов
         """
-        # Получаем поля таблицы для включения в промпт
-        table_fields = []
         try:
-            from .field_manager import FieldManager
-            field_manager = FieldManager()
-            enabled_fields = field_manager.get_enabled_fields()
-            table_fields = [f"- {field.display_name}: {field.description}" for field in enabled_fields]
-        except (ImportError, AttributeError, TypeError, Exception) as e:
-            # Базовые поля если не удалось получить из настроек field_manager
-            table_fields = [
-                "- Номер счета: Номер документа/инвойса",
-                "- Дата: Дата выставления счета",
-                "- Поставщик: Название компании-поставщика",
-                "- Сумма: Общая сумма к оплате",
-                "- НДС: Сумма налога на добавленную стоимость",
-                "- Валюта: Валюта документа"
-            ]
-        
-        # Базовый промпт с учетом особенностей провайдера
-        if provider_name == "anthropic":
-            # Claude предпочитает более структурированные инструкции
-            prompt = """Ты эксперт по анализу финансовых документов. Проанализируй предоставленное изображение счета-фактуры или инвойса и извлеки из него структурированные данные.
+            # Используем новый генератор промптов
+            return self.prompt_generator.generate_cloud_llm_prompt(provider_name)
+        except Exception as e:
+            print(f"❌ Ошибка генерации промпта для {provider_name}: {e}")
+            # Fallback - базовый промпт
+            return f"""Ты эксперт по анализу финансовых документов. Проанализируй предоставленное изображение счета-фактуры или инвойса и извлеки из него структурированные данные.
 
-<instructions>
 Извлеки следующие поля из документа:
-
-{fields}
+- sender: Название компании-поставщика или продавца
+- invoice_number: Номер счета, инвойса или фактуры
+- invoice_date: Дата выставления счета или инвойса
+- total: Общая сумма к оплате с учетом НДС
+- amount_no_vat: Сумма без НДС
+- vat_percent: Ставка НДС в процентах
+- currency: Валюта платежа
+- category: Категория товаров или услуг
+- description: Описание товаров, услуг или содержимого документа
+- note: Дополнительные примечания и комментарии
 
 Требования к ответу:
 1. Верни результат ТОЛЬКО в формате JSON
-2. Используй точные названия полей как указано выше
+2. Используй точные ID полей как ключи
 3. Если поле не найдено, используй значение "N/A"
 4. Все суммы указывай числами без символов валют
 5. Даты в формате DD.MM.YYYY
 6. Будь точным и внимательным к деталям
-</instructions>
 
 Проанализируй документ и верни JSON с извлеченными данными:"""
-            
-        elif provider_name == "google":
-            # Gemini хорошо работает с четкими инструкциями
-            prompt = """Действуй как эксперт по распознаванию счетов-фактур и финансовых документов. 
-
-Твоя задача: проанализировать изображение документа и извлечь из него ключевые данные в формате JSON.
-
-Поля для извлечения:
-{fields}
-
-Правила:
-• Возвращай ТОЛЬКО валидный JSON без дополнительного текста
-• Используй точные названия полей как указано
-• Для отсутствующих полей используй "N/A"
-• Числовые значения без символов валют
-• Даты в формате DD.MM.YYYY
-• Будь максимально точным
-
-Проанализируй документ:"""
-            
-        elif provider_name in ["openai", "deepseek", "xai"]:
-            # OpenAI-совместимые модели
-            prompt = """You are an expert in invoice and financial document analysis. Analyze the provided document image and extract structured data in JSON format.
-
-Extract the following fields:
-{fields}
-
-Requirements:
-- Return ONLY valid JSON format
-- Use exact field names as specified
-- Use "N/A" for missing fields  
-- Numeric values without currency symbols
-- Dates in DD.MM.YYYY format
-- Be precise and thorough
-
-Analyze the document and return JSON:"""
-            
-        elif provider_name == "mistral":
-            # Mistral предпочитает краткие четкие инструкции
-            prompt = """Analyse ce document financier et extrais les données en JSON.
-
-Champs à extraire:
-{fields}
-
-Format: JSON uniquement, "N/A" si absent, dates DD.MM.YYYY
-
-Analyse:"""
-            
-        elif provider_name == "ollama":
-            # Для локальных моделей более простые инструкции
-            prompt = """Extract data from this invoice/document in JSON format.
-
-Fields to extract:
-{fields}
-
-Rules:
-- JSON format only
-- Use "N/A" if field not found
-- Dates as DD.MM.YYYY
-- Numbers without currency symbols
-
-Extract the data:"""
-            
-        else:
-            # Универсальный промпт для других провайдеров
-            prompt = """Analyze this financial document and extract structured data in JSON format.
-
-Extract these fields:
-{fields}
-
-Return only valid JSON. Use "N/A" for missing fields. Dates in DD.MM.YYYY format.
-
-Analyze:"""
-        
-        return prompt.format(fields="\n".join(table_fields))
     
     def _reset_prompt_to_default(self, model_type: str, text_edit):
         """
@@ -2323,8 +2334,8 @@ Analyze:"""
             return
         
         try:
-            if model_type in ['layoutlm', 'donut', 'gemini']:
-                # Старые модели - сохраняем как раньше
+            if model_type in ['layoutlm', 'donut']:
+                # Старые модели - сохраняем в настройки как раньше
                 prompt_key = f"{model_type}_prompt"
                 settings_manager.set_setting(prompt_key, prompt_text)
                 
@@ -2335,31 +2346,48 @@ Analyze:"""
                     
                 model_display_name = model_type.upper()
                 
+            elif model_type == 'gemini':
+                # Gemini - сохраняем в файл
+                success = self.prompt_generator.save_prompt_to_file("gemini", prompt_text)
+                if success:
+                    # Также обновляем промпт в процессоре
+                    processor = self.model_manager.get_model(model_type)
+                    if processor:
+                        processor.set_prompt(prompt_text)
+                    model_display_name = "GEMINI"
+                else:
+                    utils.show_error_message(self, "Ошибка", "Не удалось сохранить промпт Gemini")
+                    return
+                
             elif model_type == 'cloud_llm':
-                # Облачные LLM модели
+                # Облачные LLM модели - сохраняем в файлы
                 provider_data = self.cloud_provider_selector.currentData()
                 if not provider_data:
                     utils.show_error_message(self, "Ошибка", "Провайдер не выбран")
                     return
                 
                 provider_name = provider_data.get('provider')
-                prompt_key = f"cloud_llm_{provider_name}_prompt"
-                settings_manager.set_setting(prompt_key, prompt_text)
-                
-                model_display_name = f"Cloud LLM ({provider_name.upper()})"
+                success = self.prompt_generator.save_prompt_to_file(f"cloud_llm_{provider_name}", prompt_text)
+                if success:
+                    model_display_name = f"Cloud LLM ({provider_name.upper()})"
+                else:
+                    utils.show_error_message(self, "Ошибка", f"Не удалось сохранить промпт для {provider_name}")
+                    return
                 
             elif model_type == 'local_llm':
-                # Локальные LLM модели
+                # Локальные LLM модели - сохраняем в файлы
                 provider_data = self.local_provider_selector.currentData()
                 if not provider_data:
                     utils.show_error_message(self, "Ошибка", "Провайдер не выбран")
                     return
                 
                 provider_name = provider_data.get('provider')
-                prompt_key = f"local_llm_{provider_name}_prompt"
-                settings_manager.set_setting(prompt_key, prompt_text)
-                
-                model_display_name = f"Local LLM ({provider_name.upper()})"
+                success = self.prompt_generator.save_prompt_to_file(f"local_llm_{provider_name}", prompt_text)
+                if success:
+                    model_display_name = f"Local LLM ({provider_name.upper()})"
+                else:
+                    utils.show_error_message(self, "Ошибка", f"Не удалось сохранить промпт для {provider_name}")
+                    return
                 
             else:
                 utils.show_error_message(self, "Ошибка", f"Неподдерживаемый тип модели: {model_type}")
@@ -2459,6 +2487,10 @@ Analyze:"""
         elif self.gemini_model_selector.count() > default_index:
              self.gemini_model_selector.setCurrentIndex(default_index)
         
+        # ИСПРАВЛЕНИЕ: Активируем селектор после заполнения
+        self.gemini_model_selector.setEnabled(True)
+        print(f"✅ Gemini model selector активирован с {self.gemini_model_selector.count()} моделями")
+        
         # Обновляем всплывающую подсказку
         self.gemini_model_selector.setToolTip(
             "Выберите модель Gemini. *Free Tier обычно имеет лимиты (e.g., 15 RPM).\n"
@@ -2557,6 +2589,10 @@ Analyze:"""
             if self.trocr_model_selector.itemData(i) == last_model:
                 self.trocr_model_selector.setCurrentIndex(i)
                 break
+        
+        # ИСПРАВЛЕНИЕ: Активируем селектор после заполнения
+        self.trocr_model_selector.setEnabled(True)
+        print(f"✅ TrOCR model selector активирован с {self.trocr_model_selector.count()} моделями")
         
     def on_trocr_model_changed(self, index):
         """Обработчик изменения модели TrOCR."""
@@ -4203,8 +4239,121 @@ Analyze:"""
                 f"Не удалось применить шаблон:\n{str(e)}"
             )
 
+    def check_api_provider_status(self, provider_name: str, config) -> tuple[bool, str]:
+        """
+        Проверяет реальный статус API провайдера.
+        
+        Returns:
+            tuple[bool, str]: (is_working, status_message)
+        """
+        try:
+            # Специальная обработка для Ollama
+            if provider_name == "ollama":
+                return self.check_ollama_status()
+            
+            # Для облачных провайдеров проверяем API ключ
+            if not config.requires_api_key:
+                return True, "OK"
+            
+            api_key = settings_manager.get_encrypted_setting(f'{provider_name}_api_key')
+            if not api_key:
+                return False, "CFG"  # Не настроен
+            
+            # Проверяем реальное подключение
+            try:
+                from .plugins.models.universal_llm_plugin import UniversalLLMPlugin
+                
+                print(f"🔍 Probing connection to {provider_name}...")
+                
+                # Создаем временный плагин для тестирования
+                test_plugin = UniversalLLMPlugin(
+                    provider_name=provider_name,
+                    model_name=config.default_model,
+                    api_key=api_key
+                )
+                
+                # Пытаемся загрузить и протестировать
+                success = test_plugin.load_model()
+                if success:
+                    print(f"✅ Connection to {provider_name} verified successfully")
+                    return True, "OK"
+                else:
+                    print(f"❌ {provider_name}: Connection error")
+                    return False, "ERR"
+                    
+            except Exception as e:
+                error_msg = str(e).lower()
+                print(f"❌ {provider_name}: {str(e)}")
+                
+                if "timeout" in error_msg or "timed out" in error_msg:
+                    return False, "TMO"  # Timeout
+                elif "unauthorized" in error_msg or "invalid api key" in error_msg:
+                    return False, "KEY"  # Неверный ключ
+                elif "credit balance" in error_msg or "insufficient funds" in error_msg:
+                    return False, "BAL"  # Недостаточно средств
+                elif "rate limit" in error_msg:
+                    return False, "LMT"  # Лимит превышен
+                else:
+                    return False, "ERR"  # Общая ошибка
+                    
+        except Exception as e:
+            print(f"❌ Ошибка проверки статуса {provider_name}: {e}")
+            return False, "ERR"
+    
+    def check_ollama_status(self) -> tuple[bool, str]:
+        """Специальная проверка статуса Ollama."""
+        try:
+            import requests
+            
+            print(f"🔍 Probing connection to ollama...")
+            
+            # Проверяем доступность сервера
+            response = requests.get("http://localhost:11434/api/tags", timeout=5)
+            if response.status_code == 200:
+                models_data = response.json()
+                available_models = [model['name'] for model in models_data.get('models', [])]
+                
+                if available_models:
+                    print(f"✅ Connection to ollama verified successfully")
+                    print(f"📋 Available models: {len(available_models)} found")
+                    return True, "OK"
+                else:
+                    print(f"❌ ollama: No models available")
+                    return False, "CFG"  # Нет моделей
+            else:
+                print(f"❌ ollama: Server returned {response.status_code}")
+                return False, "ERR"
+                
+        except requests.exceptions.ConnectionError:
+            print(f"❌ ollama: Connection refused - server not running")
+            return False, "ERR"
+        except requests.exceptions.Timeout:
+            print(f"❌ ollama: Connection timeout")
+            return False, "TMO"
+        except Exception as e:
+            print(f"❌ ollama: {str(e)}")
+            return False, "ERR"
+    
+    def get_status_icon_with_description(self, status_code: str) -> tuple[str, str]:
+        """
+        Возвращает иконку и описание для статуса провайдера.
+        
+        Returns:
+            tuple[str, str]: (icon, description)
+        """
+        status_map = {
+            "OK": ("[✅]", "Работает корректно"),
+            "CFG": ("[⚙️]", "Требуется настройка API ключа"),
+            "KEY": ("[🔑]", "Неверный API ключ"),
+            "BAL": ("[💰]", "Недостаточно средств"),
+            "TMO": ("[⏱️]", "Превышено время ожидания"),
+            "LMT": ("[🚫]", "Превышен лимит запросов"),
+            "ERR": ("[❌]", "Ошибка подключения")
+        }
+        return status_map.get(status_code, ("[❓]", "Неизвестная ошибка"))
+
     def populate_cloud_providers(self):
-        """Заполняет список облачных провайдеров."""
+        """Заполняет список облачных провайдеров, поддерживающих файлы."""
         try:
             self.cloud_provider_selector.clear()
             self.cloud_provider_selector.addItem("Выберите провайдера...", None)
@@ -4214,29 +4363,30 @@ Analyze:"""
             providers_added = 0
             llm_settings = settings_manager.get_setting('llm_providers', {})
             
-            # Добавляем только облачных провайдеров (все кроме ollama)
+            # Добавляем только облачных провайдеров, которые поддерживают файлы (все кроме ollama)
             for provider_name, config in LLM_PROVIDERS.items():
-                if provider_name != "ollama":  # Пропускаем локальные
-                    # Проверяем настроенность провайдера
-                    is_configured = False
-                    if config.requires_api_key:
-                        api_key = settings_manager.get_encrypted_setting(f'{provider_name}_api_key')
-                        is_configured = bool(api_key)
-                    else:
-                        is_configured = True
+                if provider_name != "ollama" and config.supports_files:  # Пропускаем локальные и не поддерживающие файлы
+                    # Проверяем реальный статус провайдера
+                    is_working, status_code = self.check_api_provider_status(provider_name, config)
+                    status_icon, status_description = self.get_status_icon_with_description(status_code)
                     
                     # Формируем название с индикатором
-                    status_icon = "[OK]" if is_configured else "[CFG]"
-                    display_name = f"{status_icon} {config.display_name}"
+                    files_icon = "📄" if config.supports_files else ""
+                    display_name = f"{status_icon} {config.display_name} {files_icon}".strip()
                     
                     self.cloud_provider_selector.addItem(display_name, {
                         'provider': provider_name,
                         'config': config,
-                        'configured': is_configured
+                        'configured': is_working,
+                        'status_code': status_code,
+                        'status_description': status_description
                     })
                     providers_added += 1
+                    
+                    # Выводим подробную информацию о статусе
+                    print(f"🔍 {provider_name}: {status_description}")
             
-            print(f"[OK] Загружено {providers_added} облачных провайдеров")
+            print(f"[OK] Загружено {providers_added} облачных провайдеров (только с поддержкой файлов)")
             
         except Exception as e:
             print(f"[ERROR] Ошибка загрузки облачных провайдеров: {e}")
@@ -4244,7 +4394,7 @@ Analyze:"""
             self.cloud_provider_selector.addItem("Ошибка загрузки", None)
 
     def populate_local_providers(self):
-        """Заполняет список локальных провайдеров."""
+        """Заполняет список локальных провайдеров, поддерживающих файлы."""
         try:
             self.local_provider_selector.clear()
             self.local_provider_selector.addItem("Выберите провайдера...", None)
@@ -4253,24 +4403,30 @@ Analyze:"""
             
             providers_added = 0
             
-            # Добавляем только локальных провайдеров (пока только ollama)
+            # Добавляем только локальных провайдеров, которые поддерживают файлы (пока только ollama)
             for provider_name, config in LLM_PROVIDERS.items():
-                if provider_name == "ollama":  # Только локальные
-                    # Проверяем доступность Ollama
-                    is_available = self.check_ollama_availability()
+                if provider_name == "ollama" and config.supports_files:  # Только локальные, поддерживающие файлы
+                    # Проверяем реальный статус Ollama
+                    is_working, status_code = self.check_api_provider_status(provider_name, config)
+                    status_icon, status_description = self.get_status_icon_with_description(status_code)
                     
                     # Формируем название с индикатором
-                    status_icon = "[OK]" if is_available else "[ERR]"
-                    display_name = f"{status_icon} {config.display_name}"
+                    files_icon = "📄" if config.supports_files else ""
+                    display_name = f"{status_icon} {config.display_name} {files_icon}".strip()
                     
                     self.local_provider_selector.addItem(display_name, {
                         'provider': provider_name,
                         'config': config,
-                        'available': is_available
+                        'available': is_working,
+                        'status_code': status_code,
+                        'status_description': status_description
                     })
                     providers_added += 1
+                    
+                    # Выводим подробную информацию о статусе
+                    print(f"🔍 {provider_name}: {status_description}")
             
-            print(f"[OK] Загружено {providers_added} локальных провайдеров")
+            print(f"[OK] Загружено {providers_added} локальных провайдеров (только с поддержкой файлов)")
             
         except Exception as e:
             print(f"❌ Ошибка загрузки локальных провайдеров: {e}")
@@ -4302,9 +4458,14 @@ Analyze:"""
         config = current_data.get('config')
         is_configured = current_data.get('configured', False)
         
+        print(f"🔄 Провайдер изменен на: {provider_name} (настроен: {is_configured})")
+        
         # Заполняем модели
         self.populate_cloud_models_for_provider(provider_name, config, is_configured)
         self.update_cloud_llm_status()
+        
+        # Обновляем видимость компонентов после изменения провайдера
+        self.update_model_component_visibility()
 
     def on_local_provider_changed(self):
         """Обработчик изменения выбранного локального провайдера."""
@@ -4321,9 +4482,14 @@ Analyze:"""
         config = current_data.get('config')
         is_available = current_data.get('available', False)
         
+        print(f"🔄 Локальный провайдер изменен на: {provider_name} (доступен: {is_available})")
+        
         # Заполняем модели
         self.populate_local_models_for_provider(provider_name, config, is_available)
         self.update_local_llm_status()
+        
+        # Обновляем видимость компонентов после изменения провайдера
+        self.update_model_component_visibility()
 
     def populate_cloud_models_for_provider(self, provider_name: str, config, is_configured: bool):
         """Заполняет модели для выбранного облачного провайдера."""
@@ -4345,14 +4511,16 @@ Analyze:"""
                 # Добавляем информацию о платности и возможностях
                 pricing_info = self.get_model_pricing_info(provider_name, model)
                 vision_support = "👁️" if config.supports_vision else ""
+                files_support = "📄" if config.supports_files else ""
                 
-                display_name = f"{model} {pricing_info} {vision_support}".strip()
+                display_name = f"{model} {pricing_info} {vision_support} {files_support}".strip()
                 
                 self.cloud_model_selector.addItem(display_name, {
                     'provider': provider_name,
                     'model': model,
                     'config': config,
-                    'pricing': pricing_info
+                    'pricing': pricing_info,
+                    'supports_files': config.supports_files
                 })
                 models_added += 1
                 
@@ -4361,7 +4529,7 @@ Analyze:"""
                     self.cloud_model_selector.setCurrentIndex(models_added - 1)
             
             self.cloud_model_selector.setEnabled(models_added > 0)
-            print(f"[OK] Загружено {models_added} моделей для {config.display_name}")
+            print(f"[OK] Загружено {models_added} моделей для {config.display_name} (все поддерживают файлы)")
             
         except Exception as e:
             print(f"❌ Ошибка загрузки моделей для {provider_name}: {e}")
@@ -4395,17 +4563,27 @@ Analyze:"""
                 
                 models_added = 0
                 for model in available_models:
+                    # Проверяем поддержку файлов (через vision модели)
+                    model_supports_vision = "vision" in model.lower()
+                    model_supports_files = model_supports_vision and config.supports_files
+                    
+                    # Фильтруем только модели, которые поддерживают файлы
+                    if not model_supports_files:
+                        continue
+                    
                     # Добавляем информацию о модели
-                    vision_support = "👁️" if "vision" in model.lower() else ""
+                    vision_support = "👁️" if model_supports_vision else ""
+                    files_support = "📄" if model_supports_files else ""
                     size_info = self.get_model_size_info(model)
                     
-                    display_name = f"{model} {size_info} {vision_support}".strip()
+                    display_name = f"{model} {size_info} {vision_support} {files_support}".strip()
                     
                     self.local_model_selector.addItem(display_name, {
                         'provider': provider_name,
                         'model': model,
                         'config': config,
-                        'size': size_info
+                        'size': size_info,
+                        'supports_files': model_supports_files
                     })
                     models_added += 1
                     
@@ -4414,7 +4592,7 @@ Analyze:"""
                         self.local_model_selector.setCurrentIndex(models_added - 1)
                 
                 self.local_model_selector.setEnabled(models_added > 0)
-                print(f"[OK] Загружено {models_added} локальных моделей для {config.display_name}")
+                print(f"[OK] Загружено {models_added} локальных моделей для {config.display_name} (только с поддержкой файлов)")
             
         except Exception as e:
             print(f"❌ Ошибка загрузки локальных моделей для {provider_name}: {e}")
@@ -4763,41 +4941,43 @@ Analyze:"""
         if hasattr(self, 'trocr_status_label'):
             self.trocr_status_label.setVisible(True)
         
-        # ИСПРАВЛЕНИЕ: Облачные LLM компоненты - исправляем логику активации
+        # УПРОЩЕНИЕ: Все селекторы всегда активны для удобства пользователя
         if hasattr(self, 'cloud_provider_label'):
-            self.cloud_provider_label.setEnabled(is_cloud_llm)
+            self.cloud_provider_label.setEnabled(True)
         if hasattr(self, 'cloud_provider_selector'):
-            self.cloud_provider_selector.setEnabled(is_cloud_llm)
-            # ИСПРАВЛЕНИЕ: Если выбрана облачная модель, принудительно активируем селектор
-            if is_cloud_llm and self.cloud_provider_selector.count() == 0:
-                # Если нет провайдеров, перезагружаем их
+            self.cloud_provider_selector.setEnabled(True)
+            # Загружаем провайдеров если их нет
+            if self.cloud_provider_selector.count() <= 1:
+                print("🔄 Загружаем облачных провайдеров...")
                 self.populate_cloud_providers()
+            # Автоматически выбираем первого провайдера при переключении на облачную модель
+            if is_cloud_llm:
+                QTimer.singleShot(100, lambda: self._auto_select_cloud_provider())
         if hasattr(self, 'cloud_model_label'):
-            self.cloud_model_label.setEnabled(is_cloud_llm)
+            self.cloud_model_label.setEnabled(True)
         if hasattr(self, 'cloud_model_selector'):
-            # ИСПРАВЛЕНИЕ: Облачный селектор моделей активен, если выбрана облачная модель И есть провайдер
-            provider_selected = is_cloud_llm and self.cloud_provider_selector.currentData() is not None
-            self.cloud_model_selector.setEnabled(provider_selected)
-            print(f"🔧 Cloud model selector enabled: {provider_selected} (cloud_llm={is_cloud_llm}, provider_data={self.cloud_provider_selector.currentData() is not None})")
+            self.cloud_model_selector.setEnabled(True)
+            print(f"🔧 Cloud model selector enabled: True (всегда активен)")
         if hasattr(self, 'cloud_llm_status_label'):
             self.cloud_llm_status_label.setVisible(True)
         
-        # ИСПРАВЛЕНИЕ: Локальные LLM компоненты - исправляем логику активации
+        # УПРОЩЕНИЕ: Все селекторы всегда активны для удобства пользователя
         if hasattr(self, 'local_provider_label'):
-            self.local_provider_label.setEnabled(is_local_llm)
+            self.local_provider_label.setEnabled(True)
         if hasattr(self, 'local_provider_selector'):
-            self.local_provider_selector.setEnabled(is_local_llm)
-            # ИСПРАВЛЕНИЕ: Если выбрана локальная модель, принудительно активируем селектор
-            if is_local_llm and self.local_provider_selector.count() == 0:
-                # Если нет провайдеров, перезагружаем их
+            self.local_provider_selector.setEnabled(True)
+            # Загружаем провайдеров если их нет
+            if self.local_provider_selector.count() <= 1:
+                print("🔄 Загружаем локальных провайдеров...")
                 self.populate_local_providers()
+            # Автоматически выбираем первого провайдера при переключении на локальную модель
+            if is_local_llm:
+                QTimer.singleShot(100, lambda: self._auto_select_local_provider())
         if hasattr(self, 'local_model_label'):
-            self.local_model_label.setEnabled(is_local_llm)
+            self.local_model_label.setEnabled(True)
         if hasattr(self, 'local_model_selector'):
-            # ИСПРАВЛЕНИЕ: Локальный селектор моделей активен, если выбрана локальная модель И есть провайдер
-            provider_selected = is_local_llm and self.local_provider_selector.currentData() is not None
-            self.local_model_selector.setEnabled(provider_selected)
-            print(f"🔧 Local model selector enabled: {provider_selected} (local_llm={is_local_llm}, provider_data={self.local_provider_selector.currentData() is not None})")
+            self.local_model_selector.setEnabled(True)
+            print(f"🔧 Local model selector enabled: True (всегда активен)")
         if hasattr(self, 'local_llm_status_label'):
             self.local_llm_status_label.setVisible(True)
         

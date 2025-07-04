@@ -43,32 +43,49 @@ class UniversalLLMPlugin(BaseLLMPlugin):
     
     def load_model(self) -> bool:
         """
-        Инициализирует клиент для выбранного провайдера.
+        Инициализирует клиент для выбранного провайдера и проверяет подключение.
         
         Returns:
-            bool: True если инициализация успешна
+            bool: True если инициализация и проверка подключения успешны
         """
         try:
+            success = False
             if self.provider_name == "openai":
-                return self._load_openai_client()
+                success = self._load_openai_client()
             elif self.provider_name == "anthropic":
-                return self._load_anthropic_client()
+                success = self._load_anthropic_client()
             elif self.provider_name == "google":
-                return self._load_google_client()
+                success = self._load_google_client()
             elif self.provider_name == "mistral":
-                return self._load_mistral_client()
+                success = self._load_mistral_client()
             elif self.provider_name == "deepseek":
-                return self._load_deepseek_client()
+                success = self._load_deepseek_client()
             elif self.provider_name == "xai":
-                return self._load_xai_client()
+                success = self._load_xai_client()
             elif self.provider_name == "ollama":
-                return self._load_ollama_client()
+                success = self._load_ollama_client()
             else:
                 print(f"❌ Неподдерживаемый провайдер: {self.provider_name}")
+                return False
+            
+            # Если клиент создан, проверяем реальное подключение
+            if success:
+                print(f"🔍 Проверяем подключение к {self.provider_name}...")
+                test_success = self._test_connection()
+                if test_success:
+                    print(f"✅ Подключение к {self.provider_name} проверено успешно")
+                    self.is_loaded = True
+                    return True
+                else:
+                    print(f"❌ Проверка подключения к {self.provider_name} неудачна")
+                    self.is_loaded = False
+                    return False
+            else:
                 return False
                 
         except Exception as e:
             print(f"❌ Ошибка инициализации {self.provider_name}: {e}")
+            self.is_loaded = False
             return False
     
     def _load_openai_client(self) -> bool:
@@ -80,8 +97,7 @@ class UniversalLLMPlugin(BaseLLMPlugin):
                 return False
             
             self.client = openai.OpenAI(api_key=self.api_key)
-            self.is_loaded = True
-            print(f"✅ OpenAI клиент инициализирован с моделью {self.model_name}")
+            print(f"🔧 OpenAI клиент создан для модели {self.model_name}")
             return True
         except ImportError:
             print("❌ Библиотека openai не установлена. Установите: pip install openai")
@@ -96,8 +112,7 @@ class UniversalLLMPlugin(BaseLLMPlugin):
                 return False
             
             self.client = anthropic.Anthropic(api_key=self.api_key)
-            self.is_loaded = True
-            print(f"✅ Anthropic клиент инициализирован с моделью {self.model_name}")
+            print(f"🔧 Anthropic клиент создан для модели {self.model_name}")
             return True
         except ImportError:
             print("❌ Библиотека anthropic не установлена. Установите: pip install anthropic")
@@ -113,8 +128,7 @@ class UniversalLLMPlugin(BaseLLMPlugin):
             
             genai.configure(api_key=self.api_key)
             self.client = genai.GenerativeModel(self.model_name)
-            self.is_loaded = True
-            print(f"✅ Google Gemini клиент инициализирован с моделью {self.model_name}")
+            print(f"🔧 Google Gemini клиент создан для модели {self.model_name}")
             return True
         except ImportError:
             print("❌ Библиотека google-generativeai не установлена. Установите: pip install google-generativeai")
@@ -179,20 +193,132 @@ class UniversalLLMPlugin(BaseLLMPlugin):
         try:
             import requests
             # Проверяем доступность Ollama сервера
-            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            response = requests.get(f"{self.base_url}/api/tags", timeout=10)
             if response.status_code == 200:
-                self.client = True  # Для Ollama используем requests напрямую
-                self.is_loaded = True
-                print(f"✅ Ollama клиент инициализирован с моделью {self.model_name}")
-                return True
+                # Проверяем, что модель доступна
+                models_data = response.json()
+                available_models = [model['name'] for model in models_data.get('models', [])]
+                
+                if self.model_name in available_models:
+                    self.client = True  # Для Ollama используем requests напрямую
+                    print(f"🔧 Ollama клиент создан для модели {self.model_name}")
+                    return True
+                else:
+                    print(f"❌ Модель {self.model_name} не найдена в Ollama")
+                    print(f"📋 Доступные модели: {', '.join(available_models[:5])}{'...' if len(available_models) > 5 else ''}")
+                    return False
             else:
-                print(f"❌ Ollama сервер недоступен на {self.base_url}")
+                print(f"❌ Ollama сервер недоступен на {self.base_url} (код: {response.status_code})")
                 return False
+        except requests.exceptions.ConnectionError:
+            print(f"❌ Не удается подключиться к Ollama серверу на {self.base_url}")
+            print("💡 Убедитесь, что Ollama запущен: ollama serve")
+            return False
+        except requests.exceptions.Timeout:
+            print(f"❌ Таймаут подключения к Ollama на {self.base_url}")
+            return False
         except Exception as e:
             print(f"❌ Ошибка подключения к Ollama: {e}")
             return False
     
-    def generate_response(self, prompt: str, image_path: str = None, image_context: str = "") -> str:
+    def _test_connection(self) -> bool:
+        """
+        Проверяет реальное подключение к API провайдера.
+        
+        Returns:
+            bool: True если подключение работает
+        """
+        try:
+            # Для Ollama используем более простой тест
+            if self.provider_name == "ollama":
+                return self._test_ollama_connection()
+            
+            # Для других провайдеров выполняем минимальный тестовый запрос
+            test_response = self.generate_response("Test", timeout=10)
+            
+            # Проверяем, что получили валидный ответ
+            if test_response and len(test_response.strip()) > 0:
+                return True
+            else:
+                print(f"❌ {self.provider_name}: Получен пустой ответ")
+                return False
+                
+        except Exception as e:
+            error_msg = str(e).lower()
+            
+            # Обрабатываем специфичные ошибки
+            if "timeout" in error_msg or "timed out" in error_msg:
+                print(f"❌ {self.provider_name}: Превышено время ожидания")
+            elif "unauthorized" in error_msg or "invalid api key" in error_msg:
+                print(f"❌ {self.provider_name}: Неверный API ключ")
+            elif "credit balance" in error_msg or "insufficient funds" in error_msg:
+                print(f"❌ {self.provider_name}: Недостаточно средств на балансе")
+            elif "rate limit" in error_msg:
+                print(f"❌ {self.provider_name}: Превышен лимит запросов")
+            elif "model not found" in error_msg:
+                print(f"❌ {self.provider_name}: Модель {self.model_name} не найдена")
+            elif "connection" in error_msg:
+                print(f"❌ {self.provider_name}: Ошибка подключения")
+            else:
+                print(f"❌ {self.provider_name}: Ошибка подключения - {e}")
+            
+            return False
+    
+    def _test_ollama_connection(self) -> bool:
+        """Специальный тест для Ollama - проверяем только доступность модели."""
+        try:
+            import requests
+            
+            # Проверяем, что сервер отвечает
+            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            if response.status_code != 200:
+                print(f"❌ Ollama сервер недоступен (код: {response.status_code})")
+                return False
+            
+            # Проверяем, что модель загружена
+            models_data = response.json()
+            available_models = [model['name'] for model in models_data.get('models', [])]
+            
+            if self.model_name not in available_models:
+                print(f"❌ Модель {self.model_name} не найдена в Ollama")
+                return False
+            
+            # Проверяем, что модель может генерировать ответы
+            test_data = {
+                "model": self.model_name,
+                "prompt": "Hi",
+                "stream": False,
+                "options": {"num_predict": 10}
+            }
+            
+            test_response = requests.post(
+                f"{self.base_url}/api/generate",
+                json=test_data,
+                timeout=15
+            )
+            
+            if test_response.status_code == 200:
+                result = test_response.json()
+                if result.get("response"):
+                    return True
+                else:
+                    print(f"❌ Ollama модель {self.model_name} не отвечает")
+                    return False
+            else:
+                print(f"❌ Ошибка тестирования Ollama модели: {test_response.status_code}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            print(f"❌ Не удается подключиться к Ollama серверу")
+            return False
+        except requests.exceptions.Timeout:
+            print(f"❌ Таймаут при тестировании Ollama")
+            return False
+        except Exception as e:
+            print(f"❌ Ошибка тестирования Ollama: {e}")
+            return False
+    
+    def generate_response(self, prompt: str, image_path: str = None, image_context: str = "", timeout: int = 30) -> str:
         """
         Генерирует ответ от выбранного провайдера.
         
@@ -200,34 +326,35 @@ class UniversalLLMPlugin(BaseLLMPlugin):
             prompt: Промпт для модели
             image_path: Путь к изображению (если поддерживается)
             image_context: Контекст изображения (для провайдеров без vision)
+            timeout: Таймаут запроса в секундах
             
         Returns:
             str: Ответ модели
         """
-        if not self.is_loaded:
-            return "❌ Модель не загружена"
+        if not self.client:
+            raise ValueError(f"Клиент {self.provider_name} не инициализирован")
         
         try:
             if self.provider_name == "openai":
-                return self._generate_openai_response(prompt, image_path, image_context)
+                return self._generate_openai_response(prompt, image_path, image_context, timeout)
             elif self.provider_name == "anthropic":
-                return self._generate_anthropic_response(prompt, image_path, image_context)
+                return self._generate_anthropic_response(prompt, image_path, image_context, timeout)
             elif self.provider_name == "google":
-                return self._generate_google_response(prompt, image_path, image_context)
+                return self._generate_google_response(prompt, image_path, image_context, timeout)
             elif self.provider_name == "mistral":
-                return self._generate_mistral_response(prompt, image_path, image_context)
+                return self._generate_mistral_response(prompt, image_path, image_context, timeout)
             elif self.provider_name == "deepseek":
-                return self._generate_deepseek_response(prompt, image_path, image_context)
+                return self._generate_deepseek_response(prompt, image_path, image_context, timeout)
             elif self.provider_name == "xai":
-                return self._generate_xai_response(prompt, image_path, image_context)
+                return self._generate_xai_response(prompt, image_path, image_context, timeout)
             elif self.provider_name == "ollama":
-                return self._generate_ollama_response(prompt, image_path, image_context)
+                return self._generate_ollama_response(prompt, image_path, image_context, timeout)
             else:
-                return f"❌ Неподдерживаемый провайдер: {self.provider_name}"
+                raise ValueError(f"Неподдерживаемый провайдер: {self.provider_name}")
                 
         except Exception as e:
-            print(f"❌ Ошибка генерации ответа {self.provider_name}: {e}")
-            return f"❌ Ошибка: {str(e)}"
+            # Поднимаем исключение для правильной обработки в _test_connection
+            raise e
     
     def _encode_image_base64(self, image_path: str) -> str:
         """Кодирует изображение в base64."""
@@ -238,7 +365,7 @@ class UniversalLLMPlugin(BaseLLMPlugin):
             print(f"❌ Ошибка кодирования изображения: {e}")
             return ""
     
-    def _generate_openai_response(self, prompt: str, image_path: str = None, image_context: str = "") -> str:
+    def _generate_openai_response(self, prompt: str, image_path: str = None, image_context: str = "", timeout: int = 30) -> str:
         """Генерация ответа через OpenAI API."""
         messages = []
         
@@ -271,12 +398,13 @@ class UniversalLLMPlugin(BaseLLMPlugin):
             model=self.model_name,
             messages=messages,
             max_tokens=self.generation_config.get("max_tokens", 4096),
-            temperature=self.generation_config.get("temperature", 0.1)
+            temperature=self.generation_config.get("temperature", 0.1),
+            timeout=timeout
         )
         
         return response.choices[0].message.content
     
-    def _generate_anthropic_response(self, prompt: str, image_path: str = None, image_context: str = "") -> str:
+    def _generate_anthropic_response(self, prompt: str, image_path: str = None, image_context: str = "", timeout: int = 30) -> str:
         """Генерация ответа через Anthropic API."""
         content = []
         
@@ -314,12 +442,13 @@ class UniversalLLMPlugin(BaseLLMPlugin):
             model=self.model_name,
             max_tokens=self.generation_config.get("max_tokens", 4096),
             temperature=self.generation_config.get("temperature", 0.1),
-            messages=[{"role": "user", "content": content}]
+            messages=[{"role": "user", "content": content}],
+            timeout=timeout
         )
         
         return response.content[0].text
     
-    def _generate_google_response(self, prompt: str, image_path: str = None, image_context: str = "") -> str:
+    def _generate_google_response(self, prompt: str, image_path: str = None, image_context: str = "", timeout: int = 30) -> str:
         """Генерация ответа через Google Gemini API."""
         content = []
         
@@ -442,7 +571,7 @@ class UniversalLLMPlugin(BaseLLMPlugin):
         
         return response.choices[0].message.content
     
-    def _generate_ollama_response(self, prompt: str, image_path: str = None, image_context: str = "") -> str:
+    def _generate_ollama_response(self, prompt: str, image_path: str = None, image_context: str = "", timeout: int = 30) -> str:
         """Генерация ответа через Ollama API."""
         import requests
         
@@ -470,17 +599,36 @@ class UniversalLLMPlugin(BaseLLMPlugin):
         if image_context and not (image_path and self.provider_config.supports_vision):
             data["prompt"] += f"\n\nКонтекст изображения: {image_context}"
         
-        response = requests.post(
-            f"{self.base_url}/api/generate",
-            json=data,
-            timeout=120
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            return result.get("response", "❌ Пустой ответ от Ollama")
-        else:
-            return f"❌ Ошибка Ollama API: {response.status_code}"
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json=data,
+                timeout=max(timeout, 60)  # Минимум 60 секунд для Ollama
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                response_text = result.get("response", "")
+                if response_text:
+                    return response_text
+                else:
+                    raise ValueError("Пустой ответ от Ollama")
+            else:
+                error_msg = f"HTTP {response.status_code}"
+                try:
+                    error_data = response.json()
+                    if "error" in error_data:
+                        error_msg = error_data["error"]
+                except:
+                    pass
+                raise ValueError(f"Ollama API ошибка: {error_msg}")
+                
+        except requests.exceptions.ConnectionError:
+            raise ConnectionError("Не удается подключиться к Ollama серверу")
+        except requests.exceptions.Timeout:
+            raise TimeoutError(f"Таймаут запроса к Ollama ({timeout}s)")
+        except requests.exceptions.RequestException as e:
+            raise ConnectionError(f"Ошибка запроса к Ollama: {e}")
     
     def process_image(self, image_path: str, ocr_lang=None, custom_prompt=None) -> Optional[Dict]:
         """

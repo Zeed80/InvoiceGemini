@@ -34,7 +34,8 @@ class LLMProviderConfig:
     """Конфигурация для провайдера LLM"""
     def __init__(self, name: str, display_name: str, models: List[str], 
                  requires_api_key: bool = True, api_key_name: str = None,
-                 default_model: str = None, supports_vision: bool = True):
+                 default_model: str = None, supports_vision: bool = True,
+                 supports_files: bool = False):
         self.name = name
         self.display_name = display_name
         self.models = models
@@ -42,6 +43,7 @@ class LLMProviderConfig:
         self.api_key_name = api_key_name or f"{name.upper()}_API_KEY"
         self.default_model = default_model or (models[0] if models else None)
         self.supports_vision = supports_vision
+        self.supports_files = supports_files
 
 # Конфигурации поддерживаемых провайдеров
 LLM_PROVIDERS = {
@@ -56,7 +58,8 @@ LLM_PROVIDERS = {
             "gpt-3.5-turbo"
         ],
         default_model="gpt-4o",
-        supports_vision=True
+        supports_vision=True,
+        supports_files=True  # GPT-4o, GPT-4o-mini, GPT-4-turbo поддерживают файлы
     ),
     "anthropic": LLMProviderConfig(
         name="anthropic", 
@@ -69,7 +72,8 @@ LLM_PROVIDERS = {
             "claude-3-haiku-20240307"
         ],
         default_model="claude-3-5-sonnet-20241022",
-        supports_vision=True
+        supports_vision=True,
+        supports_files=True  # Claude 3.5 поддерживает обработку файлов и изображений
     ),
     "google": LLMProviderConfig(
         name="google",
@@ -82,7 +86,8 @@ LLM_PROVIDERS = {
             "models/gemini-1.5-flash-002"
         ],
         default_model="models/gemini-2.0-flash-exp",
-        supports_vision=True
+        supports_vision=True,
+        supports_files=True  # Gemini поддерживает обработку файлов
     ),
     "mistral": LLMProviderConfig(
         name="mistral",
@@ -94,7 +99,8 @@ LLM_PROVIDERS = {
             "pixtral-12b-2409"
         ],
         default_model="mistral-large-latest",
-        supports_vision=True
+        supports_vision=True,
+        supports_files=False  # Mistral не поддерживает прямую загрузку файлов через API
     ),
     "deepseek": LLMProviderConfig(
         name="deepseek",
@@ -104,7 +110,8 @@ LLM_PROVIDERS = {
             "deepseek-coder"
         ],
         default_model="deepseek-chat", 
-        supports_vision=False
+        supports_vision=False,
+        supports_files=False  # DeepSeek не поддерживает файлы
     ),
     "xai": LLMProviderConfig(
         name="xai",
@@ -114,7 +121,8 @@ LLM_PROVIDERS = {
             "grok-vision-beta"
         ],
         default_model="grok-vision-beta",
-        supports_vision=True
+        supports_vision=True,
+        supports_files=False  # xAI Grok пока не поддерживает файлы
     ),
     "ollama": LLMProviderConfig(
         name="ollama",
@@ -129,7 +137,8 @@ LLM_PROVIDERS = {
         ],
         default_model="llama3.2-vision:11b",
         requires_api_key=False,
-        supports_vision=True
+        supports_vision=True,
+        supports_files=True  # Ollama может поддерживать файлы через кастомные модели
     )
 }
 
@@ -362,10 +371,45 @@ class BaseLLMPlugin(BaseProcessor):
         if custom_prompt:
             return custom_prompt
         
+        # Пытаемся загрузить промпт из файла
+        try:
+            from pathlib import Path
+            import os
+            
+            # Определяем имя файла промпта в зависимости от провайдера
+            if self.provider_name in ['openai', 'anthropic', 'google', 'mistral', 'deepseek', 'xai']:
+                prompt_filename = f"cloud_llm_{self.provider_name}_prompt.txt"
+            elif self.provider_name == 'ollama':
+                prompt_filename = f"local_llm_{self.provider_name}_prompt.txt"
+            else:
+                prompt_filename = f"{self.provider_name}_prompt.txt"
+            
+            # Используем абсолютный путь относительно корня проекта
+            current_dir = Path(__file__).parent.parent.parent  # Поднимаемся к корню проекта
+            prompt_path = current_dir / "data" / "prompts" / prompt_filename
+            
+            logger.debug(f"Поиск промпта по пути: {prompt_path}")
+            
+            if prompt_path.exists():
+                with open(prompt_path, 'r', encoding='utf-8') as f:
+                    file_prompt = f.read().strip()
+                    if file_prompt:
+                        logger.info(f"✅ Загружен промпт из файла: {prompt_filename}")
+                        return file_prompt
+            else:
+                logger.warning(f"❌ Файл промпта не найден: {prompt_path}")
+                    
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить промпт из файла: {e}")
+            logger.debug(f"Traceback: ", exc_info=True)
+        
+        # Fallback - создаем базовый промпт
+        logger.info(f"Используется fallback промпт для {self.provider_name}")
+        
         # Базовый промпт
-        base_prompt = """Действуй как эксперт по распознаванию счетов-фактур и документов. Проанализируй предоставленное изображение документа и извлеки из него все ключевые данные в формате JSON.
+        base_prompt = """Ты эксперт по анализу финансовых документов. Проанализируй предоставленное изображение счета-фактуры или инвойса и извлеки из него структурированные данные.
 
-Формат должен включать следующие поля (включай только если они присутствуют в документе):"""
+Извлеки следующие поля из документа:"""
 
         # Получаем поля из настроек таблицы если доступно
         fields_json = {}
@@ -382,50 +426,35 @@ class BaseLLMPlugin(BaseProcessor):
         # Если нет настроенных полей, используем стандартные
         if not fields_json:
             fields_json = {
-                "Поставщик": "название организации-поставщика",
-                "ИНН поставщика": "ИНН в формате 10 или 12 цифр",
-                "КПП поставщика": "КПП в формате 9 цифр",
-                "Адрес поставщика": "полный юридический адрес",
-                "Покупатель": "название организации-покупателя",
-                "ИНН покупателя": "ИНН в формате 10 или 12 цифр",
-                "КПП покупателя": "КПП в формате 9 цифр",
-                "Адрес покупателя": "полный юридический адрес",
-                "№ Счета": "номер счета точно как в документе",
-                "Дата счета": "дата в формате DD.MM.YYYY",
-                "Дата оплаты": "срок оплаты в формате DD.MM.YYYY, если указан",
-                "Категория": "определи основную категорию товаров/услуг",
-                "Товары": "список всех товаров/услуг с количеством и ценами",
-                "Сумма без НДС": "сумма до НДС числом",
-                "НДС %": "ставка НДС числом",
-                "Сумма НДС": "сумма НДС числом",
-                "Сумма с НДС": "итоговая сумма числом",
-                "Валюта": "RUB/USD/EUR и т.д.",
-                "Банк": "название банка, если указано",
-                "БИК": "БИК банка в формате 9 цифр",
-                "Р/с": "расчетный счет в формате 20 цифр",
-                "К/с": "корреспондентский счет в формате 20 цифр",
-                "Комментарии": "любая дополнительная информация"
+                "sender": "Название компании-поставщика или продавца",
+                "invoice_number": "Номер счета, инвойса или фактуры", 
+                "invoice_date": "Дата выставления счета или инвойса",
+                "total": "Общая сумма к оплате с учетом НДС",
+                "amount_no_vat": "Сумма без НДС",
+                "vat_percent": "Ставка НДС в процентах",
+                "currency": "Валюта платежа",
+                "category": "Категория товаров или услуг",
+                "description": "Описание товаров, услуг или содержимого документа",
+                "note": "Дополнительные примечания и комментарии"
             }
         
-        # Формируем JSON структуру для промпта
-        json_structure = "{\n"
-        for field_name, description in fields_json.items():
-            json_structure += f'  "{field_name}": "{description}",\n'
-        json_structure = json_structure.rstrip(',\n') + "\n}"
+        # Формируем список полей для промпта
+        fields_text = ""
+        for field_id, description in fields_json.items():
+            fields_text += f"- {field_id}: {description}\n"
         
         instructions = """
+Требования к ответу:
+1. Верни результат ТОЛЬКО в формате JSON
+2. Используй точные ID полей как ключи
+3. Если поле не найдено, используй значение "N/A"
+4. Все суммы указывай числами без символов валют
+5. Даты в формате DD.MM.YYYY
+6. Будь точным и внимательным к деталям
 
-Важные требования:
-1. Представь результат ТОЛЬКО в виде JSON, без лишнего текста до и после.
-2. Сохраняй точное форматирование и орфографию из оригинала.
-3. Вычисли категорию товаров/услуг на основе их описания.
-4. Убедись, что числа форматированы корректно, без лишних пробелов.
-5. Для полей с числами (суммы, ИНН, КПП, счета) удали все пробелы и используй точку как разделитель для дробных чисел.
-6. Даты всегда приводи к формату DD.MM.YYYY.
-7. Если какое-то поле отсутствует в документе, не включай его в результат.
-8. Будь максимально точным и внимательным к деталям."""
+Проанализируй документ и верни JSON с извлеченными данными:"""
 
-        return base_prompt + "\n\n" + json_structure + instructions
+        return base_prompt + "\n\n" + fields_text + instructions
     
     def parse_llm_response(self, response: str) -> Dict[str, Any]:
         """
@@ -438,32 +467,51 @@ class BaseLLMPlugin(BaseProcessor):
             dict: Извлеченные данные
         """
         try:
+            logger.debug(f"🔍 Парсинг ответа от {self.provider_name}, длина: {len(response) if response else 0}")
+            
             # Проверяем, не содержит ли ответ сообщение об ошибке API
             if self._is_error_response(response):
                 error_msg = self._extract_error_message(response)
-                logger.error(f"Ответ содержит ошибку API: {error_msg}")
+                logger.error(f"❌ Ответ содержит ошибку API: {error_msg}")
                 return {"error": error_msg, "note_gemini": f"Ошибка API {self.provider_name}: {error_msg}"}
             
             # Очищаем ответ от лишнего текста
             cleaned_response = self._clean_json_string(response)
+            logger.debug(f"🧹 Очищенный ответ (первые 200 символов): {cleaned_response[:200]}...")
             
-            # Пытаемся извлечь JSON
-            json_match = re.search(r'\{[\s\S]*\}', cleaned_response)
-            if json_match:
-                json_str = json_match.group()
-                data = json.loads(json_str)
-                return self._normalize_invoice_data(data)
-            else:
-                logger.warning("JSON не найден в ответе LLM")
-                logger.debug(f"Ответ LLM: {response[:300]}...")
-                return {"error": "JSON не найден в ответе", "raw_response": response[:500]}
+            # Пытаемся извлечь JSON различными способами
+            json_patterns = [
+                r'\{[\s\S]*\}',  # Основной паттерн
+                r'```json\s*(\{[\s\S]*?\})\s*```',  # JSON в markdown блоке
+                r'```\s*(\{[\s\S]*?\})\s*```',  # JSON в обычном блоке кода
+            ]
+            
+            for pattern in json_patterns:
+                json_match = re.search(pattern, cleaned_response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1) if json_match.lastindex else json_match.group()
+                    logger.debug(f"📄 Найден JSON (паттерн {pattern}): {json_str[:100]}...")
+                    
+                    try:
+                        data = json.loads(json_str)
+                        logger.info(f"✅ JSON успешно распарсен, полей: {len(data)}")
+                        return self._normalize_invoice_data(data)
+                    except json.JSONDecodeError as parse_error:
+                        logger.debug(f"🔧 Ошибка парсинга JSON с паттерном {pattern}: {parse_error}")
+                        continue
+            
+            # Если JSON не найден, возвращаем детальную информацию для отладки
+            logger.warning("❌ JSON не найден в ответе LLM")
+            logger.debug(f"📝 Полный ответ LLM:\n{response}")
+            return {"error": "JSON не найден в ответе", "raw_response": response[:500]}
                 
         except json.JSONDecodeError as e:
-            logger.error(f"Ошибка парсинга JSON: {e}")
-            logger.debug(f"Ответ LLM: {response[:500]}...")
+            logger.error(f"❌ Ошибка парсинга JSON: {e}")
+            logger.debug(f"📝 Ответ LLM: {response[:500]}...")
             return {"error": f"Ошибка парсинга JSON: {e}", "raw_response": response[:500]}
         except Exception as e:
-            logger.error(f"Ошибка обработки ответа LLM: {e}")
+            logger.error(f"❌ Ошибка обработки ответа LLM: {e}")
+            logger.debug(f"📝 Traceback: ", exc_info=True)
             return {"error": f"Ошибка обработки: {e}", "raw_response": response[:500] if response else "Пустой ответ"}
     
     def _is_error_response(self, response: str) -> bool:
@@ -576,8 +624,20 @@ class BaseLLMPlugin(BaseProcessor):
     @staticmethod
     def get_provider_models(provider_name: str) -> List[str]:
         """Возвращает список моделей для провайдера."""
-        provider = LLM_PROVIDERS.get(provider_name)
-        return provider.models if provider else []
+        config = LLM_PROVIDERS.get(provider_name)
+        return config.models if config else []
+    
+    @staticmethod
+    def provider_supports_files(provider_name: str) -> bool:
+        """Проверяет, поддерживает ли провайдер файлы."""
+        config = LLM_PROVIDERS.get(provider_name)
+        return config.supports_files if config else False
+    
+    @staticmethod
+    def get_file_capable_providers() -> Dict[str, LLMProviderConfig]:
+        """Возвращает только провайдеров, которые поддерживают файлы."""
+        return {name: config for name, config in LLM_PROVIDERS.items() 
+                if config.supports_files}
     
     @staticmethod
     def update_provider_models(provider_name: str, models: List[str]) -> bool:
