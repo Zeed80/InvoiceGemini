@@ -54,15 +54,6 @@ except ImportError:
     MEMORY_MANAGEMENT_AVAILABLE = False
     logger.warning("Модули управления памятью недоступны")
 
-# Импортируем новые оптимизированные компоненты
-try:
-    from .core.smart_model_loader import get_smart_model_loader
-    from .core.advanced_cache_manager import get_advanced_cache_manager
-    OPTIMIZATION_AVAILABLE = True
-except ImportError:
-    OPTIMIZATION_AVAILABLE = False
-    logger.warning("Модули оптимизации недоступны, используется базовая логика")
-
 class ModelManager:
     """
     Класс для управления моделями машинного обучения.
@@ -87,100 +78,11 @@ class ModelManager:
         if self.resource_manager:
             logger.info("Менеджер ресурсов инициализирован")
         
-        # Инициализируем оптимизированные компоненты
-        self.smart_loader = None
-        self.advanced_cache = None
-        
-        if OPTIMIZATION_AVAILABLE:
-            try:
-                self.smart_loader = get_smart_model_loader()
-                self.advanced_cache = get_advanced_cache_manager()
-                logger.info("🚀 Оптимизированные компоненты загрузки и кэширования инициализированы")
-                
-                # Подключаем сигналы для мониторинга
-                if self.smart_loader:
-                    self.smart_loader.model_loaded.connect(self._on_smart_model_loaded)
-                    self.smart_loader.memory_warning.connect(self._on_memory_warning)
-                    
-            except Exception as e:
-                logger.error(f"Ошибка инициализации оптимизированных компонентов: {e}")
-                self.smart_loader = None
-                self.advanced_cache = None
-        
         logger.debug("ModelManager.__init__ completed") 
-    
-    def _on_smart_model_loaded(self, model_id: str, load_time: float):
-        """Обработчик успешной загрузки модели через SmartModelLoader"""
-        logger.info(f"✅ Модель {model_id} загружена за {load_time:.2f}с")
-    
-    def _on_memory_warning(self, free_memory_mb: int):
-        """Обработчик предупреждения о нехватке памяти"""
-        logger.warning(f"⚠️ Мало свободной памяти: {free_memory_mb}MB")
-        
-    def analyze_file_queue(self, file_paths: list):
-        """Анализирует очередь файлов для предсказательной загрузки"""
-        if self.smart_loader:
-            self.smart_loader.analyze_file_queue(file_paths)
-            logger.debug(f"📊 Проанализирована очередь из {len(file_paths)} файлов")
-    
-    def get_cached_result(self, file_path: str, model_type: str) -> dict:
-        """Получает кэшированный результат обработки"""
-        if not self.advanced_cache:
-            return None
-            
-        try:
-            file_hash = self.advanced_cache.calculate_file_hash(file_path)
-            result = self.advanced_cache.get_cached_result(file_hash, model_type)
-            if result:
-                logger.debug(f"💾 Найден кэшированный результат для {file_path} ({model_type})")
-            return result
-        except Exception as e:
-            logger.error(f"Ошибка получения кэша для {file_path}: {e}")
-            return None
-    
-    def cache_result(self, file_path: str, model_type: str, result: dict, priority: int = 0) -> bool:
-        """Кэширует результат обработки"""
-        if not self.advanced_cache:
-            return False
-            
-        try:
-            file_hash = self.advanced_cache.calculate_file_hash(file_path)
-            success = self.advanced_cache.cache_result(file_hash, model_type, result, file_path, priority)
-            if success:
-                logger.debug(f"💾 Результат кэширован для {file_path} ({model_type})")
-            return success
-        except Exception as e:
-            logger.error(f"Ошибка кэширования для {file_path}: {e}")
-            return False
-    
-    def get_optimization_statistics(self) -> dict:
-        """Получает статистику оптимизаций"""
-        stats = {}
-        
-        if self.smart_loader:
-            stats['smart_loader'] = self.smart_loader.get_statistics()
-        
-        if self.advanced_cache:
-            stats['advanced_cache'] = self.advanced_cache.get_statistics()
-            
-        return stats
         
     def get_model(self, model_type):
         model_type_lower = model_type.lower()
         
-        # Если доступен SmartModelLoader, используем его
-        if self.smart_loader:
-            try:
-                smart_model = self.smart_loader.get_model(model_type_lower, blocking=True)
-                if smart_model:
-                    logger.debug(f"🤖 Модель {model_type_lower} получена через SmartModelLoader")
-                    return smart_model
-                else:
-                    logger.warning(f"SmartModelLoader не смог загрузить {model_type_lower}, используем fallback")
-            except Exception as e:
-                logger.warning(f"Ошибка SmartModelLoader для {model_type_lower}: {e}, используем fallback")
-        
-        # Fallback на старую логику загрузки
         # Проверяем доступность памяти перед загрузкой
         if self.memory_manager:
             can_load, message = self.memory_manager.can_load_model(model_type_lower)

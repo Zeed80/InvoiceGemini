@@ -19,13 +19,13 @@ from .settings_manager import settings_manager
 # Настройка логирования
 logger = logging.getLogger(__name__)
 
-# Импортируем менеджер кэша
+# Импортируем оптимизированный менеджер кэша
 try:
-    from .core.cache_manager import get_cache_manager
-    CACHE_AVAILABLE = True
+    from .core.advanced_cache_manager import get_advanced_cache_manager
+    ADVANCED_CACHE_AVAILABLE = True
 except ImportError:
-    CACHE_AVAILABLE = False
-    logger.warning("CacheManager недоступен, кэширование отключено")
+    ADVANCED_CACHE_AVAILABLE = False
+    logger.warning("AdvancedCacheManager недоступен, кэширование отключено")
 
 
 class ProcessingThread(QThread):
@@ -135,19 +135,15 @@ class ProcessingThread(QThread):
                         
                     logger.info(f"Обработка файла {i+1}/{total_files}: {os.path.basename(file_path)}")
                     try:
-                        # Проверяем кэш для текущего файла
-                        if CACHE_AVAILABLE and settings_manager.get_bool('Cache', 'enabled', True):
-                            cache_manager = get_cache_manager()
-                            file_hash = cache_manager.calculate_file_hash(file_path)
-                            cached_result = cache_manager.get_cached_result(file_hash, self.model_type)
-                            
-                            if cached_result:
-                                logger.info(f"Результат получен из кэша для {os.path.basename(file_path)}")
-                                self.partial_result_signal.emit(cached_result)
-                                # Обновляем прогресс и переходим к следующему файлу
-                                progress = int((i + 1) * 100 / total_files)
-                                self.progress_signal.emit(progress)
-                                continue
+                        # Проверяем кэш для текущего файла через ModelManager
+                        cached_result = self.model_manager.get_cached_result(file_path, self.model_type)
+                        if cached_result:
+                            logger.info(f"💾 Результат получен из кэша для {os.path.basename(file_path)}")
+                            self.partial_result_signal.emit(cached_result)
+                            # Обновляем прогресс и переходим к следующему файлу
+                            progress = int((i + 1) * 100 / total_files)
+                            self.progress_signal.emit(progress)
+                            continue
                         
                         # Получаем пользовательский промпт (если нужен)
                         custom_prompt = settings_manager.get_string('Prompts', f'{self.model_type}_prompt', '')
@@ -160,14 +156,12 @@ class ProcessingThread(QThread):
                             elif self.model_type == 'donut':
                                 result = self._map_donut_fields(result)
                             
-                            # Сохраняем результат в кэш
-                            if CACHE_AVAILABLE and settings_manager.get_bool('Cache', 'enabled', True):
-                                try:
-                                    cache_manager = get_cache_manager()
-                                    file_hash = cache_manager.calculate_file_hash(file_path)
-                                    cache_manager.cache_result(file_hash, self.model_type, result, file_path)
-                                except Exception as e:
-                                    logger.error(f"Ошибка сохранения в кэш для {file_path}: {e}")
+                            # Сохраняем результат в кэш через ModelManager
+                            try:
+                                priority = 1  # Высокий приоритет для свежих результатов
+                                self.model_manager.cache_result(file_path, self.model_type, result, priority)
+                            except Exception as e:
+                                logger.error(f"Ошибка сохранения в кэш для {file_path}: {e}")
                             
                             # Добавляем имя файла к результатам для идентификации
                             # result["__source_file__"] = os.path.basename(file_path) # Убрал, т.к. пока не используется в таблице
@@ -200,14 +194,13 @@ class ProcessingThread(QThread):
                 logger.info(f"Начало обработки файла: {self.input_path}")
                 self.progress_signal.emit(10) # Начальный прогресс
                 
-                # Проверяем кэш
-                if CACHE_AVAILABLE and settings_manager.get_bool('Cache', 'enabled', True):
-                    cached_result = self._check_cache()
-                    if cached_result:
-                        logger.info(f"Результат получен из кэша для {self.input_path}")
-                        self.progress_signal.emit(100)
-                        self.finished_signal.emit(cached_result)
-                        return
+                # Проверяем кэш через ModelManager
+                cached_result = self._check_cache()
+                if cached_result:
+                    logger.info(f"💾 Результат получен из кэша для {self.input_path}")
+                    self.progress_signal.emit(100)
+                    self.finished_signal.emit(cached_result)
+                    return
                 
                 # Имитация загрузки/подготовки (можно убрать, если не нужно)
                 self.msleep(100) 
@@ -225,8 +218,8 @@ class ProcessingThread(QThread):
                 elif self.model_type == 'donut' and result:
                     result = self._map_donut_fields(result)
                 
-                # Сохраняем результат в кэш
-                if CACHE_AVAILABLE and settings_manager.get_bool('Cache', 'enabled', True) and result:
+                # Сохраняем результат в кэш через ModelManager
+                if result:
                     self._save_to_cache(result)
                 
                 # Имитация завершения (можно убрать)
@@ -450,27 +443,23 @@ class ProcessingThread(QThread):
         return result
     
     def _check_cache(self):
-        """Проверяет наличие результата в кэше"""
-        if not CACHE_AVAILABLE:
-            return None
-            
+        """Проверяет наличие результата в кэше через ModelManager"""
         try:
-            cache_manager = get_cache_manager()
-            file_hash = cache_manager.calculate_file_hash(self.input_path)
-            return cache_manager.get_cached_result(file_hash, self.model_type)
+            cached_result = self.model_manager.get_cached_result(self.input_path, self.model_type)
+            if cached_result:
+                logger.info(f"💾 Результат получен из кэша для {self.input_path}")
+            return cached_result
         except Exception as e:
             logger.error(f"Ошибка при проверке кэша: {e}")
             return None
     
     def _save_to_cache(self, result):
-        """Сохраняет результат в кэш"""
-        if not CACHE_AVAILABLE:
-            return
-            
+        """Сохраняет результат в кэш через ModelManager"""
         try:
-            cache_manager = get_cache_manager()
-            file_hash = cache_manager.calculate_file_hash(self.input_path)
-            cache_manager.cache_result(file_hash, self.model_type, result, self.input_path)
+            priority = 1  # Высокий приоритет для свежих результатов
+            success = self.model_manager.cache_result(self.input_path, self.model_type, result, priority)
+            if success:
+                logger.info(f"💾 Результат сохранен в кэш для {self.input_path}")
         except Exception as e:
             logger.error(f"Ошибка при сохранении в кэш: {e}")
 
