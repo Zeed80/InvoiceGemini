@@ -10,10 +10,10 @@ from enum import Enum
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QLabel, QProgressBar, QPushButton, QGroupBox, QFrame, QSizePolicy,
-    QScrollArea, QApplication, QCheckBox
+    QScrollArea, QApplication, QCheckBox, QToolTip
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QFont, QIcon, QPixmap, QPalette, QMouseEvent
 
 # Импортируем существующий модуль анализа PDF
 try:
@@ -21,6 +21,13 @@ try:
     PDF_ANALYZER_AVAILABLE = True
 except ImportError:
     PDF_ANALYZER_AVAILABLE = False
+
+# ФАЗА 2: Импорт оптимизированных UI компонентов для больших списков
+try:
+    from ..performance_optimized_widgets import VirtualScrollArea
+    VIRTUAL_SCROLL_AVAILABLE = True
+except ImportError:
+    VIRTUAL_SCROLL_AVAILABLE = False
 
 
 class ProcessingStatus(Enum):
@@ -567,8 +574,273 @@ class FileListWidget(QWidget):
         return list(self.file_infos.keys())
         
     def get_unprocessed_files(self) -> List[str]:
-        """Получение необработанных файлов."""
+        """Получение списка необработанных файлов."""
         return [
             path for path, info in self.file_infos.items()
             if info.status == ProcessingStatus.NOT_PROCESSED
+        ]
+
+
+# ФАЗА 2: Оптимизированный виджет списка файлов для больших списков
+class VirtualFileListWidget(QWidget):
+    """Оптимизированный виджет списка файлов с виртуальной прокруткой для больших списков."""
+    
+    file_selected = pyqtSignal(str)  # file_path
+    process_file_requested = pyqtSignal(str)  # file_path
+    process_all_requested = pyqtSignal()
+    filename_clicked = pyqtSignal(str, dict)  # file_path, processing_data
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.file_infos: Dict[str, FileProcessingInfo] = {}
+        self.file_paths: List[str] = []  # Упорядоченный список путей
+        self.current_selected_path: Optional[str] = None
+        self.use_virtual_scroll = VIRTUAL_SCROLL_AVAILABLE
+        
+        self._init_ui()
+        
+    def _init_ui(self):
+        """Инициализация UI списка файлов."""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        
+        # Заголовок и кнопки управления
+        header_widget = QWidget()
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(8, 4, 8, 4)
+        
+        self.title_label = QLabel(self.tr("📂 Файлы (Оптимизированный)"))
+        self.title_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        header_layout.addWidget(self.title_label)
+        
+        header_layout.addStretch()
+        
+        # Кнопка "Обработать все"
+        self.process_all_button = QPushButton(self.tr("🚀 Все"))
+        self.process_all_button.setFixedSize(50, 24)
+        self.process_all_button.setToolTip(self.tr("Обработать все файлы"))
+        self.process_all_button.clicked.connect(self.process_all_requested.emit)
+        self.process_all_button.setEnabled(False)
+        header_layout.addWidget(self.process_all_button)
+        
+        layout.addWidget(header_widget)
+        
+        # Создаем область прокрутки (виртуальную или обычную)
+        if self.use_virtual_scroll:
+            self.scroll_area = VirtualScrollArea()
+            self.scroll_area.set_items([])  # Пустой список изначально
+            self.scroll_area._create_item_widget = self._create_file_item_widget
+        else:
+            # Fallback на обычную прокрутку
+            self.scroll_area = QScrollArea()
+            self.scroll_area.setWidgetResizable(True)
+            self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            
+            self.files_container = QWidget()
+            self.files_layout = QVBoxLayout(self.files_container)
+            self.files_layout.setContentsMargins(4, 4, 4, 4)
+            self.files_layout.setSpacing(2)
+            self.files_layout.addStretch()
+            
+            self.scroll_area.setWidget(self.files_container)
+        
+        layout.addWidget(self.scroll_area)
+        
+        # Информационная панель
+        self.info_panel = QWidget()
+        info_layout = QHBoxLayout(self.info_panel)
+        info_layout.setContentsMargins(8, 4, 8, 4)
+        
+        self.files_count_label = QLabel(self.tr("Файлов: 0"))
+        self.files_count_label.setFont(QFont("Arial", 8))
+        info_layout.addWidget(self.files_count_label)
+        
+        info_layout.addStretch()
+        
+        self.processed_count_label = QLabel(self.tr("Обработано: 0"))
+        self.processed_count_label.setFont(QFont("Arial", 8))
+        info_layout.addWidget(self.processed_count_label)
+        
+        layout.addWidget(self.info_panel)
+        
+        # Стиль
+        self.setStyleSheet("""
+            QScrollArea {
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: #fafafa;
+            }
+        """)
+        
+    def _create_file_item_widget(self, file_path: str) -> QWidget:
+        """Создает виджет элемента файла для виртуальной прокрутки."""
+        if file_path not in self.file_infos:
+            # Создаем базовый FileProcessingInfo если его нет
+            self.file_infos[file_path] = FileProcessingInfo(file_path=file_path)
+            
+        file_info = self.file_infos[file_path]
+        widget = FileItemWidget(file_info)
+        
+        # Подключаем сигналы
+        widget.file_selected.connect(self._on_file_selected)
+        widget.process_requested.connect(self.process_file_requested.emit)
+        widget.filename_clicked.connect(self.filename_clicked.emit)
+        
+        return widget
+        
+    def set_files(self, file_paths: List[str]):
+        """Установка списка файлов с оптимизацией для больших списков."""
+        # Очистка текущих данных
+        self.file_infos.clear()
+        self.file_paths = file_paths.copy()
+        
+        # Создание FileProcessingInfo для всех файлов
+        for file_path in file_paths:
+            file_info = FileProcessingInfo(
+                file_path=file_path,
+                requires_ocr=self._requires_ocr(file_path)
+            )
+            self.file_infos[file_path] = file_info
+            
+        # Обновление виртуальной прокрутки или обычного списка
+        if self.use_virtual_scroll:
+            self.scroll_area.set_items(self.file_paths)
+        else:
+            self._update_fallback_list()
+            
+        self._update_counters()
+        
+    def _requires_ocr(self, file_path: str) -> bool:
+        """Определение, требуется ли OCR для файла."""
+        temp_info = FileProcessingInfo(file_path=file_path)
+        return temp_info.requires_ocr
+        
+    def _update_fallback_list(self):
+        """Обновление обычного списка (fallback режим)."""
+        if self.use_virtual_scroll:
+            return
+            
+        # Очистка существующих виджетов
+        for i in reversed(range(self.files_layout.count())):
+            child = self.files_layout.itemAt(i).widget()
+            if child and isinstance(child, FileItemWidget):
+                child.deleteLater()
+                
+        # Добавление новых виджетов
+        for file_path in self.file_paths:
+            widget = self._create_file_item_widget(file_path)
+            self.files_layout.insertWidget(self.files_layout.count() - 1, widget)
+            
+    def add_file(self, file_info: FileProcessingInfo):
+        """Добавление файла в список."""
+        if file_info.file_path in self.file_infos:
+            return  # Файл уже добавлен
+            
+        self.file_infos[file_info.file_path] = file_info
+        if file_info.file_path not in self.file_paths:
+            self.file_paths.append(file_info.file_path)
+            
+        # Обновление виртуальной прокрутки
+        if self.use_virtual_scroll:
+            self.scroll_area.set_items(self.file_paths)
+        else:
+            widget = self._create_file_item_widget(file_info.file_path)
+            self.files_layout.insertWidget(self.files_layout.count() - 1, widget)
+            
+        self.process_all_button.setEnabled(len(self.file_paths) > 0)
+        self._update_counters()
+        
+    def remove_file(self, file_path: str):
+        """Удаление файла из списка."""
+        if file_path in self.file_infos:
+            del self.file_infos[file_path]
+            
+        if file_path in self.file_paths:
+            self.file_paths.remove(file_path)
+            
+        if self.current_selected_path == file_path:
+            self.current_selected_path = None
+            
+        # Обновление виртуальной прокрутки
+        if self.use_virtual_scroll:
+            self.scroll_area.set_items(self.file_paths)
+        else:
+            self._update_fallback_list()
+            
+        self.process_all_button.setEnabled(len(self.file_paths) > 0)
+        self._update_counters()
+        
+    def clear_files(self):
+        """Очистка всех файлов."""
+        self.file_infos.clear()
+        self.file_paths.clear()
+        self.current_selected_path = None
+        
+        if self.use_virtual_scroll:
+            self.scroll_area.set_items([])
+        else:
+            self._update_fallback_list()
+            
+        self.process_all_button.setEnabled(False)
+        self._update_counters()
+        
+    def update_file_progress(self, file_path: str, progress: int, status: ProcessingStatus = None):
+        """Обновление прогресса обработки файла."""
+        if file_path in self.file_infos:
+            self.file_infos[file_path].progress = progress
+            if status:
+                self.file_infos[file_path].status = status
+                
+        self._update_counters()
+        
+        # Принудительное обновление видимых элементов
+        if self.use_virtual_scroll:
+            self.scroll_area._update_viewport()
+            
+    def update_file_fields(self, file_path: str, recognized_fields: int, total_fields: int):
+        """Обновление информации о распознанных полях."""
+        if file_path in self.file_infos:
+            self.file_infos[file_path].fields_recognized = recognized_fields
+            self.file_infos[file_path].total_fields = total_fields
+            
+    def set_file_error(self, file_path: str, error_message: str):
+        """Установка ошибки обработки файла."""
+        if file_path in self.file_infos:
+            self.file_infos[file_path].status = ProcessingStatus.ERROR
+            self.file_infos[file_path].error_message = error_message
+            self.file_infos[file_path].progress = 0
+            
+        self._update_counters()
+        
+    def _on_file_selected(self, file_path: str):
+        """Обработка выбора файла."""
+        self.current_selected_path = file_path
+        self.file_selected.emit(file_path)
+        
+    def _update_counters(self):
+        """Обновление счетчиков файлов."""
+        total_files = len(self.file_paths)
+        processed_files = sum(
+            1 for info in self.file_infos.values() 
+            if info.status == ProcessingStatus.COMPLETED
+        )
+        
+        self.files_count_label.setText(self.tr(f"Файлов: {total_files}"))
+        self.processed_count_label.setText(self.tr(f"Обработано: {processed_files}"))
+        
+    def get_selected_file(self) -> Optional[str]:
+        """Получение выбранного файла."""
+        return self.current_selected_path
+        
+    def get_all_files(self) -> List[str]:
+        """Получение всех файлов."""
+        return self.file_paths.copy()
+        
+    def get_unprocessed_files(self) -> List[str]:
+        """Получение списка необработанных файлов."""
+        return [
+            path for path in self.file_paths
+            if path in self.file_infos and self.file_infos[path].status == ProcessingStatus.NOT_PROCESSED
         ] 

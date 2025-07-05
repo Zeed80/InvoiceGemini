@@ -9,6 +9,9 @@ from typing import Dict, List, Optional
 import threading
 
 from PyQt6.QtWidgets import (    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QGroupBox,    QLabel, QPushButton, QComboBox, QProgressBar, QTextEdit, QTableWidget,    QTableWidgetItem, QFileDialog, QMessageBox, QSplitter, QFrame,    QScrollArea, QGridLayout, QSpinBox, QDoubleSpinBox, QCheckBox,    QLineEdit, QFormLayout, QHeaderView, QApplication, QSlider, QInputDialog)
+
+# ФАЗА 2: Импорт оптимизированных UI компонентов
+from .performance_optimized_widgets import OptimizedTableWidget
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QPixmap, QIcon, QFont, QPalette, QMovie
 
@@ -127,7 +130,8 @@ class PluginsDialog(QDialog):
         plugins_group = QGroupBox("🔌 Доступные плагины")
         plugins_layout = QVBoxLayout(plugins_group)
         
-        self.plugins_table = QTableWidget()
+        # ФАЗА 2: Оптимизированная таблица плагинов
+        self.plugins_table = OptimizedTableWidget()
         self.plugins_table.setColumnCount(6)
         self.plugins_table.setHorizontalHeaderLabels([
             "Название", "Тип", "Статус", "Память", "Действия", "Информация"
@@ -371,7 +375,8 @@ class PluginsDialog(QDialog):
         history_group = QGroupBox("📋 История обучения")
         history_layout = QVBoxLayout(history_group)
         
-        self.history_table = QTableWidget()
+        # ФАЗА 2: Оптимизированная таблица истории
+        self.history_table = OptimizedTableWidget()
         self.history_table.setColumnCount(5)
         self.history_table.setHorizontalHeaderLabels([
             "Эпоха", "Шаг", "Loss", "Eval Loss", "Время"

@@ -7,6 +7,9 @@ from PyQt6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QProgressBar, QFormLayout, QGridLayout, QCheckBox, QComboBox,
     QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QButtonGroup
 )
+
+# ФАЗА 2: Импорт оптимизированных UI компонентов
+from .ui.performance_optimized_widgets import OptimizedTableWidget, SmartProgressBar
 from datetime import datetime
 from datasets import Dataset
 import os
@@ -2181,8 +2184,8 @@ class ModernTrainingDialog(QDialog):
         """)
         quality_layout.addWidget(self.overall_score_label)
         
-        # Таблица метрик
-        self.quality_metrics_table = QTableWidget()
+        # ФАЗА 2: Оптимизированная таблица метрик
+        self.quality_metrics_table = OptimizedTableWidget()
         self.quality_metrics_table.setColumnCount(2)
         self.quality_metrics_table.setHorizontalHeaderLabels(["Метрика", "Значение"])
         self.quality_metrics_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -2296,8 +2299,8 @@ class ModernTrainingDialog(QDialog):
         history_group = QGroupBox("📋 История обучения")
         history_layout = QVBoxLayout(history_group)
         
-        # Таблица истории
-        self.history_table = QTableWidget()
+        # ФАЗА 2: Оптимизированная таблица истории
+        self.history_table = OptimizedTableWidget()
         self.history_table.setColumnCount(6)
         self.history_table.setHorizontalHeaderLabels([
             "Эпоха", "Шаг", "Loss", "Eval Loss", "Accuracy", "Время"

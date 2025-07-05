@@ -13,6 +13,12 @@ from PyQt6.QtWidgets import (
     QStatusBar, QSpacerItem, QDialog,
     QTabWidget, QButtonGroup  # ИСПРАВЛЕНИЕ: Добавляем QButtonGroup
 )
+
+# ФАЗА 2: Импорт оптимизированных UI компонентов
+from .ui.performance_optimized_widgets import (
+    OptimizedTableWidget, SmartProgressBar, VirtualScrollArea,
+    AnimatedButton, OptimizedFileListWidget
+)
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QUrl, QTimer, QThread
 from PyQt6.QtGui import QPixmap, QImage, QAction, QIcon, QFont
 from PIL import Image, ImageQt
@@ -528,53 +534,16 @@ class MainWindow(QMainWindow):
         process_layout.setContentsMargins(0, 0, 0, 0)
         process_layout.setSpacing(4)  # Минимальные отступы
         
-        # Универсальная кнопка Обработать/Отменить
-        self.process_button = QPushButton("🚀 Обработать")
+        # ФАЗА 2: Анимированная кнопка Обработать/Отменить
+        self.process_button = AnimatedButton("🚀 Обработать")
         self.process_button.setEnabled(False)
         self.process_button.clicked.connect(self.on_process_button_clicked)
         self.process_button.setMinimumHeight(28)  # Еще более компактная высота
-        self.process_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-weight: bold;
-                border: none;
-                border-radius: 4px;
-                font-size: 12px;
-                padding: 4px 8px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-                color: #666666;
-            }
-            QPushButton[mode="cancel"] {
-                background-color: #f44336;
-            }
-            QPushButton[mode="cancel"]:hover {
-                background-color: #d32f2f;
-            }
-        """)
         
-        # Компактный прогресс-бар (без всего остального)
-        self.progress_bar = QProgressBar()
+        # ФАЗА 2: Смарт прогресс-бар с ETA
+        self.progress_bar = SmartProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setMaximumHeight(12)  # Очень узкий прогресс-бар
-        self.progress_bar.setTextVisible(False)  # Без текста для экономии места
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #ddd;
-                border-radius: 6px;
-                background-color: #f5f5f5;
-                max-height: 12px;
-            }
-            QProgressBar::chunk {
-                background-color: #4CAF50;
-                border-radius: 5px;
-            }
-        """)
         
         # Статус обработки (компактный)
         self.process_status_label = QLabel("")
@@ -626,8 +595,8 @@ class MainWindow(QMainWindow):
         
         results_layout.addLayout(table_header_layout)
         
-        # Создаем таблицу для отображения результатов
-        self.results_table = QTableWidget()
+        # ФАЗА 2: Создаем оптимизированную таблицу для отображения результатов
+        self.results_table = OptimizedTableWidget()
         
         # Настраиваем таблицу исходя из полей в настройках
         self.setup_results_table()

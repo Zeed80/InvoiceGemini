@@ -9,6 +9,9 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QLabel, QLineEdit, QTextEdit, QComboBox, QCheckBox,
                              QSpinBox, QSplitter, QTabWidget, QWidget, QMessageBox,
                              QFormLayout, QDialogButtonBox)
+
+# ФАЗА 2: Импорт оптимизированных UI компонентов
+from .performance_optimized_widgets import OptimizedTableWidget
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
@@ -82,8 +85,8 @@ class FieldManagerDialog(QDialog):
         widget = QGroupBox("Поля таблицы")
         layout = QVBoxLayout(widget)
         
-        # Таблица полей
-        self.fields_table = QTableWidget()
+        # ФАЗА 2: Оптимизированная таблица полей
+        self.fields_table = OptimizedTableWidget()
         self.fields_table.setColumnCount(5)
         self.fields_table.setHorizontalHeaderLabels([
             "Включено", "Название", "Приоритет", "Тип", "Обязательное"
