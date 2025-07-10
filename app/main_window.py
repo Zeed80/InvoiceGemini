@@ -4,6 +4,7 @@
 import os
 import sys
 import json
+import logging
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter,
@@ -33,6 +34,8 @@ from .settings_manager import settings_manager
 from .processing_engine import ModelManager
 from .training_dialog import TrainingDialog
 
+# NEW: Import optimized storage system for Phase 3
+from .core.storage_integration import get_storage_integration, initialize_optimized_storage
 
 # NEW: Import LLM Plugin Manager
 from .plugins.plugin_manager import PluginManager
@@ -53,6 +56,8 @@ from .ui.components.file_viewer_dialog import FileViewerDialog
 # from .ui.components.progress_indicator import ProgressIndicator  # Не используется
 from .ui.components.batch_processor_adapter import BatchProcessor
 from .ui.components.export_manager import ExportManager
+
+logger = logging.getLogger(__name__)
 
 
 class CollapsibleGroup(QWidget):
@@ -173,6 +178,26 @@ class MainWindow(QMainWindow):
         
         # Initialize prompt generator
         self.prompt_generator = PromptGenerator(settings_manager)
+        
+        # NEW: Initialize optimized storage system (Phase 3)
+        self.storage_integration = get_storage_integration(settings_manager)
+        if self.storage_integration:
+            # Подключаем сигналы миграции
+            self.storage_integration.migration_started.connect(
+                lambda: self.set_processing_status("Миграция настроек...")
+            )
+            self.storage_integration.migration_progress.connect(
+                lambda progress, status: self.set_processing_status(f"{status} ({progress}%)")
+            )
+            self.storage_integration.migration_completed.connect(
+                self._on_storage_migration_completed
+            )
+            self.storage_integration.storage_ready.connect(
+                lambda: self.set_processing_status("Система хранения готова")
+            )
+            
+            # Запускаем инициализацию в фоне
+            QTimer.singleShot(500, lambda: self.storage_integration.initialize_storage_system())
         
         # NEW: Initialize UI components
         self.file_selector = None  # Will be initialized in init_ui
@@ -3000,9 +3025,34 @@ class MainWindow(QMainWindow):
                  utils.show_info_message(
                      self, "Отсутствует pandas", 
                      "Для экспорта в Excel необходимо установить библиотеку pandas. "
-                     "Используйте команду: pip install pandas openpyxl"
-                 )
+                                      "Используйте команду: pip install pandas openpyxl"
+             )
     
+    def _on_storage_migration_completed(self, success: bool):
+        """Обработчик завершения миграции системы хранения"""
+        if success:
+            logger.info("✅ Миграция системы хранения завершена успешно")
+            self.set_processing_status("Система хранения обновлена")
+            
+            # Показываем уведомление пользователю
+            QMessageBox.information(
+                self, 
+                "Обновление системы",
+                "Система хранения настроек была обновлена.\n"
+                "Новая система обеспечивает улучшенную производительность\n"
+                "и надежность сохранения данных."
+            )
+        else:
+            logger.error("❌ Миграция системы хранения не удалась")
+            self.set_processing_status("Ошибка миграции системы хранения")
+            
+            QMessageBox.warning(
+                self,
+                "Ошибка обновления",
+                "Не удалось обновить систему хранения настроек.\n"
+                "Приложение продолжит работу в совместимом режиме."
+            )
+
     def closeEvent(self, event):
         """Обработка закрытия окна."""
         print("Начинаем корректное закрытие приложения...")
@@ -3061,6 +3111,11 @@ class MainWindow(QMainWindow):
             if self.cache_manager:
                 self.cache_manager.clear_expired()
                 print("Очищен устаревший кэш")
+                
+            # NEW: Очищаем ресурсы оптимизированной системы хранения (Phase 3)
+            if hasattr(self, 'storage_integration') and self.storage_integration:
+                self.storage_integration.cleanup()
+                print("Система хранения очищена")
                             
             # Даем время для остановки
             QCoreApplication.processEvents()

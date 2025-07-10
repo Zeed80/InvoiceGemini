@@ -39,9 +39,6 @@ class ConnectionPool:
         self.connections: Queue = Queue(maxsize=pool_size)
         self.lock = Lock()
         
-        # Создаем соединения
-        self._create_connections()
-        
         # Настройки SQLite для производительности
         self._sqlite_optimizations = {
             'PRAGMA journal_mode': 'WAL',  # Write-Ahead Logging
@@ -51,6 +48,9 @@ class ConnectionPool:
             'PRAGMA mmap_size': '268435456',  # 256MB memory mapping
             'PRAGMA optimize': None  # Оптимизация статистики
         }
+        
+        # Создаем соединения
+        self._create_connections()
     
     def _create_connections(self):
         """Создает пул соединений"""
