@@ -55,7 +55,7 @@ class MetricsWidget(QWidget):
     def update_metrics(self, metrics_file):
         """Обновляет отображение метрик из файла"""
         try:
-            with open(metrics_file, 'r') as f:
+            with open(metrics_file, 'r', encoding='utf-8') as f:
                 metrics = json.load(f)
                 
             if metrics['training_loss']:

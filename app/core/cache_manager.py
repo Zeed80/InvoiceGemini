@@ -325,6 +325,16 @@ class CacheManager:
                 
             except Exception as e:
                 logger.error(f"Ошибка очистки кэша: {e}")
+    
+    def clear_expired(self):
+        """Очищает устаревшие записи из кэша (публичный метод)"""
+        with self._lock:
+            try:
+                self._cleanup_old_entries()
+                self._save_index()
+                logger.info("Очистка устаревших записей завершена")
+            except Exception as e:
+                logger.error(f"Ошибка очистки устаревших записей: {e}")
                 
     def get_cache_stats(self) -> Dict[str, Any]:
         """Возвращает статистику кэша"""

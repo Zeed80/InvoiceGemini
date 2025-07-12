@@ -188,10 +188,22 @@ class OptimizationManager(QObject):
             # Применяем оптимизации к QApplication
             app = QApplication.instance()
             if app:
-                # Включаем высокое DPI
+                # Включаем высокое DPI (только если еще не установлено)
                 from PyQt6.QtCore import Qt
-                app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps)
-                app.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
+                try:
+                    # Проверяем, можем ли мы установить атрибут
+                    if not app.testAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps):
+                        app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps)
+                except:
+                    # Игнорируем ошибку, если атрибут не может быть установлен
+                    pass
+                
+                try:
+                    if not app.testAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling):
+                        app.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
+                except:
+                    # Игнорируем ошибку, если атрибут не может быть установлен
+                    pass
                 
                 # Оптимизация стилей
                 app.setStyleSheet("""

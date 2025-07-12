@@ -1,19 +1,22 @@
 """
-Система мониторинга производительности для отслеживания оптимизаций
+PerformanceMonitor - Система комплексного мониторинга производительности
+Версия: 4.0 - Финальная фаза мониторинга и оптимизации
 """
 
 import time
 import psutil
+import threading
 import logging
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
-from threading import Lock
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer
-import json
-from pathlib import Path
 from datetime import datetime, timedelta
-
-logger = logging.getLogger(__name__)
+from typing import Dict, List, Optional, Callable, Any
+from dataclasses import dataclass, field
+from pathlib import Path
+import json
+from queue import Queue, Empty
+import gc
+import sys
+from PyQt6.QtCore import QObject, pyqtSignal, QTimer
+from PyQt6.QtWidgets import QApplication
 
 
 @dataclass
@@ -21,453 +24,420 @@ class PerformanceMetric:
     """Метрика производительности"""
     name: str
     value: float
-    unit: str
-    timestamp: float
-    category: str
-    details: Dict[str, Any] = None
+    timestamp: datetime
+    category: str = "general"
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class SystemSnapshot:
-    """Снимок состояния системы"""
-    timestamp: float
-    cpu_percent: float
-    memory_percent: float
-    memory_used_mb: float
-    memory_available_mb: float
-    gpu_memory_used_mb: Optional[float]
-    gpu_memory_total_mb: Optional[float]
-    active_threads: int
-    open_files: int
+class PerformanceReport:
+    """Отчет о производительности"""
+    timestamp: datetime
+    metrics: List[PerformanceMetric]
+    issues: List[str] = field(default_factory=list)
+    recommendations: List[str] = field(default_factory=list)
 
 
 class PerformanceMonitor(QObject):
-    """
-    Система мониторинга производительности:
-    - Отслеживание времени операций
-    - Мониторинг системных ресурсов
-    - Анализ эффективности кэшей
-    - Генерация отчетов
-    """
+    """Комплексный мониторинг производительности системы"""
     
-    metric_recorded = pyqtSignal(str, float)  # name, value
-    threshold_exceeded = pyqtSignal(str, float, float)  # metric, value, threshold
+    # Сигналы для уведомлений
+    metric_updated = pyqtSignal(str, float)  # metric_name, value
+    issue_detected = pyqtSignal(str)  # issue_description
+    report_generated = pyqtSignal(object)  # PerformanceReport
     
-    def __init__(self, reports_dir: str = "data/performance"):
+    def __init__(self, app_instance=None):
         super().__init__()
+        self.app_instance = app_instance
+        self.logger = logging.getLogger(__name__)
         
-        self.reports_dir = Path(reports_dir)
+        # Настройка мониторинга
+        self.monitoring_active = False
+        self.monitoring_thread = None
+        self.metrics_queue = Queue()
+        self.current_metrics: Dict[str, PerformanceMetric] = {}
+        
+        # Настройка отчетов
+        self.reports_dir = Path("logs/performance_reports")
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         
-        # Хранение метрик
-        self.metrics: List[PerformanceMetric] = []
-        self.system_snapshots: List[SystemSnapshot] = []
-        self.operation_times: Dict[str, List[float]] = {}
+        # Метрики для отслеживания
+        self.startup_time = None
+        self.startup_stages = {}
+        self.ui_response_times = []
+        self.memory_usage_history = []
+        self.cpu_usage_history = []
+        self.model_load_times = {}
         
-        # Пороговые значения
+        # Пороговые значения для проблем
         self.thresholds = {
-            'startup_time': 5.0,        # секунды
-            'model_load_time': 10.0,    # секунды
-            'ui_response_time': 0.1,    # секунды
-            'memory_usage_percent': 80, # процент
-            'cache_hit_rate': 0.7       # 70%
+            'startup_time': 4.0,  # секунды
+            'ui_response_time': 0.1,  # секунды
+            'memory_usage': 1024,  # МБ
+            'cpu_usage': 80.0,  # процент
+            'model_load_time': 10.0  # секунды
         }
         
-        # Блокировка для потокобезопасности
-        self.lock = Lock()
+        # Таймер для периодического мониторинга
+        self.monitoring_timer = QTimer()
+        self.monitoring_timer.timeout.connect(self._collect_system_metrics)
         
-        # Таймер для системного мониторинга
-        self.system_timer = QTimer()
-        self.system_timer.timeout.connect(self._collect_system_metrics)
-        self.system_timer.start(5000)  # Каждые 5 секунд
-        
-        # Таймер для генерации отчетов
-        self.report_timer = QTimer()
-        self.report_timer.timeout.connect(self._generate_periodic_report)
-        self.report_timer.start(300000)  # Каждые 5 минут
-        
-        logger.info("📊 PerformanceMonitor инициализирован")
+        self.logger.info("PerformanceMonitor инициализирован")
     
-    def record_operation_time(self, operation: str, duration: float, 
-                             details: Dict[str, Any] = None):
-        """Записывает время выполнения операции"""
-        with self.lock:
-            metric = PerformanceMetric(
-                name=f"{operation}_time",
-                value=duration,
-                unit="seconds",
-                timestamp=time.time(),
-                category="operation",
-                details=details or {}
-            )
+    def start_monitoring(self, interval: float = 1.0):
+        """Запуск мониторинга"""
+        if self.monitoring_active:
+            self.logger.warning("Мониторинг уже активен")
+            return
             
-            self.metrics.append(metric)
-            
-            # Группируем по операциям
-            if operation not in self.operation_times:
-                self.operation_times[operation] = []
-            
-            self.operation_times[operation].append(duration)
-            
-            # Ограничиваем размер истории
-            if len(self.operation_times[operation]) > 1000:
-                self.operation_times[operation] = self.operation_times[operation][-500:]
-            
-            # Проверяем пороги
-            threshold_key = f"{operation}_time"
-            if threshold_key in self.thresholds:
-                threshold = self.thresholds[threshold_key]
-                if duration > threshold:
-                    self.threshold_exceeded.emit(operation, duration, threshold)
-            
-            self.metric_recorded.emit(f"{operation}_time", duration)
-            
-            logger.debug(f"⏱️ {operation}: {duration:.3f}с")
-    
-    def record_cache_stats(self, cache_name: str, hits: int, misses: int, 
-                          size_mb: float, details: Dict[str, Any] = None):
-        """Записывает статистику кэша"""
-        hit_rate = hits / (hits + misses) if (hits + misses) > 0 else 0
+        self.monitoring_active = True
+        self.monitoring_timer.start(int(interval * 1000))  # Конвертируем в миллисекунды
         
-        with self.lock:
-            # Запись hit rate
-            metric_hit_rate = PerformanceMetric(
-                name=f"{cache_name}_hit_rate",
-                value=hit_rate,
-                unit="ratio",
-                timestamp=time.time(),
-                category="cache",
-                details={
-                    'hits': hits,
-                    'misses': misses,
-                    'size_mb': size_mb,
-                    **(details or {})
-                }
-            )
-            
-            # Запись размера
-            metric_size = PerformanceMetric(
-                name=f"{cache_name}_size",
-                value=size_mb,
-                unit="mb",
-                timestamp=time.time(),
-                category="cache",
-                details=details or {}
-            )
-            
-            self.metrics.extend([metric_hit_rate, metric_size])
-            
-            # Проверяем пороги
-            if hit_rate < self.thresholds.get('cache_hit_rate', 0.7):
-                self.threshold_exceeded.emit(
-                    f"{cache_name}_hit_rate", hit_rate, self.thresholds['cache_hit_rate']
-                )
-            
-            self.metric_recorded.emit(f"{cache_name}_hit_rate", hit_rate)
-            self.metric_recorded.emit(f"{cache_name}_size", size_mb)
+        # Запуск потока для обработки метрик
+        self.monitoring_thread = threading.Thread(target=self._monitoring_loop, daemon=True)
+        self.monitoring_thread.start()
+        
+        self.logger.info(f"Мониторинг запущен с интервалом {interval} сек")
     
-    def record_memory_usage(self, component: str, memory_mb: float, 
-                           details: Dict[str, Any] = None):
-        """Записывает использование памяти компонентом"""
-        with self.lock:
-            metric = PerformanceMetric(
-                name=f"{component}_memory",
-                value=memory_mb,
-                unit="mb",
-                timestamp=time.time(),
-                category="memory",
-                details=details or {}
-            )
+    def stop_monitoring(self):
+        """Остановка мониторинга"""
+        if not self.monitoring_active:
+            return
             
-            self.metrics.append(metric)
-            self.metric_recorded.emit(f"{component}_memory", memory_mb)
+        self.monitoring_active = False
+        self.monitoring_timer.stop()
+        
+        if self.monitoring_thread:
+            self.monitoring_thread.join(timeout=2.0)
+            
+        self.logger.info("Мониторинг остановлен")
+    
+    def record_startup_stage(self, stage_name: str, duration: float):
+        """Запись времени этапа запуска"""
+        self.startup_stages[stage_name] = duration
+        self.logger.info(f"Этап запуска '{stage_name}': {duration:.2f}с")
+        
+        # Обновление общего времени запуска
+        if self.startup_time is None:
+            self.startup_time = sum(self.startup_stages.values())
+        else:
+            self.startup_time = sum(self.startup_stages.values())
+        
+        # Проверка на проблемы
+        if self.startup_time > self.thresholds['startup_time']:
+            issue = f"Время запуска превышает порог: {self.startup_time:.2f}с > {self.thresholds['startup_time']}с"
+            self.issue_detected.emit(issue)
+    
+    def record_ui_response_time(self, action: str, duration: float):
+        """Запись времени отклика UI"""
+        self.ui_response_times.append({
+            'action': action,
+            'duration': duration,
+            'timestamp': datetime.now()
+        })
+        
+        # Ограничиваем историю
+        if len(self.ui_response_times) > 100:
+            self.ui_response_times = self.ui_response_times[-100:]
+        
+        # Проверка на проблемы
+        if duration > self.thresholds['ui_response_time']:
+            issue = f"Медленный отклик UI '{action}': {duration:.3f}с > {self.thresholds['ui_response_time']}с"
+            self.issue_detected.emit(issue)
+    
+    def record_model_load_time(self, model_name: str, duration: float):
+        """Запись времени загрузки модели"""
+        self.model_load_times[model_name] = {
+            'duration': duration,
+            'timestamp': datetime.now()
+        }
+        
+        self.logger.info(f"Модель '{model_name}' загружена за {duration:.2f}с")
+        
+        # Проверка на проблемы
+        if duration > self.thresholds['model_load_time']:
+            issue = f"Медленная загрузка модели '{model_name}': {duration:.2f}с > {self.thresholds['model_load_time']}с"
+            self.issue_detected.emit(issue)
     
     def _collect_system_metrics(self):
-        """Собирает системные метрики"""
+        """Сбор системных метрик"""
         try:
-            # CPU и память
+            # Получение метрик системы
             cpu_percent = psutil.cpu_percent(interval=None)
-            memory = psutil.virtual_memory()
+            memory_info = psutil.virtual_memory()
+            memory_mb = memory_info.used / 1024 / 1024
             
-            # Информация о процессе
+            # Получение метрик процесса
             process = psutil.Process()
-            process_memory = process.memory_info()
+            process_memory = process.memory_info().rss / 1024 / 1024
             
-            # GPU память (если доступно)
-            gpu_memory_used = None
-            gpu_memory_total = None
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    gpu_memory_used = torch.cuda.memory_allocated() / 1024**2  # MB
-                    gpu_memory_total = torch.cuda.get_device_properties(0).total_memory / 1024**2
-            except ImportError:
-                pass
+            # Сохранение метрик
+            now = datetime.now()
+            self.cpu_usage_history.append({'value': cpu_percent, 'timestamp': now})
+            self.memory_usage_history.append({'value': process_memory, 'timestamp': now})
             
-            snapshot = SystemSnapshot(
-                timestamp=time.time(),
-                cpu_percent=cpu_percent,
-                memory_percent=memory.percent,
-                memory_used_mb=memory.used / 1024**2,
-                memory_available_mb=memory.available / 1024**2,
-                gpu_memory_used_mb=gpu_memory_used,
-                gpu_memory_total_mb=gpu_memory_total,
-                active_threads=process.num_threads(),
-                open_files=len(process.open_files())
-            )
+            # Ограничиваем историю
+            if len(self.cpu_usage_history) > 300:  # 5 минут при интервале 1 сек
+                self.cpu_usage_history = self.cpu_usage_history[-300:]
+            if len(self.memory_usage_history) > 300:
+                self.memory_usage_history = self.memory_usage_history[-300:]
             
-            with self.lock:
-                self.system_snapshots.append(snapshot)
+            # Создание метрик для очереди
+            metrics = [
+                PerformanceMetric("cpu_usage", cpu_percent, now, "system"),
+                PerformanceMetric("memory_usage", process_memory, now, "system"),
+                PerformanceMetric("system_memory", memory_mb, now, "system")
+            ]
+            
+            # Добавление метрик в очередь
+            for metric in metrics:
+                try:
+                    self.metrics_queue.put_nowait(metric)
+                except:
+                    pass  # Игнорируем ошибки переполнения очереди
+            
+            # Проверка на проблемы
+            if cpu_percent > self.thresholds['cpu_usage']:
+                issue = f"Высокая загрузка CPU: {cpu_percent:.1f}% > {self.thresholds['cpu_usage']}%"
+                self.issue_detected.emit(issue)
+            
+            if process_memory > self.thresholds['memory_usage']:
+                issue = f"Высокое потребление памяти: {process_memory:.1f}МБ > {self.thresholds['memory_usage']}МБ"
+                self.issue_detected.emit(issue)
                 
-                # Ограничиваем историю (последние 2 часа при интервале 5 сек)
-                max_snapshots = 1440  # 2 часа
-                if len(self.system_snapshots) > max_snapshots:
-                    self.system_snapshots = self.system_snapshots[-max_snapshots//2:]
-                
-                # Проверяем пороги памяти
-                if memory.percent > self.thresholds.get('memory_usage_percent', 80):
-                    self.threshold_exceeded.emit(
-                        'system_memory', memory.percent, self.thresholds['memory_usage_percent']
-                    )
-            
         except Exception as e:
-            logger.error(f"Ошибка сбора системных метрик: {e}")
+            self.logger.error(f"Ошибка при сборе метрик: {e}")
     
-    def _generate_periodic_report(self):
-        """Генерирует периодический отчет"""
-        report = self.generate_performance_report()
-        
-        # Сохраняем отчет
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_file = self.reports_dir / f"performance_report_{timestamp}.json"
-        
-        try:
-            with open(report_file, 'w', encoding='utf-8') as f:
-                json.dump(report, f, indent=2, ensure_ascii=False, default=str)
-            
-            logger.info(f"📊 Отчет о производительности сохранен: {report_file}")
-            
-            # Очищаем старые отчеты (старше 7 дней)
-            self._cleanup_old_reports()
-            
-        except Exception as e:
-            logger.error(f"Ошибка сохранения отчета: {e}")
-    
-    def _cleanup_old_reports(self):
-        """Очищает старые отчеты"""
-        cutoff_date = datetime.now() - timedelta(days=7)
-        
-        for report_file in self.reports_dir.glob("performance_report_*.json"):
+    def _monitoring_loop(self):
+        """Основной цикл мониторинга"""
+        while self.monitoring_active:
             try:
-                file_date = datetime.fromtimestamp(report_file.stat().st_mtime)
-                if file_date < cutoff_date:
-                    report_file.unlink()
+                # Обработка метрик из очереди
+                while not self.metrics_queue.empty():
+                    try:
+                        metric = self.metrics_queue.get_nowait()
+                        self.current_metrics[metric.name] = metric
+                        self.metric_updated.emit(metric.name, metric.value)
+                    except Empty:
+                        break
+                
+                # Небольшая пауза для уменьшения нагрузки
+                time.sleep(0.1)
+                
             except Exception as e:
-                logger.error(f"Ошибка удаления старого отчета {report_file}: {e}")
+                self.logger.error(f"Ошибка в цикле мониторинга: {e}")
+                time.sleep(1.0)
     
-    def generate_performance_report(self) -> Dict[str, Any]:
-        """Генерирует полный отчет о производительности"""
-        with self.lock:
-            current_time = time.time()
-            
-            # Анализ операций
-            operation_stats = {}
-            for operation, times in self.operation_times.items():
-                if times:
-                    operation_stats[operation] = {
-                        'count': len(times),
-                        'avg_time': sum(times) / len(times),
-                        'min_time': min(times),
-                        'max_time': max(times),
-                        'last_10_avg': sum(times[-10:]) / min(len(times), 10)
-                    }
-            
-            # Анализ кэшей
-            cache_stats = {}
-            cache_metrics = [m for m in self.metrics if m.category == 'cache']
-            
-            for metric in cache_metrics:
-                cache_name = metric.name.split('_')[0]
-                if cache_name not in cache_stats:
-                    cache_stats[cache_name] = {}
-                
-                if 'hit_rate' in metric.name:
-                    cache_stats[cache_name]['hit_rate'] = metric.value
-                elif 'size' in metric.name:
-                    cache_stats[cache_name]['size_mb'] = metric.value
-            
-            # Системные метрики (последние 30 минут)
-            recent_snapshots = [
-                s for s in self.system_snapshots 
-                if current_time - s.timestamp <= 1800  # 30 минут
-            ]
-            
-            system_stats = {}
-            if recent_snapshots:
-                system_stats = {
-                    'avg_cpu_percent': sum(s.cpu_percent for s in recent_snapshots) / len(recent_snapshots),
-                    'avg_memory_percent': sum(s.memory_percent for s in recent_snapshots) / len(recent_snapshots),
-                    'peak_memory_mb': max(s.memory_used_mb for s in recent_snapshots),
-                    'avg_threads': sum(s.active_threads for s in recent_snapshots) / len(recent_snapshots),
-                    'current_memory_mb': recent_snapshots[-1].memory_used_mb,
-                    'current_cpu_percent': recent_snapshots[-1].cpu_percent
-                }
-                
-                if any(s.gpu_memory_used_mb for s in recent_snapshots):
-                    gpu_snapshots = [s for s in recent_snapshots if s.gpu_memory_used_mb]
-                    system_stats.update({
-                        'avg_gpu_memory_mb': sum(s.gpu_memory_used_mb for s in gpu_snapshots) / len(gpu_snapshots),
-                        'peak_gpu_memory_mb': max(s.gpu_memory_used_mb for s in gpu_snapshots),
-                        'current_gpu_memory_mb': recent_snapshots[-1].gpu_memory_used_mb
-                    })
-            
-            # Анализ превышений порогов
-            threshold_violations = []
-            recent_metrics = [
-                m for m in self.metrics 
-                if current_time - m.timestamp <= 3600  # Последний час
-            ]
-            
-            for metric in recent_metrics:
-                threshold_key = metric.name
-                if threshold_key in self.thresholds:
-                    if metric.value > self.thresholds[threshold_key]:
-                        threshold_violations.append({
-                            'metric': metric.name,
-                            'value': metric.value,
-                            'threshold': self.thresholds[threshold_key],
-                            'timestamp': metric.timestamp,
-                            'severity': 'high' if metric.value > self.thresholds[threshold_key] * 1.5 else 'medium'
-                        })
-            
-            return {
-                'generated_at': current_time,
-                'period_start': current_time - 3600,  # Последний час
-                'operation_performance': operation_stats,
-                'cache_performance': cache_stats,
-                'system_metrics': system_stats,
-                'threshold_violations': threshold_violations,
-                'total_metrics_collected': len(self.metrics),
-                'optimization_recommendations': self._generate_recommendations(
-                    operation_stats, cache_stats, system_stats, threshold_violations
-                )
-            }
-    
-    def _generate_recommendations(self, operation_stats: Dict, cache_stats: Dict, 
-                                 system_stats: Dict, violations: List) -> List[str]:
-        """Генерирует рекомендации по оптимизации"""
+    def generate_report(self) -> PerformanceReport:
+        """Генерация отчета о производительности"""
+        now = datetime.now()
+        metrics = list(self.current_metrics.values())
+        
+        # Добавление специальных метрик
+        if self.startup_time:
+            metrics.append(PerformanceMetric("startup_time", self.startup_time, now, "startup"))
+        
+        # Средние значения UI
+        if self.ui_response_times:
+            avg_ui_response = sum(item['duration'] for item in self.ui_response_times) / len(self.ui_response_times)
+            metrics.append(PerformanceMetric("avg_ui_response_time", avg_ui_response, now, "ui"))
+        
+        # Анализ проблем
+        issues = []
         recommendations = []
         
-        # Анализ операций
-        for operation, stats in operation_stats.items():
-            if stats['avg_time'] > 5.0:  # Операции дольше 5 секунд
-                recommendations.append(
-                    f"⚠️ Операция '{operation}' выполняется медленно (среднее: {stats['avg_time']:.2f}с)"
-                )
+        # Проверка времени запуска
+        if self.startup_time and self.startup_time > self.thresholds['startup_time']:
+            issues.append(f"Медленный запуск: {self.startup_time:.2f}с")
+            recommendations.append("Рассмотреть ленивую загрузку компонентов")
         
-        # Анализ кэшей
-        for cache_name, stats in cache_stats.items():
-            hit_rate = stats.get('hit_rate', 0)
-            if hit_rate < 0.5:  # Hit rate ниже 50%
-                recommendations.append(
-                    f"📊 Низкий hit rate кэша '{cache_name}': {hit_rate:.1%}. Рекомендуется увеличить размер кэша"
-                )
+        # Проверка памяти
+        if self.memory_usage_history:
+            avg_memory = sum(item['value'] for item in self.memory_usage_history[-10:]) / min(10, len(self.memory_usage_history))
+            if avg_memory > self.thresholds['memory_usage']:
+                issues.append(f"Высокое потребление памяти: {avg_memory:.1f}МБ")
+                recommendations.append("Проверить утечки памяти и оптимизировать кэширование")
         
-        # Анализ системных ресурсов
-        if system_stats.get('avg_memory_percent', 0) > 80:
-            recommendations.append(
-                "🧠 Высокое использование памяти. Рекомендуется оптимизация или увеличение RAM"
-            )
+        # Проверка UI
+        if self.ui_response_times:
+            slow_actions = [item for item in self.ui_response_times if item['duration'] > self.thresholds['ui_response_time']]
+            if slow_actions:
+                issues.append(f"Медленные действия UI: {len(slow_actions)} из {len(self.ui_response_times)}")
+                recommendations.append("Оптимизировать медленные UI операции")
         
-        if system_stats.get('avg_cpu_percent', 0) > 80:
-            recommendations.append(
-                "⚡ Высокая нагрузка на CPU. Рекомендуется оптимизация алгоритмов"
-            )
+        report = PerformanceReport(
+            timestamp=now,
+            metrics=metrics,
+            issues=issues,
+            recommendations=recommendations
+        )
         
-        # Анализ превышений порогов
-        critical_violations = [v for v in violations if v['severity'] == 'high']
-        if critical_violations:
-            recommendations.append(
-                f"🚨 Обнаружено {len(critical_violations)} критических превышений порогов"
-            )
+        # Сохранение отчета
+        self._save_report(report)
         
-        if not recommendations:
-            recommendations.append("✅ Система работает в оптимальном режиме")
+        # Отправка сигнала
+        self.report_generated.emit(report)
         
-        return recommendations
+        return report
     
-    def get_operation_statistics(self, operation: str) -> Dict[str, float]:
-        """Возвращает статистику по конкретной операции"""
-        with self.lock:
-            times = self.operation_times.get(operation, [])
-            
-            if not times:
-                return {}
-            
-            return {
-                'count': len(times),
-                'avg_time': sum(times) / len(times),
-                'min_time': min(times),
-                'max_time': max(times),
-                'median_time': sorted(times)[len(times) // 2],
-                'p95_time': sorted(times)[int(len(times) * 0.95)] if len(times) > 20 else max(times),
-                'recent_avg': sum(times[-10:]) / min(len(times), 10)
-            }
-    
-    def set_threshold(self, metric: str, value: float):
-        """Устанавливает пороговое значение для метрики"""
-        self.thresholds[metric] = value
-        logger.info(f"📏 Установлен порог для {metric}: {value}")
-    
-    def cleanup(self):
-        """Очистка ресурсов"""
-        self.system_timer.stop()
-        self.report_timer.stop()
-        
-        # Генерируем финальный отчет
-        final_report = self.generate_performance_report()
-        
-        report_file = self.reports_dir / "final_performance_report.json"
+    def _save_report(self, report: PerformanceReport):
+        """Сохранение отчета в файл"""
         try:
-            with open(report_file, 'w', encoding='utf-8') as f:
-                json.dump(final_report, f, indent=2, ensure_ascii=False, default=str)
+            timestamp_str = report.timestamp.strftime("%Y%m%d_%H%M%S")
+            filename = self.reports_dir / f"performance_report_{timestamp_str}.json"
+            
+            # Конвертация в JSON
+            report_data = {
+                'timestamp': report.timestamp.isoformat(),
+                'metrics': [
+                    {
+                        'name': m.name,
+                        'value': m.value,
+                        'timestamp': m.timestamp.isoformat(),
+                        'category': m.category,
+                        'metadata': m.metadata
+                    }
+                    for m in report.metrics
+                ],
+                'issues': report.issues,
+                'recommendations': report.recommendations
+            }
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(report_data, f, indent=2, ensure_ascii=False)
+            
+            self.logger.info(f"Отчет сохранен: {filename}")
+            
         except Exception as e:
-            logger.error(f"Ошибка сохранения финального отчета: {e}")
+            self.logger.error(f"Ошибка при сохранении отчета: {e}")
+    
+    def get_startup_analysis(self) -> Dict[str, Any]:
+        """Анализ времени запуска по этапам"""
+        if not self.startup_stages:
+            return {}
         
-        logger.info("📊 PerformanceMonitor очищен")
+        total_time = sum(self.startup_stages.values())
+        analysis = {
+            'total_time': total_time,
+            'stages': self.startup_stages,
+            'slowest_stage': max(self.startup_stages, key=self.startup_stages.get),
+            'optimization_potential': total_time - self.thresholds['startup_time'] if total_time > self.thresholds['startup_time'] else 0
+        }
+        
+        return analysis
+    
+    def get_ui_performance_summary(self) -> Dict[str, Any]:
+        """Сводка производительности UI"""
+        if not self.ui_response_times:
+            return {}
+        
+        durations = [item['duration'] for item in self.ui_response_times]
+        
+        summary = {
+            'total_actions': len(self.ui_response_times),
+            'avg_response_time': sum(durations) / len(durations),
+            'max_response_time': max(durations),
+            'min_response_time': min(durations),
+            'slow_actions_count': len([d for d in durations if d > self.thresholds['ui_response_time']]),
+            'actions_by_type': {}
+        }
+        
+        # Группировка по типам действий
+        for item in self.ui_response_times:
+            action_type = item['action']
+            if action_type not in summary['actions_by_type']:
+                summary['actions_by_type'][action_type] = []
+            summary['actions_by_type'][action_type].append(item['duration'])
+        
+        return summary
+    
+    def get_memory_trend(self) -> Dict[str, Any]:
+        """Анализ тренда потребления памяти"""
+        if not self.memory_usage_history:
+            return {}
+        
+        recent_data = self.memory_usage_history[-60:]  # Последние 60 измерений
+        values = [item['value'] for item in recent_data]
+        
+        trend = {
+            'current_usage': values[-1] if values else 0,
+            'avg_usage': sum(values) / len(values),
+            'max_usage': max(values),
+            'min_usage': min(values),
+            'trend_direction': 'stable'
+        }
+        
+        # Определение тренда
+        if len(values) >= 2:
+            first_half = values[:len(values)//2]
+            second_half = values[len(values)//2:]
+            
+            avg_first = sum(first_half) / len(first_half)
+            avg_second = sum(second_half) / len(second_half)
+            
+            diff_percent = (avg_second - avg_first) / avg_first * 100
+            
+            if diff_percent > 5:
+                trend['trend_direction'] = 'increasing'
+            elif diff_percent < -5:
+                trend['trend_direction'] = 'decreasing'
+        
+        return trend
+    
+    def optimize_performance(self):
+        """Автоматическая оптимизация производительности"""
+        optimizations_applied = []
+        
+        try:
+            # Оптимизация 1: Очистка памяти
+            if self.memory_usage_history:
+                current_memory = self.memory_usage_history[-1]['value']
+                if current_memory > self.thresholds['memory_usage'] * 0.8:
+                    gc.collect()
+                    optimizations_applied.append("Выполнена очистка памяти")
+            
+            # Оптимизация 2: Настройка Qt приложения
+            if self.app_instance:
+                app = self.app_instance
+                if hasattr(app, 'processEvents'):
+                    app.processEvents()
+                    optimizations_applied.append("Обработаны события Qt")
+            
+            # Оптимизация 3: Системные настройки
+            if sys.platform == 'win32':
+                # Увеличение приоритета процесса на Windows
+                try:
+                    import ctypes
+                    ctypes.windll.kernel32.SetPriorityClass(
+                        ctypes.windll.kernel32.GetCurrentProcess(), 
+                        0x00000020  # NORMAL_PRIORITY_CLASS
+                    )
+                    optimizations_applied.append("Установлен нормальный приоритет процесса")
+                except:
+                    pass
+            
+            self.logger.info(f"Применены оптимизации: {optimizations_applied}")
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка при оптимизации: {e}")
+        
+        return optimizations_applied
 
 
-# Глобальный экземпляр
-_performance_monitor: Optional[PerformanceMonitor] = None
+# Глобальный экземпляр для использования в приложении
+_performance_monitor = None
 
 
 def get_performance_monitor() -> PerformanceMonitor:
-    """Возвращает глобальный экземпляр монитора производительности"""
+    """Получение глобального экземпляра PerformanceMonitor"""
     global _performance_monitor
     if _performance_monitor is None:
         _performance_monitor = PerformanceMonitor()
     return _performance_monitor
 
 
-# Декоратор для автоматического измерения времени операций
-def monitor_performance(operation_name: str):
-    """Декоратор для автоматического мониторинга времени операций"""
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            monitor = get_performance_monitor()
-            start_time = time.time()
-            
-            try:
-                result = func(*args, **kwargs)
-                duration = time.time() - start_time
-                monitor.record_operation_time(operation_name, duration)
-                return result
-            except Exception as e:
-                duration = time.time() - start_time
-                monitor.record_operation_time(
-                    f"{operation_name}_failed", duration, {'error': str(e)}
-                )
-                raise
-        
-        return wrapper
-    return decorator 
+def initialize_performance_monitor(app_instance=None):
+    """Инициализация системы мониторинга"""
+    global _performance_monitor
+    _performance_monitor = PerformanceMonitor(app_instance)
+    return _performance_monitor 

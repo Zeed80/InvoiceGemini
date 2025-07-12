@@ -52,7 +52,7 @@ class ModelValidator:
                     return False
             
             # Загружаем список меток
-            with open(os.path.join(self.model_dir, "label_list.json"), "r") as f:
+            with open(os.path.join(self.model_dir, "label_list.json"), "r", encoding='utf-8') as f:
                 self.label_list = json.load(f)
             
             # Загружаем модель и токенизатор
@@ -151,7 +151,7 @@ class ModelValidator:
             
             # Сохраняем метрики
             metrics_path = os.path.join(self.model_dir, "validation_metrics.json")
-            with open(metrics_path, "w") as f:
+            with open(metrics_path, "w", encoding='utf-8') as f:
                 json.dump(metrics, f, indent=2)
             
             return True, metrics
@@ -236,7 +236,7 @@ class ModelValidator:
             }
             
             memory_path = os.path.join(self.model_dir, "memory_usage_info.json")
-            with open(memory_path, "w") as f:
+            with open(memory_path, "w", encoding='utf-8') as f:
                 json.dump(memory_info, f, indent=2)
             
             return True, memory_used

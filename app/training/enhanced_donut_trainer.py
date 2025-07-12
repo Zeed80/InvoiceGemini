@@ -808,7 +808,7 @@ class EnhancedDonutTrainer:
                 'optimization': 'high_accuracy'
             }
             
-            with open(os.path.join(output_dir, 'training_metadata.json'), 'w') as f:
+            with open(os.path.join(output_dir, 'training_metadata.json'), 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, indent=2, ensure_ascii=False)
                 
             self._log(f"🎉 Модель с высокой точностью сохранена в: {output_dir}")

@@ -60,7 +60,7 @@ class DonutModelTester:
             # Загружаем метаданные если есть
             metadata_path = os.path.join(self.model_path, "training_metadata.json")
             if os.path.exists(metadata_path):
-                with open(metadata_path, 'r') as f:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
                     metadata = json.load(f)
                 logger.info(f"📊 Метаданные модели:")
                 logger.info(f"   Базовая модель: {metadata.get('base_model', 'неизвестно')}")

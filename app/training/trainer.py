@@ -2289,7 +2289,7 @@ class TrainingMetricsCallback(TrainerCallback):
             
         # Сохраняем метрики в JSON
         metrics_file = os.path.join(self.output_dir, 'training_metrics.json')
-        with open(metrics_file, 'w') as f:
+        with open(metrics_file, 'w', encoding='utf-8') as f:
             json.dump({
                 'epochs': self.epochs,
                 'training_loss': self.training_loss,
