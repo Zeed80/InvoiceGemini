@@ -38,6 +38,9 @@ try:
 except ImportError:
     BITSANDBYTES_AVAILABLE = False
 
+# В начале файла после существующих импортов добавляю:
+from .core.base_lora_trainer import BaseLorаTrainer, ModelType
+
 class SafeTrOCRModel(torch.nn.Module):
     """
     Безопасная обертка для TrOCR модели, которая правильно разделяет аргументы
@@ -468,34 +471,23 @@ class TrOCRGPUMonitorCallback:
         """Вызывается при сохранении модели (новый метод в transformers)"""
         return control
 
-class TrOCRTrainer:
+class TrOCRTrainer(BaseLorаTrainer):
     """
-    Trainer для обучения Microsoft TrOCR моделей с оптимизациями памяти
+    Оптимизированный тренер для TrOCR моделей с интеграцией базового LoRA класса
+    Устраняет дублирование LoRA кода, поддерживает все оптимизации памяти
     """
     
     def __init__(self, device: str = "auto", logger: logging.Logger = None):
-        """
-        Инициализация TrOCR Trainer
+        super().__init__(ModelType.TROCR, logger)
         
-        Args:
-            device: Устройство для обучения ('cuda', 'cpu', 'auto')
-            logger: Логгер для вывода сообщений
-        """
-        # Устройство
         if device == "auto":
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            self.device = torch.device(device)
-            
-        # Логгер
-        self.logger = logger or logging.getLogger(__name__)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        # Callbacks
+        self.device = torch.device(device)
         self.progress_callback = None
         self.metrics_callback = None
         self.status_callback = None
-        
-        self._log(f"TrOCRTrainer использует устройство: {self.device}")
+        self._stop_training = False
     
     def _log(self, message: str, level: str = "info"):
         """Универсальный метод логирования с безопасной обработкой Unicode"""
@@ -521,86 +513,16 @@ class TrOCRTrainer:
         self.metrics_callback = metrics_callback  
         self.status_callback = status_callback
     
-    def _apply_lora_optimization(self, model, training_args: dict):
-        """
-        Применяет LoRA оптимизацию для радикального снижения потребления памяти
-        """
-        if not LORA_AVAILABLE:
-            self._log("⚠️ PEFT (LoRA) не установлен. Используйте: pip install peft")
-            return model, False
-            
-        # 🎯 РЕВОЛЮЦИОННОЕ РЕШЕНИЕ: QLoRA для TrOCR (Feb 2025)
-        # Источник: https://arxiv.org/abs/2502.10202 - PTQ + QLoRA интеграция
-        # КРИТИЧЕСКОЕ ОТЛИЧИЕ: Используем QLoRA вместо стандартного LoRA
-        
-        # QLoRA решает нашу проблему input_ids через 4-bit квантизацию
-        # 1. Квантизуем базовую модель с BitsAndBytesConfig
-        # 2. Применяем LoRA адаптеры ТОЛЬКО к квантизованной модели
-        # 3. Это избегает конфликты с VisionEncoderDecoder архитектурой
-        
-        # Убираем квантизацию для диагностики проблемы
-        # Возможно BitsAndBytesConfig создает конфликты с VisionEncoderDecoder
-        
-        # 🎯 УЛЬТРА-МИНИМАЛЬНАЯ LoRA конфигурация
-        # Применяем LoRA только к одному слою для диагностики
-        safe_target_modules = [
-            # Только первый слой decoder self-attention
-            "decoder.model.decoder.layers.0.self_attn.q_proj",
-            "decoder.model.decoder.layers.0.self_attn.v_proj",
-        ]
-        
-        lora_config = LoraConfig(
-            task_type=TaskType.SEQ_2_SEQ_LM,
-            r=4,  # Уменьшенный rank для стабильности 
-            lora_alpha=16,  # 4x от rank
-            lora_dropout=0.05,  # Меньший dropout
-            bias="none",
-            target_modules=safe_target_modules,  # Безопасный минимум
-        )
-        
-        try:
-            # 🎯 ПОСЛЕДНЯЯ ПОПЫТКА: применяем LoRA БЕЗ перезагрузки модели
-            # Возможно проблема в том, что мы пытаемся квантизовать уже загруженную модель
-            
-            # Подготавливаем модель для LoRA без квантизации
-            # Если квантизация проблематична, используем стандартный подход
-            self._log("🔧 Применяем LoRA к уже загруженной модели...")
-            
-            # Подготавливаем модель для kbit training (может помочь с совместимостью)
-            model = prepare_model_for_kbit_training(model)
-            self._log("✅ Модель подготовлена для k-bit training")
-            
-            # Применяем LoRA напрямую
-            model = get_peft_model(model, lora_config)
-            self._log("✅ LoRA применен к модели")
-            
-            # Логируем информацию о тренируемых параметрах
-            model.print_trainable_parameters()
-            
-            return model, True
-            
-        except Exception as e:
-            self._log(f"❌ Ошибка применения LoRA: {e}")
-            return model, False
-    
     def _apply_memory_optimizations(self, model, training_args: dict):
         """
-        Применяет все оптимизации памяти: LoRA, Gradient Checkpointing
+        Применяет все оптимизации памяти через базовый класс
         """
-        optimizations_applied = []
+        # Используем унифицированные оптимизации из базового класса
+        model = self.apply_memory_optimizations(model, training_args)
         
-        # LoRA оптимизация
-        if training_args.get('use_lora', False):
-            self._log("🔧 Применяем исправленную LoRA оптимизацию...")
-            model, lora_success = self._apply_lora_optimization(model, training_args)
-            if lora_success:
-                optimizations_applied.append("LoRA (decoder-only)")
+        # Применяем TrOCR-специфичные оптимизации
+        model = self._apply_model_specific_optimizations(model, training_args)
         
-        # Gradient checkpointing
-        if training_args.get('gradient_checkpointing', True):
-            optimizations_applied.append("Gradient Checkpointing")
-        
-        self._log(f"🚀 Применены оптимизации памяти: {', '.join(optimizations_applied)}")
         return model
     
     def _setup_cuda_optimizations(self):
@@ -1530,3 +1452,27 @@ class TrOCRTrainer:
                 self._log("ℹ️ Активный trainer не найден")
         except Exception as e:
             self._log(f"⚠️ Ошибка при остановке TrOCRTrainer: {e}", "warning") 
+
+    def _apply_model_specific_optimizations(self, model, training_args: dict):
+        """Применяет специфичные для TrOCR оптимизации"""
+        
+        # TrOCR specific optimizations - безопасная обертка для VisionEncoderDecoder
+        if hasattr(model, 'forward'):
+            original_forward = model.forward
+            
+            def safe_trocr_forward(pixel_values=None, labels=None, **kwargs):
+                """Безопасный forward для TrOCR с фильтрацией аргументов"""
+                # Фильтруем проблематичные аргументы для TrOCR
+                filtered_kwargs = {k: v for k, v in kwargs.items() 
+                                 if k not in ['input_ids', 'attention_mask']}
+                
+                return original_forward(
+                    pixel_values=pixel_values,
+                    labels=labels,
+                    **filtered_kwargs
+                )
+            
+            model.forward = safe_trocr_forward
+            self._log("✅ TrOCR forward method optimized")
+        
+        return model

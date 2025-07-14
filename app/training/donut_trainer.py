@@ -42,6 +42,9 @@ try:
 except ImportError:
     BITSANDBYTES_AVAILABLE = False
 
+# В начале файла после существующих импортов добавляю:
+from .core.base_lora_trainer import BaseLorаTrainer, ModelType
+
 logger = logging.getLogger(__name__)
 
 class DonutDataCollator:
@@ -446,21 +449,17 @@ class DonutProgressCallback(TrainerCallback):
             duration = datetime.now() - self.start_time
             self.log_callback(f"✅ Обучение завершено за {duration}")
 
-class DonutTrainer:
-    """Класс для обучения модели Donut"""
+class DonutTrainer(BaseLorаTrainer):
+    """
+    Оптимизированный тренер для Donut моделей с интеграцией базового LoRA класса
+    Устраняет дублирование LoRA кода через наследование
+    """
     
     def __init__(self, app_config):
+        super().__init__(ModelType.DONUT)
         self.app_config = app_config
-        self.logger = logging.getLogger("DonutTrainer")
-        
-        # Определяем устройство
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.logger.info(f"DonutTrainer использует устройство: {self.device}")
-        
-        # Callbacks
-        self.progress_callback = None
-        self.log_callback = None
-        self.stop_requested = False
+        self.callbacks = {}
+        self._stop_training = False
         
     def set_callbacks(self, log_callback=None, progress_callback=None):
         """Устанавливает функции обратного вызова"""
@@ -469,7 +468,7 @@ class DonutTrainer:
         
     def stop(self):
         """Остановка обучения"""
-        self.stop_requested = True
+        self._stop_training = True
         if self.log_callback:
             self.log_callback("⏹️ Получен сигнал остановки обучения")
             
@@ -672,7 +671,7 @@ class DonutTrainer:
             self._log(f"\n📚 ===== ЭТАП 1: ПОДГОТОВКА ДАТАСЕТА =====")
             dataset = self.prepare_dataset(dataset_path, task_type)
             
-            if self.stop_requested:
+            if self._stop_training:
                 self._log("⏹️ Остановка на этапе подготовки датасета")
                 return None
                 
@@ -806,7 +805,7 @@ class DonutTrainer:
             else:
                 self._log("❌ CUDA недоступна - обучение будет ОЧЕНЬ медленным на CPU")
             
-            if self.stop_requested:
+            if self._stop_training:
                 self._log("⏹️ Остановка на этапе загрузки модели")
                 return None
                 
@@ -933,7 +932,7 @@ class DonutTrainer:
             self._log(f"   📊 Всего шагов обучения: {total_steps}")
             self._log(f"   ⏱️ Примерное время (при 1 сек/шаг): {total_steps // 60} мин")
             
-            if self.stop_requested:
+            if self._stop_training:
                 self._log("⏹️ Остановка на этапе создания trainer")
                 return None
                 
@@ -947,7 +946,7 @@ class DonutTrainer:
                     self.donut_trainer = donut_trainer
                     
                 def on_step_end(self, args, state, control, **kwargs):
-                    if self.donut_trainer.stop_requested:
+                    if self.donut_trainer._stop_training:
                         control.should_training_stop = True
                         
             trainer.add_callback(StopTrainingCallback(self))
@@ -959,7 +958,7 @@ class DonutTrainer:
             # Обучаем модель
             training_result = trainer.train()
             
-            if self.stop_requested:
+            if self._stop_training:
                 self._log("⏹️ Обучение остановлено пользователем")
                 return None
                 
@@ -1292,54 +1291,12 @@ class DonutTrainer:
         
         return callbacks 
 
-    def _apply_lora_optimization(self, model, training_args: dict):
-        """
-        Применяет LoRA оптимизацию для радикального снижения потребления памяти
-        """
-        if not LORA_AVAILABLE:
-            self._log("⚠️ PEFT (LoRA) не установлен. Используйте: pip install peft")
-            return model, False
-            
-        # LoRA конфигурация для Donut
-        lora_config = LoraConfig(
-            task_type=TaskType.SEQ_2_SEQ_LM,  # Donut - это sequence-to-sequence модель
-            r=16,  # Rank - количество параметров LoRA (меньше = экономия памяти)
-            lora_alpha=32,  # Scaling factor
-            lora_dropout=0.1,
-            # Применяем LoRA к ключевым слоям decoder (где происходит основное обучение)
-            target_modules=[
-                "q_proj", "k_proj", "v_proj", "out_proj",  # Attention слои decoder
-                "fc1", "fc2",  # Feed forward слои decoder
-                # НЕ применяем к encoder для экономии параметров
-            ],
-            bias="none",  # Не обучаем bias для экономии параметров
-            modules_to_save=None,  # Не сохраняем дополнительные модули
-        )
+    def _apply_model_specific_optimizations(self, model, training_args: dict):
+        """Применяет специфичные для Donut оптимизации"""
         
-        try:
-            self._log("🔧 Применяем LoRA оптимизацию...")
-            
-            # Подготавливаем модель для LoRA
-            model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
-            
-            # Применяем LoRA
-            model = get_peft_model(model, lora_config)
-            
-            # Информация о параметрах
-            total_params = sum(p.numel() for p in model.parameters())
-            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            
-            self._log(f"📊 Параметры после LoRA:")
-            self._log(f"   Всего: {total_params:,}")
-            self._log(f"   Обучаемых: {trainable_params:,}")
-            self._log(f"   Процент обучаемых: {100 * trainable_params / total_params:.2f}%")
-            self._log(f"   🚀 Экономия памяти: ~{100 - (100 * trainable_params / total_params):.1f}%")
-            
-            return model, True
-            
-        except Exception as e:
-            self._log(f"❌ Ошибка применения LoRA: {str(e)}")
-            return model, False
+        # Donut specific patch для VisionEncoderDecoderModel
+        self._patch_model_forward(model)
+        return model
     
     def _get_8bit_optimizer(self, model, learning_rate: float):
         """
