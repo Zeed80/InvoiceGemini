@@ -1,0 +1,8 @@
+---
+description: 
+globs: /**/*.*.py
+alwaysApply: false
+---
+- Write clean, well-documented, and easily maintainable code.
+- Implement comprehensive error handling and logging.
+- Utilize version control and follow collaborative development practices.
