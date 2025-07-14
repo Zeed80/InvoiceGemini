@@ -42,8 +42,8 @@ try:
 except ImportError:
     BITSANDBYTES_AVAILABLE = False
 
-# В начале файла после существующих импортов добавляю:
-from .core.base_lora_trainer import BaseLorаTrainer, ModelType
+# Импорт базового LoRA trainer
+from .core.base_lora_trainer import BaseLoraTrainer, ModelType
 
 logger = logging.getLogger(__name__)
 
@@ -449,10 +449,10 @@ class DonutProgressCallback(TrainerCallback):
             duration = datetime.now() - self.start_time
             self.log_callback(f"✅ Обучение завершено за {duration}")
 
-class DonutTrainer(BaseLorаTrainer):
+class DonutTrainer(BaseLoraTrainer):
     """
-    Оптимизированный тренер для Donut моделей с интеграцией базового LoRA класса
-    Устраняет дублирование LoRA кода через наследование
+    Оптимизированный тренер для Donut моделей с поддержкой LoRA
+    Наследуется от BaseLoraTrainer для унифицированных LoRA конфигураций
     """
     
     def __init__(self, app_config):
@@ -1332,9 +1332,9 @@ class DonutTrainer(BaseLorаTrainer):
         # 1. LoRA оптимизация
         use_lora = training_args.get('use_lora', True)
         if use_lora:
-            model, lora_success = self._apply_lora_optimization(model, training_args)
-            if lora_success:
-                optimizations_applied.append("LoRA (до 95% экономии)")
+                    model, lora_success = self.apply_lora_optimization(model, training_args)
+        if lora_success:
+            optimizations_applied.append("LoRA (до 95% экономии)")
         
         # 2. Принудительный gradient checkpointing
         try:

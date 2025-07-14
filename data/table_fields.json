@@ -90,7 +90,7 @@
     "data_type": "currency",
     "required": true,
     "priority": 1,
-    "position": 4,
+    "position": 5,
     "gemini_keywords": [
       "Сумма с НДС",
       "сумма с ндс",
@@ -117,7 +117,7 @@
     "data_type": "currency",
     "required": false,
     "priority": 2,
-    "position": 5,
+    "position": 6,
     "gemini_keywords": [
       "Сумма без НДС",
       "сумма без ндс",
@@ -141,7 +141,7 @@
     "data_type": "number",
     "required": false,
     "priority": 2,
-    "position": 6,
+    "position": 7,
     "gemini_keywords": [
       "НДС %",
       "ндс %",
@@ -169,7 +169,7 @@
     "data_type": "text",
     "required": false,
     "priority": 3,
-    "position": 7,
+    "position": 8,
     "gemini_keywords": [
       "Валюта",
       "валюта",
@@ -190,7 +190,7 @@
     "data_type": "text",
     "required": false,
     "priority": 3,
-    "position": 8,
+    "position": 9,
     "gemini_keywords": [
       "Категория",
       "категория",
@@ -213,7 +213,7 @@
     "data_type": "text",
     "required": false,
     "priority": 3,
-    "position": 9,
+    "position": 4,
     "gemini_keywords": [
       "Товары",
       "товары",

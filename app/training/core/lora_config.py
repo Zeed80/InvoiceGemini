@@ -1,376 +1,350 @@
 """
-Унифицированные конфигурации LoRA для всех типов моделей в InvoiceGemini
-Централизованное место для настройки LoRA параметров
+LoRA Configuration Manager - централизованное управление конфигурациями LoRA
+Содержит предустановленные профили для всех типов моделей
 """
 
 from typing import Dict, Any, Optional, List
-from enum import Enum
 from dataclasses import dataclass
+import json
+from pathlib import Path
 
 try:
-    from peft import TaskType
-    PEFT_AVAILABLE = True
+    from peft import LoraConfig, TaskType
+    LORA_AVAILABLE = True
 except ImportError:
-    PEFT_AVAILABLE = False
-    # Fallback TaskType enum для совместимости
-    class TaskType:
-        SEQ_2_SEQ_LM = "SEQ_2_SEQ_LM"
-        TOKEN_CLS = "TOKEN_CLS"
-        CAUSAL_LM = "CAUSAL_LM"
+    LORA_AVAILABLE = False
+    # Заглушки для аннотаций типов
+    LoraConfig = Any
+    TaskType = Any
 
 
 @dataclass
 class LoRAProfile:
-    """Профиль LoRA конфигурации для определенного типа задач"""
+    """Профиль LoRA с метаданными"""
     name: str
     description: str
-    task_type: str
     r: int
     lora_alpha: int
+    target_modules: List[str]
     lora_dropout: float
-    target_modules: list
     bias: str
-    modules_to_save: Optional[list] = None
-    memory_usage: str = "medium"  # low, medium, high
-    recommended_for: list = None
+    task_type: Any
+    memory_usage: str  # "low", "medium", "high"
+    recommended_for: List[str]
 
 
 class LoRAConfigManager:
     """Менеджер LoRA конфигураций с предустановленными профилями"""
     
-    # Предустановленные профили LoRA
-    PROFILES = {
-        # Профили для Document AI моделей
-        "donut_standard": LoRAProfile(
-            name="Donut Standard",
-            description="Стандартная LoRA конфигурация для Donut моделей",
-            task_type=TaskType.SEQ_2_SEQ_LM,
+    def __init__(self):
+        self.profiles = self._initialize_profiles()
+    
+    def _initialize_profiles(self) -> Dict[str, LoRAProfile]:
+        """Инициализирует предустановленные профили LoRA"""
+        if not LORA_AVAILABLE:
+            return {}
+        
+        profiles = {}
+        
+        # Donut профили
+        profiles["donut_standard"] = LoRAProfile(
+            name="donut_standard",
+            description="Стандартная конфигурация для Donut моделей",
             r=16,
             lora_alpha=32,
+            target_modules=["query", "value", "key", "dense"],
             lora_dropout=0.1,
-            target_modules=["q_proj", "k_proj", "v_proj", "out_proj", "fc1", "fc2"],
             bias="none",
+            task_type=TaskType.FEATURE_EXTRACTION,
             memory_usage="medium",
-            recommended_for=["document_parsing", "invoice_extraction"]
-        ),
-        
-        "donut_lightweight": LoRAProfile(
-            name="Donut Lightweight", 
-            description="Облегченная LoRA конфигурация для Donut (экономия памяти)",
-            task_type=TaskType.SEQ_2_SEQ_LM,
-            r=8,
-            lora_alpha=16,
-            lora_dropout=0.05,
-            target_modules=["q_proj", "v_proj"],
-            bias="none",
-            memory_usage="low",
-            recommended_for=["small_datasets", "limited_memory"]
-        ),
-        
-        "donut_high_precision": LoRAProfile(
-            name="Donut High Precision",
-            description="Высокоточная LoRA конфигурация для критичных задач",
-            task_type=TaskType.SEQ_2_SEQ_LM,
-            r=32,
-            lora_alpha=64,
-            lora_dropout=0.15,
-            target_modules=["q_proj", "k_proj", "v_proj", "out_proj", "fc1", "fc2"],
-            bias="lora_only",
-            modules_to_save=["embed_tokens"],
-            memory_usage="high",
-            recommended_for=["high_accuracy_requirements", "production"]
-        ),
-        
-        # Профили для TrOCR
-        "trocr_safe": LoRAProfile(
-            name="TrOCR Safe",
-            description="Безопасная LoRA конфигурация для TrOCR (минимальные слои)",
-            task_type=TaskType.SEQ_2_SEQ_LM,
-            r=8,
-            lora_alpha=16,
-            lora_dropout=0.05,
-            target_modules=[
-                "decoder.model.decoder.layers.0.self_attn.q_proj",
-                "decoder.model.decoder.layers.0.self_attn.v_proj"
-            ],
-            bias="none",
-            memory_usage="low",
-            recommended_for=["trocr_models", "stability_focused"]
-        ),
-        
-        "trocr_extended": LoRAProfile(
-            name="TrOCR Extended",
-            description="Расширенная LoRA конфигурация для TrOCR (больше слоев)",
-            task_type=TaskType.SEQ_2_SEQ_LM,
-            r=16,
-            lora_alpha=32,
-            lora_dropout=0.1,
-            target_modules=[
-                "decoder.model.decoder.layers.0.self_attn.q_proj",
-                "decoder.model.decoder.layers.0.self_attn.v_proj",
-                "decoder.model.decoder.layers.1.self_attn.q_proj",
-                "decoder.model.decoder.layers.1.self_attn.v_proj",
-                "decoder.model.decoder.layers.0.self_attn.out_proj",
-                "decoder.model.decoder.layers.1.self_attn.out_proj"
-            ],
-            bias="none",
-            memory_usage="medium",
-            recommended_for=["better_performance", "sufficient_memory"]
-        ),
-        
-        # Профили для LayoutLM
-        "layoutlm_standard": LoRAProfile(
-            name="LayoutLM Standard",
-            description="Стандартная LoRA конфигурация для LayoutLM моделей",
-            task_type=TaskType.TOKEN_CLS,
-            r=16,
-            lora_alpha=32,
-            lora_dropout=0.1,
-            target_modules=["query", "key", "value", "dense"],
-            bias="none",
-            modules_to_save=["classifier"],
-            memory_usage="medium",
-            recommended_for=["token_classification", "layout_understanding"]
-        ),
-        
-        # Профили для LLM моделей
-        "llama_standard": LoRAProfile(
-            name="Llama Standard",
-            description="Стандартная LoRA конфигурация для Llama моделей",
-            task_type=TaskType.CAUSAL_LM,
-            r=16,
-            lora_alpha=32,
-            lora_dropout=0.05,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-            bias="none",
-            memory_usage="medium",
-            recommended_for=["general_llm", "chat", "instruction_following"]
-        ),
-        
-        "llama_qlora": LoRAProfile(
-            name="Llama QLoRA",
-            description="QLoRA конфигурация для Llama с 4-bit квантизацией",
-            task_type=TaskType.CAUSAL_LM,
-            r=64,
-            lora_alpha=16,
-            lora_dropout=0.1,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-            bias="none",
-            memory_usage="low",  # За счет квантизации
-            recommended_for=["limited_memory", "consumer_gpu", "4bit_quantization"]
-        ),
-        
-        "codellama_coding": LoRAProfile(
-            name="CodeLlama Coding",
-            description="Специализированная LoRA для Code Llama (программирование)",
-            task_type=TaskType.CAUSAL_LM,
-            r=32,
-            lora_alpha=64,
-            lora_dropout=0.05,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-            bias="none",
-            memory_usage="high",
-            recommended_for=["code_generation", "code_completion", "programming"]
-        ),
-        
-        "mistral_efficient": LoRAProfile(
-            name="Mistral Efficient",
-            description="Эффективная LoRA конфигурация для Mistral моделей",
-            task_type=TaskType.CAUSAL_LM,
-            r=16,
-            lora_alpha=32,
-            lora_dropout=0.05,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-            bias="none",
-            memory_usage="medium",
-            recommended_for=["mistral_models", "balanced_performance"]
+            recommended_for=["general_use", "production"]
         )
-    }
-    
-    @classmethod
-    def get_profile(cls, profile_name: str) -> Optional[LoRAProfile]:
-        """Получает профиль LoRA по имени"""
-        return cls.PROFILES.get(profile_name)
-    
-    @classmethod
-    def list_profiles(cls, model_type: Optional[str] = None) -> Dict[str, LoRAProfile]:
-        """Возвращает список доступных профилей"""
-        if model_type is None:
-            return cls.PROFILES.copy()
         
-        # Фильтруем профили по типу модели
-        filtered = {}
-        for name, profile in cls.PROFILES.items():
-            if model_type.lower() in name.lower():
-                filtered[name] = profile
+        profiles["donut_lightweight"] = LoRAProfile(
+            name="donut_lightweight",
+            description="Облегченная конфигурация для экономии памяти",
+            r=8,
+            lora_alpha=16,
+            target_modules=["query", "value"],
+            lora_dropout=0.05,
+            bias="none",
+            task_type=TaskType.FEATURE_EXTRACTION,
+            memory_usage="low",
+            recommended_for=["memory_limited", "testing"]
+        )
         
-        return filtered
+        profiles["donut_high_precision"] = LoRAProfile(
+            name="donut_high_precision",
+            description="Высокоточная конфигурация для продакшена",
+            r=32,
+            lora_alpha=64,
+            target_modules=["query", "value", "key", "dense", "intermediate"],
+            lora_dropout=0.1,
+            bias="none",
+            task_type=TaskType.FEATURE_EXTRACTION,
+            memory_usage="high",
+            recommended_for=["high_accuracy", "production"]
+        )
+        
+        # TrOCR профили
+        profiles["trocr_safe"] = LoRAProfile(
+            name="trocr_safe",
+            description="Безопасная конфигурация для TrOCR",
+            r=8,
+            lora_alpha=16,
+            target_modules=["q_proj", "v_proj"],
+            lora_dropout=0.05,
+            bias="none",
+            task_type=TaskType.FEATURE_EXTRACTION,
+            memory_usage="low",
+            recommended_for=["stable_training", "testing"]
+        )
+        
+        profiles["trocr_extended"] = LoRAProfile(
+            name="trocr_extended",
+            description="Расширенная конфигурация для лучшей производительности",
+            r=16,
+            lora_alpha=32,
+            target_modules=["q_proj", "v_proj", "k_proj", "out_proj"],
+            lora_dropout=0.1,
+            bias="none",
+            task_type=TaskType.FEATURE_EXTRACTION,
+            memory_usage="medium",
+            recommended_for=["performance", "production"]
+        )
+        
+        # LayoutLM профили
+        profiles["layoutlm_standard"] = LoRAProfile(
+            name="layoutlm_standard",
+            description="Стандартная конфигурация для LayoutLM",
+            r=16,
+            lora_alpha=32,
+            target_modules=["query", "value", "key", "dense"],
+            lora_dropout=0.1,
+            bias="none",
+            task_type=TaskType.TOKEN_CLS,
+            memory_usage="medium",
+            recommended_for=["document_ai", "token_classification"]
+        )
+        
+        # Llama профили
+        profiles["llama_standard"] = LoRAProfile(
+            name="llama_standard",
+            description="Стандартная LoRA конфигурация для Llama",
+            r=16,
+            lora_alpha=32,
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
+            lora_dropout=0.1,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM,
+            memory_usage="medium",
+            recommended_for=["text_generation", "fine_tuning"]
+        )
+        
+        profiles["llama_qlora"] = LoRAProfile(
+            name="llama_qlora",
+            description="QLoRA конфигурация с 4-bit квантизацией",
+            r=64,
+            lora_alpha=128,
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            lora_dropout=0.1,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM,
+            memory_usage="low",
+            recommended_for=["memory_limited", "4bit_quantization"]
+        )
+        
+        # CodeLlama профили
+        profiles["codellama_coding"] = LoRAProfile(
+            name="codellama_coding",
+            description="Специализированная конфигурация для генерации кода",
+            r=32,
+            lora_alpha=64,
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            lora_dropout=0.1,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM,
+            memory_usage="high",
+            recommended_for=["code_generation", "instruction_following"]
+        )
+        
+        # Mistral профили
+        profiles["mistral_efficient"] = LoRAProfile(
+            name="mistral_efficient",
+            description="Эффективная конфигурация для Mistral",
+            r=16,
+            lora_alpha=32,
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
+            lora_dropout=0.1,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM,
+            memory_usage="medium",
+            recommended_for=["efficient_training", "general_use"]
+        )
+        
+        return profiles
     
-    @classmethod
-    def get_config_dict(cls, profile_name: str, **overrides) -> Dict[str, Any]:
+    def get_profile(self, profile_name: str) -> Optional[LoRAProfile]:
+        """Получает профиль по имени"""
+        return self.profiles.get(profile_name)
+    
+    def get_lora_config(self, profile_name: str, custom_params: Optional[Dict[str, Any]] = None) -> LoraConfig:
         """
-        Возвращает LoRA конфигурацию в виде словаря для PEFT
+        Создает LoraConfig из профиля
         
         Args:
             profile_name: Имя профиля
-            **overrides: Параметры для переопределения
+            custom_params: Кастомные параметры для переопределения
+            
+        Returns:
+            LoraConfig объект или None если PEFT недоступен
         """
-        profile = cls.get_profile(profile_name)
+        if not LORA_AVAILABLE:
+            print("⚠️ PEFT не установлен. LoRA конфигурации недоступны. Установите: pip install peft")
+            return None
+        
+        profile = self.get_profile(profile_name)
         if not profile:
             raise ValueError(f"Профиль '{profile_name}' не найден")
         
-        config = {
-            "task_type": profile.task_type,
+        config_params = {
             "r": profile.r,
             "lora_alpha": profile.lora_alpha,
+            "target_modules": profile.target_modules,
             "lora_dropout": profile.lora_dropout,
-            "target_modules": profile.target_modules.copy(),
             "bias": profile.bias,
+            "task_type": profile.task_type
         }
         
-        if profile.modules_to_save:
-            config["modules_to_save"] = profile.modules_to_save.copy()
+        # Применяем кастомные параметры
+        if custom_params:
+            config_params.update(custom_params)
         
-        # Применяем переопределения
-        config.update(overrides)
-        
-        return config
+        return LoraConfig(**config_params)
     
-    @classmethod
-    def create_custom_profile(cls, 
-                            name: str,
-                            base_profile: str,
-                            **modifications) -> LoRAProfile:
+    def list_profiles(self, filter_by_memory: Optional[str] = None, 
+                     filter_by_recommended: Optional[str] = None) -> List[LoRAProfile]:
         """
-        Создает кастомный профиль на основе существующего
+        Список доступных профилей с фильтрацией
         
         Args:
-            name: Имя нового профиля
-            base_profile: Базовый профиль для модификации
-            **modifications: Изменения
+            filter_by_memory: Фильтр по использованию памяти ("low", "medium", "high")
+            filter_by_recommended: Фильтр по рекомендации
+            
+        Returns:
+            Список профилей
         """
-        base = cls.get_profile(base_profile)
-        if not base:
-            raise ValueError(f"Базовый профиль '{base_profile}' не найден")
+        profiles = list(self.profiles.values())
         
-        # Копируем базовый профиль
-        profile_dict = {
-            "name": name,
-            "description": modifications.get("description", f"Custom profile based on {base_profile}"),
-            "task_type": base.task_type,
-            "r": base.r,
-            "lora_alpha": base.lora_alpha,
-            "lora_dropout": base.lora_dropout,
-            "target_modules": base.target_modules.copy(),
-            "bias": base.bias,
-            "modules_to_save": base.modules_to_save.copy() if base.modules_to_save else None,
-            "memory_usage": base.memory_usage,
-            "recommended_for": base.recommended_for.copy() if base.recommended_for else []
+        if filter_by_memory:
+            profiles = [p for p in profiles if p.memory_usage == filter_by_memory]
+        
+        if filter_by_recommended:
+            profiles = [p for p in profiles if filter_by_recommended in p.recommended_for]
+        
+        return profiles
+    
+    def create_custom_profile(self, name: str, description: str, **kwargs) -> LoRAProfile:
+        """Создает кастомный профиль"""
+        if not LORA_AVAILABLE:
+            raise RuntimeError("PEFT не установлен")
+        
+        # Значения по умолчанию
+        defaults = {
+            "r": 16,
+            "lora_alpha": 32,
+            "target_modules": ["q_proj", "v_proj"],
+            "lora_dropout": 0.1,
+            "bias": "none",
+            "task_type": TaskType.FEATURE_EXTRACTION,
+            "memory_usage": "medium",
+            "recommended_for": ["custom"]
         }
         
-        # Применяем модификации
-        for key, value in modifications.items():
-            if key in profile_dict:
-                profile_dict[key] = value
+        defaults.update(kwargs)
         
-        return LoRAProfile(**profile_dict)
+        profile = LoRAProfile(name=name, description=description, **defaults)
+        self.profiles[name] = profile
+        
+        return profile
     
-    @classmethod
-    def get_recommended_profiles(cls, 
-                               memory_constraint: str = "medium",
-                               task_type: Optional[str] = None) -> List[str]:
-        """
-        Возвращает рекомендуемые профили на основе ограничений
+    def export_profile(self, profile_name: str, file_path: str):
+        """Экспортирует профиль в JSON файл"""
+        profile = self.get_profile(profile_name)
+        if not profile:
+            raise ValueError(f"Профиль '{profile_name}' не найден")
         
-        Args:
-            memory_constraint: "low", "medium", "high"
-            task_type: Тип задачи для фильтрации
-        """
-        recommended = []
-        
-        for name, profile in cls.PROFILES.items():
-            # Фильтр по памяти
-            if profile.memory_usage != memory_constraint:
-                continue
-            
-            # Фильтр по типу задачи
-            if task_type and task_type not in profile.recommended_for:
-                continue
-            
-            recommended.append(name)
-        
-        return recommended
-    
-    @classmethod
-    def export_profiles(cls, file_path: str):
-        """Экспортирует профили в JSON файл"""
-        import json
-        
-        export_data = {}
-        for name, profile in cls.PROFILES.items():
-            export_data[name] = {
-                "name": profile.name,
-                "description": profile.description,
-                "task_type": profile.task_type,
-                "r": profile.r,
-                "lora_alpha": profile.lora_alpha,
-                "lora_dropout": profile.lora_dropout,
-                "target_modules": profile.target_modules,
-                "bias": profile.bias,
-                "modules_to_save": profile.modules_to_save,
-                "memory_usage": profile.memory_usage,
-                "recommended_for": profile.recommended_for
-            }
+        data = {
+            "name": profile.name,
+            "description": profile.description,
+            "r": profile.r,
+            "lora_alpha": profile.lora_alpha,
+            "target_modules": profile.target_modules,
+            "lora_dropout": profile.lora_dropout,
+            "bias": profile.bias,
+            "task_type": str(profile.task_type),
+            "memory_usage": profile.memory_usage,
+            "recommended_for": profile.recommended_for
+        }
         
         with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(export_data, f, indent=2, ensure_ascii=False)
+            json.dump(data, f, indent=2, ensure_ascii=False)
     
-    @classmethod 
-    def import_profiles(cls, file_path: str):
-        """Импортирует профили из JSON файла"""
-        import json
-        
+    def import_profile(self, file_path: str) -> LoRAProfile:
+        """Импортирует профиль из JSON файла"""
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        for name, profile_data in data.items():
-            cls.PROFILES[name] = LoRAProfile(**profile_data)
+        # Конвертируем task_type обратно
+        task_type_map = {
+            "TaskType.FEATURE_EXTRACTION": TaskType.FEATURE_EXTRACTION,
+            "TaskType.TOKEN_CLS": TaskType.TOKEN_CLS,
+            "TaskType.CAUSAL_LM": TaskType.CAUSAL_LM,
+        }
+        
+        data["task_type"] = task_type_map.get(data["task_type"], TaskType.FEATURE_EXTRACTION)
+        
+        profile = LoRAProfile(**data)
+        self.profiles[profile.name] = profile
+        
+        return profile
 
 
-# Convenience функции для быстрого доступа
-def get_donut_config(precision: str = "standard", **overrides) -> Dict[str, Any]:
-    """Быстрый доступ к Donut LoRA конфигурации"""
-    profile_map = {
-        "standard": "donut_standard",
-        "lightweight": "donut_lightweight", 
-        "high": "donut_high_precision"
-    }
-    profile_name = profile_map.get(precision, "donut_standard")
-    return LoRAConfigManager.get_config_dict(profile_name, **overrides)
+# Глобальный экземпляр менеджера
+lora_config_manager = LoRAConfigManager()
 
 
-def get_trocr_config(safety: str = "safe", **overrides) -> Dict[str, Any]:
-    """Быстрый доступ к TrOCR LoRA конфигурации"""
-    profile_map = {
-        "safe": "trocr_safe",
-        "extended": "trocr_extended"
-    }
-    profile_name = profile_map.get(safety, "trocr_safe")
-    return LoRAConfigManager.get_config_dict(profile_name, **overrides)
+# Удобные функции для быстрого доступа
+def get_donut_config(profile: str = "standard", custom_params: Optional[Dict[str, Any]] = None) -> LoraConfig:
+    """Получает LoRA конфигурацию для Donut модели"""
+    if not LORA_AVAILABLE:
+        print("⚠️ PEFT не установлен. Возвращаю None для Donut конфигурации.")
+        return None
+    return lora_config_manager.get_lora_config(f"donut_{profile}", custom_params)
 
 
-def get_llm_config(model_type: str = "llama", mode: str = "standard", **overrides) -> Dict[str, Any]:
-    """Быстрый доступ к LLM LoRA конфигурации"""
-    profile_map = {
-        ("llama", "standard"): "llama_standard",
-        ("llama", "qlora"): "llama_qlora",
-        ("codellama", "coding"): "codellama_coding",
-        ("mistral", "efficient"): "mistral_efficient"
-    }
+def get_trocr_config(profile: str = "safe", custom_params: Optional[Dict[str, Any]] = None) -> LoraConfig:
+    """Получает LoRA конфигурацию для TrOCR модели"""
+    if not LORA_AVAILABLE:
+        print("⚠️ PEFT не установлен. Возвращаю None для TrOCR конфигурации.")
+        return None
+    return lora_config_manager.get_lora_config(f"trocr_{profile}", custom_params)
+
+
+def get_llm_config(model_type: str, profile: str = "standard", custom_params: Optional[Dict[str, Any]] = None) -> LoraConfig:
+    """
+    Получает LoRA конфигурацию для языковых моделей
     
-    profile_name = profile_map.get((model_type, mode))
-    if not profile_name:
-        # Fallback к стандартной Llama конфигурации
-        profile_name = "llama_standard"
-    
-    return LoRAConfigManager.get_config_dict(profile_name, **overrides) 
+    Args:
+        model_type: Тип модели ("llama", "codellama", "mistral")
+        profile: Профиль конфигурации
+        custom_params: Кастомные параметры
+        
+    Returns:
+        LoraConfig объект или None если PEFT недоступен
+    """
+    if not LORA_AVAILABLE:
+        print(f"⚠️ PEFT не установлен. Возвращаю None для {model_type} конфигурации.")
+        return None
+    profile_name = f"{model_type}_{profile}"
+    return lora_config_manager.get_lora_config(profile_name, custom_params) 

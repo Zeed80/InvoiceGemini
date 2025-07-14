@@ -11,9 +11,7 @@ from pathlib import Path
 import logging
 
 # Импортируем базовый класс LoRA trainer
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'training', 'core'))
-from base_lora_trainer import BaseLorаTrainer, ModelType
+from app.training.core.base_lora_trainer import BaseLoraTrainer, ModelType
 
 try:
     from transformers import (
@@ -32,7 +30,7 @@ except ImportError:
     LORA_AVAILABLE = False
 
 
-class LLMTrainer(BaseLorаTrainer):
+class LLMTrainer(BaseLoraTrainer):
     """
     Универсальный тренер для языковых моделей с поддержкой LoRA/QLoRA
     

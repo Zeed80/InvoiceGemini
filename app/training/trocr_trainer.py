@@ -39,7 +39,8 @@ except ImportError:
     BITSANDBYTES_AVAILABLE = False
 
 # В начале файла после существующих импортов добавляю:
-from .core.base_lora_trainer import BaseLorаTrainer, ModelType
+# ВРЕМЕННО ОТКЛЮЧЕНО ИЗ-ЗА ПРОБЛЕМ С КОДИРОВКОЙ
+from .core.base_lora_trainer import BaseLoraTrainer, ModelType
 
 class SafeTrOCRModel(torch.nn.Module):
     """
@@ -471,10 +472,10 @@ class TrOCRGPUMonitorCallback:
         """Вызывается при сохранении модели (новый метод в transformers)"""
         return control
 
-class TrOCRTrainer(BaseLorаTrainer):
+class TrOCRTrainer(BaseLoraTrainer):
     """
-    Оптимизированный тренер для TrOCR моделей с интеграцией базового LoRA класса
-    Устраняет дублирование LoRA кода, поддерживает все оптимизации памяти
+    Оптимизированный тренер для TrOCR моделей с поддержкой LoRA
+    Наследуется от BaseLoraTrainer для унифицированных LoRA конфигураций
     """
     
     def __init__(self, device: str = "auto", logger: logging.Logger = None):
