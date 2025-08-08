@@ -25,6 +25,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QFont, QColor, QPalette, QAction
 from ..settings_manager import settings_manager
 from .. import utils
 from .. import config as app_config
+from ..ui.performance_optimized_widgets import OptimizedTableWidget, SmartProgressBar
 
 
 class PreviewDialog(QDialog):
@@ -68,7 +69,7 @@ class PreviewDialog(QDialog):
     
     def init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle("🔍 Предварительный просмотр результатов - InvoiceGemini")
+        self.setWindowTitle("🔍 " + self.tr("Предварительный просмотр результатов - InvoiceGemini"))
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
         
@@ -116,65 +117,65 @@ class PreviewDialog(QDialog):
         self.menu_bar = QMenuBar(self)
         
         # File menu
-        file_menu = self.menu_bar.addMenu("📁 Файл")
+        file_menu = self.menu_bar.addMenu("📁 " + self.tr("Файл"))
         
-        self.save_action = QAction("💾 Сохранить изменения", self)
+        self.save_action = QAction("💾 " + self.tr("Сохранить изменения"), self)
         self.save_action.setShortcut("Ctrl+S")
         self.save_action.triggered.connect(self.save_changes)
         file_menu.addAction(self.save_action)
         
-        self.save_as_action = QAction("📄 Сохранить как...", self)
+        self.save_as_action = QAction("📄 " + self.tr("Сохранить как..."), self)
         self.save_as_action.setShortcut("Ctrl+Shift+S")
         self.save_as_action.triggered.connect(self.save_as)
         file_menu.addAction(self.save_as_action)
         
         file_menu.addSeparator()
         
-        self.export_action = QAction("📤 Экспорт...", self)
+        self.export_action = QAction("📤 " + self.tr("Экспорт..."), self)
         self.export_action.setShortcut("Ctrl+E")
         self.export_action.triggered.connect(self.export_results)
         file_menu.addAction(self.export_action)
         
         # Edit menu
-        edit_menu = self.menu_bar.addMenu("✏️ Редактирование")
+        edit_menu = self.menu_bar.addMenu("✏️ " + self.tr("Редактирование"))
         
-        self.undo_action = QAction("↶ Отменить", self)
+        self.undo_action = QAction("↶ " + self.tr("Отменить"), self)
         self.undo_action.setShortcut("Ctrl+Z")
         self.undo_action.triggered.connect(self.undo_changes)
         edit_menu.addAction(self.undo_action)
         
-        self.reset_action = QAction("🔄 Сбросить к оригиналу", self)
+        self.reset_action = QAction("🔄 " + self.tr("Сбросить к оригиналу"), self)
         self.reset_action.triggered.connect(self.reset_to_original)
         edit_menu.addAction(self.reset_action)
         
         edit_menu.addSeparator()
         
-        self.toggle_editing_action = QAction("🔒 Блокировать редактирование", self)
+        self.toggle_editing_action = QAction("🔒 " + self.tr("Блокировать редактирование"), self)
         self.toggle_editing_action.setCheckable(True)
         self.toggle_editing_action.triggered.connect(self.toggle_editing)
         edit_menu.addAction(self.toggle_editing_action)
         
         # View menu
-        view_menu = self.menu_bar.addMenu("👁️ Вид")
+        view_menu = self.menu_bar.addMenu("👁️ " + self.tr("Вид"))
         
-        self.show_original_action = QAction("📋 Показать оригинал", self)
+        self.show_original_action = QAction("📋 " + self.tr("Показать оригинал"), self)
         self.show_original_action.setCheckable(True)
         self.show_original_action.triggered.connect(self.toggle_original_view)
         view_menu.addAction(self.show_original_action)
         
-        self.show_diff_action = QAction("🔍 Показать изменения", self)
+        self.show_diff_action = QAction("🔍 " + self.tr("Показать изменения"), self)
         self.show_diff_action.setCheckable(True)
         self.show_diff_action.triggered.connect(self.toggle_diff_view)
         view_menu.addAction(self.show_diff_action)
         
         # Tools menu
-        tools_menu = self.menu_bar.addMenu("🔧 Инструменты")
+        tools_menu = self.menu_bar.addMenu("🔧 " + self.tr("Инструменты"))
         
-        self.validate_action = QAction("✅ Валидация данных", self)
+        self.validate_action = QAction("✅ " + self.tr("Валидация данных"), self)
         self.validate_action.triggered.connect(self.validate_results)
         tools_menu.addAction(self.validate_action)
         
-        self.compare_models_action = QAction("⚖️ Сравнить модели", self)
+        self.compare_models_action = QAction("⚖️ " + self.tr("Сравнить модели"), self)
         self.compare_models_action.triggered.connect(self.compare_models)
         tools_menu.addAction(self.compare_models_action)
         
@@ -187,21 +188,21 @@ class PreviewDialog(QDialog):
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         
         # Save button
-        save_btn = QPushButton("💾 Сохранить")
+        save_btn = QPushButton("💾 " + self.tr("Сохранить"))
         save_btn.clicked.connect(self.save_changes)
-        save_btn.setToolTip("Сохранить изменения (Ctrl+S)")
+        save_btn.setToolTip(self.tr("Сохранить изменения (Ctrl+S)"))
         self.toolbar.addWidget(save_btn)
         
         self.toolbar.addSeparator()
         
         # Edit toggle
-        self.edit_toggle = QCheckBox("✏️ Редактирование")
+        self.edit_toggle = QCheckBox("✏️ " + self.tr("Редактирование"))
         self.edit_toggle.setChecked(True)
         self.edit_toggle.toggled.connect(self.toggle_editing)
         self.toolbar.addWidget(self.edit_toggle)
         
         # Auto-save toggle
-        self.auto_save_toggle = QCheckBox("🔄 Авто-сохранение")
+        self.auto_save_toggle = QCheckBox("🔄 " + self.tr("Авто-сохранение"))
         self.auto_save_toggle.setChecked(True)
         self.auto_save_toggle.toggled.connect(self.toggle_auto_save)
         self.toolbar.addWidget(self.auto_save_toggle)
@@ -209,9 +210,9 @@ class PreviewDialog(QDialog):
         self.toolbar.addSeparator()
         
         # Export button
-        export_btn = QPushButton("📤 Экспорт")
+        export_btn = QPushButton("📤 " + self.tr("Экспорт"))
         export_btn.clicked.connect(self.export_results)
-        export_btn.setToolTip("Экспорт результатов (Ctrl+E)")
+        export_btn.setToolTip(self.tr("Экспорт результатов (Ctrl+E)"))
         self.toolbar.addWidget(export_btn)
         
         # Add toolbar to layout
@@ -223,7 +224,7 @@ class PreviewDialog(QDialog):
         layout = QHBoxLayout(tab)
         
         # Left side: Editable fields
-        left_group = QGroupBox("📝 Редактируемые поля")
+        left_group = QGroupBox("📝 " + self.tr("Редактируемые поля"))
         left_layout = QVBoxLayout(left_group)
         
         # Scroll area for fields
@@ -240,13 +241,13 @@ class PreviewDialog(QDialog):
         left_layout.addWidget(scroll_area)
         
         # Right side: Original vs Current comparison
-        right_group = QGroupBox("🔍 Сравнение: Оригинал ↔ Текущий")
+        right_group = QGroupBox("🔍 " + self.tr("Сравнение: Оригинал ↔ Текущий"))
         right_layout = QVBoxLayout(right_group)
         
         # Comparison table
-        self.comparison_table = QTableWidget()
+        self.comparison_table = OptimizedTableWidget()
         self.comparison_table.setColumnCount(3)
-        self.comparison_table.setHorizontalHeaderLabels(["Поле", "Оригинал", "Текущий"])
+        self.comparison_table.setHorizontalHeaderLabels([self.tr("Поле"), self.tr("Оригинал"), self.tr("Текущий")])
         self.comparison_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         right_layout.addWidget(self.comparison_table)
         
@@ -266,11 +267,11 @@ class PreviewDialog(QDialog):
         layout = QVBoxLayout(tab)
         
         # Model selection controls
-        controls_group = QGroupBox("🎯 Управление сравнением")
+        controls_group = QGroupBox("🎯 " + self.tr("Управление сравнением"))
         controls_layout = QHBoxLayout(controls_group)
         
         # Available models
-        models_label = QLabel("Доступные модели:")
+        models_label = QLabel(self.tr("Доступные модели:"))
         controls_layout.addWidget(models_label)
         
         self.models_combo = QComboBox()
@@ -278,12 +279,12 @@ class PreviewDialog(QDialog):
         controls_layout.addWidget(self.models_combo)
         
         # Add model button
-        add_model_btn = QPushButton("➕ Добавить модель")
+        add_model_btn = QPushButton("➕ " + self.tr("Добавить модель"))
         add_model_btn.clicked.connect(self.add_model_comparison)
         controls_layout.addWidget(add_model_btn)
         
         # Run comparison button
-        run_comparison_btn = QPushButton("🚀 Запустить сравнение")
+        run_comparison_btn = QPushButton("🚀 " + self.tr("Запустить сравнение"))
         run_comparison_btn.clicked.connect(self.run_model_comparison)
         controls_layout.addWidget(run_comparison_btn)
         
@@ -291,18 +292,18 @@ class PreviewDialog(QDialog):
         layout.addWidget(controls_group)
         
         # Comparison results table
-        comparison_group = QGroupBox("📊 Результаты сравнения")
+        comparison_group = QGroupBox("📊 " + self.tr("Результаты сравнения"))
         comparison_layout = QVBoxLayout(comparison_group)
         
-        self.model_comparison_table = QTableWidget()
+        self.model_comparison_table = OptimizedTableWidget()
         comparison_layout.addWidget(self.model_comparison_table)
         
         # Accuracy metrics
-        metrics_group = QGroupBox("📈 Метрики точности")
+        metrics_group = QGroupBox("📈 " + self.tr("Метрики точности"))
         metrics_layout = QGridLayout(metrics_group)
         
         self.accuracy_labels = {}
-        for i, metric in enumerate(["Точность полей", "Полнота данных", "Время обработки", "Общая оценка"]):
+        for i, metric in enumerate([self.tr("Точность полей"), self.tr("Полнота данных"), self.tr("Время обработки"), self.tr("Общая оценка")]):
             label = QLabel(f"{metric}:")
             value_label = QLabel("N/A")
             value_label.setStyleSheet("font-weight: bold; color: #2196F3;")
@@ -321,28 +322,28 @@ class PreviewDialog(QDialog):
         layout = QVBoxLayout(tab)
         
         # Batch controls
-        controls_group = QGroupBox("📁 Управление пакетом")
+        controls_group = QGroupBox("📁 " + self.tr("Управление пакетом"))
         controls_layout = QHBoxLayout(controls_group)
         
         # Batch size info
-        self.batch_info_label = QLabel("Файлов в пакете: 0")
+        self.batch_info_label = QLabel(self.tr("Файлов в пакете: {n}").format(n=0))
         controls_layout.addWidget(self.batch_info_label)
         
         # Filter controls
-        filter_label = QLabel("Фильтр:")
+        filter_label = QLabel(self.tr("Фильтр:"))
         self.filter_combo = QComboBox()
-        self.filter_combo.addItems(["Все файлы", "С ошибками", "Успешные", "Требующие проверки"])
+        self.filter_combo.addItems([self.tr("Все файлы"), self.tr("С ошибками"), self.tr("Успешные"), self.tr("Требующие проверки")])
         self.filter_combo.currentTextChanged.connect(self.filter_batch_results)
         
         controls_layout.addWidget(filter_label)
         controls_layout.addWidget(self.filter_combo)
         
         # Batch actions
-        validate_all_btn = QPushButton("✅ Валидировать все")
+        validate_all_btn = QPushButton("✅ " + self.tr("Валидировать все"))
         validate_all_btn.clicked.connect(self.validate_all_batch)
         controls_layout.addWidget(validate_all_btn)
         
-        export_batch_btn = QPushButton("📤 Экспорт пакета")
+        export_batch_btn = QPushButton("📤 " + self.tr("Экспорт пакета"))
         export_batch_btn.clicked.connect(self.export_batch)
         controls_layout.addWidget(export_batch_btn)
         
@@ -350,16 +351,16 @@ class PreviewDialog(QDialog):
         layout.addWidget(controls_group)
         
         # Batch results table
-        self.batch_table = QTableWidget()
+        self.batch_table = OptimizedTableWidget()
         self.batch_table.itemSelectionChanged.connect(self.on_batch_item_selected)
         layout.addWidget(self.batch_table)
         
         # Batch statistics
-        stats_group = QGroupBox("📊 Статистика пакета")
+        stats_group = QGroupBox("📊 " + self.tr("Статистика пакета"))
         stats_layout = QGridLayout(stats_group)
         
         self.batch_stats = {}
-        stats = ["Обработано", "Успешно", "С ошибками", "Требуют проверки", "Средняя точность"]
+        stats = [self.tr("Обработано"), self.tr("Успешно"), self.tr("С ошибками"), self.tr("Требуют проверки"), self.tr("Средняя точность")]
         for i, stat in enumerate(stats):
             label = QLabel(f"{stat}:")
             value_label = QLabel("0")
@@ -378,26 +379,26 @@ class PreviewDialog(QDialog):
         layout = QVBoxLayout(tab)
         
         # Export settings
-        settings_group = QGroupBox("⚙️ Настройки экспорта")
+        settings_group = QGroupBox("⚙️ " + self.tr("Настройки экспорта"))
         settings_layout = QFormLayout(settings_group)
         
         # Format selection
         self.export_format_combo = QComboBox()
-        self.export_format_combo.addItems(["Excel (.xlsx)", "CSV (.csv)", "JSON (.json)", "PDF Report (.pdf)", "HTML Report (.html)"])
+        self.export_format_combo.addItems([self.tr("Excel (.xlsx)"), "CSV (.csv)", "JSON (.json)", self.tr("PDF отчет (.pdf)"), self.tr("HTML отчет (.html)")])
         self.export_format_combo.currentTextChanged.connect(self.update_export_preview)
-        settings_layout.addRow("Формат:", self.export_format_combo)
+        settings_layout.addRow(self.tr("Формат:"), self.export_format_combo)
         
         # Template selection
         self.template_combo = QComboBox()
-        self.template_combo.addItems(["Стандартный", "Подробный", "Сводка", "Пользовательский"])
+        self.template_combo.addItems([self.tr("Стандартный"), self.tr("Подробный"), self.tr("Сводка"), self.tr("Пользовательский")])
         self.template_combo.currentTextChanged.connect(self.update_export_preview)
-        settings_layout.addRow("Шаблон:", self.template_combo)
+        settings_layout.addRow(self.tr("Шаблон:"), self.template_combo)
         
         # Include options
-        self.include_metadata_cb = QCheckBox("Включить метаданные")
+        self.include_metadata_cb = QCheckBox(self.tr("Включить метаданные"))
         self.include_metadata_cb.setChecked(True)
         self.include_metadata_cb.toggled.connect(self.update_export_preview)
-        settings_layout.addRow("Опции:", self.include_metadata_cb)
+        settings_layout.addRow(self.include_metadata_cb)
         
         self.include_timestamps_cb = QCheckBox("Включить временные метки")
         self.include_timestamps_cb.setChecked(True)
@@ -573,11 +574,11 @@ class PreviewDialog(QDialog):
             batch_results = self.original_results.get("batch_results", [])
             
             if not batch_results:
-                self.batch_info_label.setText("Файлов в пакете: 0")
+                self.batch_info_label.setText(self.tr("Файлов в пакете: 0"))
                 return
             
             # Update batch info
-            self.batch_info_label.setText(f"Файлов в пакете: {len(batch_results)}")
+            self.batch_info_label.setText(self.tr("Файлов в пакете: {n}").format(n=len(batch_results)))
             
             # Set up table columns based on first result
             if batch_results:
@@ -602,7 +603,7 @@ class PreviewDialog(QDialog):
                 
         except Exception as e:
             print(f"Ошибка загрузки пакетных данных: {e}")
-            self.batch_info_label.setText("Ошибка загрузки данных")
+            self.batch_info_label.setText(self.tr("Ошибка загрузки данных"))
     
     def update_batch_statistics(self, batch_results):
         """Update batch statistics"""
@@ -814,18 +815,18 @@ class PreviewDialog(QDialog):
         """Save results to a new file"""
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Сохранить результаты как",
+            self.tr("Сохранить результаты как"),
             f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-            "JSON files (*.json);;All files (*.*)"
+            self.tr("JSON files (*.json);;All files (*.*)")
         )
         
         if file_path:
             try:
                 with open(file_path, 'w', encoding='utf-8') as f:
                     json.dump(self.current_results, f, ensure_ascii=False, indent=2)
-                self.status_label.setText(f"Результаты сохранены: {os.path.basename(file_path)}")
+                self.status_label.setText(self.tr("Результаты сохранены: {file}").format(file=os.path.basename(file_path)))
             except Exception as e:
-                QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
+                QMessageBox.critical(self, self.tr("Ошибка"), self.tr("Не удалось сохранить файл:\n{error}").format(error=str(e)))
     
     def undo_changes(self):
         """Undo recent changes"""
@@ -906,11 +907,11 @@ class PreviewDialog(QDialog):
         if validation_errors:
             QMessageBox.warning(
                 self,
-                "Ошибки валидации",
-                "Найдены следующие ошибки:\n\n" + "\n".join(validation_errors)
+                self.tr("Ошибки валидации"),
+                self.tr("Найдены следующие ошибки:\n\n") + "\n".join(validation_errors)
             )
         else:
-            QMessageBox.information(self, "Валидация", "✅ Все данные корректны!")
+            QMessageBox.information(self, self.tr("Валидация"), self.tr("✅ Все данные корректны!"))
     
     def _validate_date_format(self, date_str):
         """Validate date format"""
@@ -948,7 +949,7 @@ class PreviewDialog(QDialog):
         """Add a model to comparison"""
         model_name = self.models_combo.currentText()
         # Implementation for adding model comparison
-        self.status_label.setText(f"Добавлена модель для сравнения: {model_name}")
+        self.status_label.setText(self.tr("Добавлена модель для сравнения: {model}").format(model=model_name))
     
     def run_model_comparison(self):
         """Run model comparison"""
@@ -1008,11 +1009,11 @@ class PreviewDialog(QDialog):
             # Update status
             visible_rows = sum(1 for row in range(self.batch_table.rowCount()) 
                              if not self.batch_table.isRowHidden(row))
-            self.status_label.setText(f"Фильтр '{filter_type}': показано {visible_rows} из {self.batch_table.rowCount()}")
+            self.status_label.setText(self.tr("Фильтр '{filter_type}': показано {visible_rows} из {total_rows}").format(filter_type=filter_type, visible_rows=visible_rows, total_rows=self.batch_table.rowCount()))
             
         except Exception as e:
             print(f"Ошибка фильтрации: {e}")
-            self.status_label.setText(f"Ошибка применения фильтра: {filter_type}")
+            self.status_label.setText(self.tr("Ошибка применения фильтра: {filter_type}").format(filter_type=filter_type))
     
     def validate_all_batch(self):
         """Validate all items in batch"""
@@ -1095,4 +1096,4 @@ class PreviewDialog(QDialog):
         • Ctrl+E: Экспорт</p>
         """
         
-        QMessageBox.information(self, "Справка", help_text) 
+        QMessageBox.information(self, self.tr("Справка"), help_text) 

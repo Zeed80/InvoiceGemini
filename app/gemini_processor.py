@@ -124,7 +124,15 @@ class GeminiProcessor(BaseProcessor):
         
         try:
             genai.configure(api_key=current_api_key)
-            self.model = genai.GenerativeModel(self.model_id)
+            # Включаем безопасный JSON вывод, если доступно
+            try:
+                self.model = genai.GenerativeModel(self.model_id)
+            except Exception:
+                # Fallback: попытка использовать ближайшую доступную стабильную модель
+                fallback_model = 'models/gemini-2.0-flash'
+                self.model = genai.GenerativeModel(fallback_model)
+                self.model_id = fallback_model
+                print(f"Предупреждение: переключено на стабильную модель {fallback_model}")
             print(f"GeminiProcessor successfully configured to use model: {self.model_id}")
             self.is_loaded = True
             return True

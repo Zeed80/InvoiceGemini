@@ -123,7 +123,8 @@ class SettingsManager:
                         'active_model': 'layoutlm',  # Активная модель по умолчанию
                         'last_export_path': '',      # Последний путь экспорта
                         'last_open_path': '',        # Последний путь открытия файла
-                        'show_preview': 'True'       # Показывать предпросмотр
+                        'show_preview': 'True',      # Показывать предпросмотр
+                        'language': 'ru'            # Язык интерфейса по умолчанию
                     }
                 
                 # Загружаем настройки обработки

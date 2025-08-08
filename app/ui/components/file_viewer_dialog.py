@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap, QIcon
+from app.ui.performance_optimized_widgets import OptimizedTableWidget
 
 try:
     import fitz  # PyMuPDF для PDF
@@ -41,7 +42,7 @@ class FileViewerDialog(QDialog):
         
     def _init_ui(self):
         """Инициализация UI диалога."""
-        self.setWindowTitle(f"Просмотр файла: {self.filename}")
+        self.setWindowTitle(self.tr("Просмотр файла: {name}").format(name=self.filename))
         self.setMinimumSize(900, 700)
         self.resize(1200, 800)
         
@@ -99,7 +100,7 @@ class FileViewerDialog(QDialog):
         
     def _create_header(self):
         """Создание заголовка с информацией о файле."""
-        self.header_widget = QGroupBox("Информация о файле")
+        self.header_widget = QGroupBox(self.tr("Информация о файле"))
         header_layout = QVBoxLayout(self.header_widget)
         
         # Первая строка - основная информация
@@ -115,11 +116,11 @@ class FileViewerDialog(QDialog):
         # Статус обработки
         status = self.processing_data.get('status', 'not_processed')
         status_text = {
-            'not_processed': '⏳ Не обработано',
-            'processing': '🔄 Обработка...',
-            'completed': '✅ Завершено',
-            'error': '❌ Ошибка'
-        }.get(status, 'Неизвестно')
+            'not_processed': '⏳ ' + self.tr('Не обработано'),
+            'processing': '🔄 ' + self.tr('Обработка...'),
+            'completed': '✅ ' + self.tr('Завершено'),
+            'error': '❌ ' + self.tr('Ошибка')
+        }.get(status, self.tr('Неизвестно'))
         
         status_color = {
             'not_processed': '#666',
@@ -147,7 +148,7 @@ class FileViewerDialog(QDialog):
         info_layout2.addStretch()
         
         # OCR статус
-        ocr_status = "🟠 OCR требуется" if self.processing_data.get('requires_ocr', True) else "🟢 OCR не требуется"
+        ocr_status = ("🟠 " + self.tr("OCR требуется")) if self.processing_data.get('requires_ocr', True) else ("🟢 " + self.tr("OCR не требуется"))
         ocr_label = QLabel(ocr_status)
         ocr_label.setFont(QFont("Arial", 9))
         info_layout2.addWidget(ocr_label)
@@ -176,7 +177,7 @@ class FileViewerDialog(QDialog):
         file_layout = QVBoxLayout(file_view_widget)
         
         # Заголовок
-        view_title = QLabel("📖 Просмотр содержимого файла")
+        view_title = QLabel("📖 " + self.tr("Просмотр содержимого файла"))
         view_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
         file_layout.addWidget(view_title)
         
@@ -200,7 +201,7 @@ class FileViewerDialog(QDialog):
         self.file_content_scroll.setWidget(self.file_content_widget)
         file_layout.addWidget(self.file_content_scroll)
         
-        self.tab_widget.addTab(file_view_widget, "📖 Просмотр файла")
+        self.tab_widget.addTab(file_view_widget, "📖 " + self.tr("Просмотр файла"))
         
     def _create_results_tab(self):
         """Создание таба с результатами обработки."""
@@ -208,12 +209,12 @@ class FileViewerDialog(QDialog):
         results_layout = QVBoxLayout(results_widget)
         
         # Заголовок
-        results_title = QLabel("📊 Результаты обработки")
+        results_title = QLabel("📊 " + self.tr("Результаты обработки"))
         results_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
         results_layout.addWidget(results_title)
         
         # Статистика обработки
-        stats_group = QGroupBox("Статистика")
+        stats_group = QGroupBox(self.tr("Статистика"))
         stats_layout = QHBoxLayout(stats_group)
         
         progress = self.processing_data.get('progress', 0)
@@ -222,34 +223,34 @@ class FileViewerDialog(QDialog):
         processing_time = self.processing_data.get('processing_time', 0)
         
         # Прогресс
-        progress_label = QLabel(f"📈 Прогресс: {progress}%")
+        progress_label = QLabel(self.tr("📈 Прогресс: {p}%").format(p=progress))
         stats_layout.addWidget(progress_label)
         
         # Поля
         if total > 0:
             accuracy = (recognized / total) * 100
-            fields_text = f"🎯 Распознано полей: {recognized}/{total} ({accuracy:.1f}%)"
+            fields_text = self.tr("🎯 Распознано полей: {r}/{t} ({a:.1f}%)").format(r=recognized, t=total, a=accuracy)
         else:
-            fields_text = "🎯 Поля не обработаны"
+            fields_text = self.tr("🎯 Поля не обработаны")
         fields_label = QLabel(fields_text)
         stats_layout.addWidget(fields_label)
         
         # Время обработки
         if processing_time > 0:
-            time_text = f"⏱️ Время: {processing_time:.2f} сек"
+            time_text = self.tr("⏱️ Время: {t:.2f} сек").format(t=processing_time)
             time_label = QLabel(time_text)
-            stats_layout.addWidget(time_text)
+            stats_layout.addWidget(time_label)
         
         stats_layout.addStretch()
         results_layout.addWidget(stats_group)
         
         # Таблица извлеченных данных (заглушка - данные нужно передавать отдельно)
-        data_group = QGroupBox("Извлеченные данные")
+        data_group = QGroupBox(self.tr("Извлеченные данные"))
         data_layout = QVBoxLayout(data_group)
         
-        self.results_table = QTableWidget()
+        self.results_table = OptimizedTableWidget()
         self.results_table.setColumnCount(2)
-        self.results_table.setHorizontalHeaderLabels(["Поле", "Значение"])
+        self.results_table.setHorizontalHeaderLabels([self.tr("Поле"), self.tr("Значение")])
         
         # Пример данных (в реальном приложении данные должны передаваться)
         sample_data = [
@@ -272,7 +273,7 @@ class FileViewerDialog(QDialog):
         data_layout.addWidget(self.results_table)
         results_layout.addWidget(data_group)
         
-        self.tab_widget.addTab(results_widget, "📊 Результаты")
+        self.tab_widget.addTab(results_widget, "📊 " + self.tr("Результаты"))
         
     def _create_buttons(self):
         """Создание кнопок управления."""
@@ -280,21 +281,21 @@ class FileViewerDialog(QDialog):
         buttons_layout = QHBoxLayout(self.buttons_widget)
         
         # Кнопка открыть в системном просмотрщике
-        self.open_external_button = QPushButton("🔗 Открыть в системе")
-        self.open_external_button.setToolTip("Открыть файл в стандартном приложении")
+        self.open_external_button = QPushButton("🔗 " + self.tr("Открыть в системе"))
+        self.open_external_button.setToolTip(self.tr("Открыть файл в стандартном приложении"))
         self.open_external_button.clicked.connect(self._open_external)
         buttons_layout.addWidget(self.open_external_button)
         
         # Кнопка копировать путь
-        self.copy_path_button = QPushButton("📋 Копировать путь")
-        self.copy_path_button.setToolTip("Копировать путь к файлу в буфер обмена")
+        self.copy_path_button = QPushButton("📋 " + self.tr("Копировать путь"))
+        self.copy_path_button.setToolTip(self.tr("Копировать путь к файлу в буфер обмена"))
         self.copy_path_button.clicked.connect(self._copy_path)
         buttons_layout.addWidget(self.copy_path_button)
         
         buttons_layout.addStretch()
         
         # Кнопка закрыть
-        self.close_button = QPushButton("❌ Закрыть")
+        self.close_button = QPushButton("❌ " + self.tr("Закрыть"))
         self.close_button.clicked.connect(self.close)
         buttons_layout.addWidget(self.close_button)
         
@@ -308,15 +309,15 @@ class FileViewerDialog(QDialog):
             elif file_ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif']:
                 self._load_image_content()
             else:
-                self.file_content_widget.setText(f"⚠️ Предварительный просмотр недоступен для файлов типа {file_ext}")
+                self.file_content_widget.setText(self.tr("⚠️ Предварительный просмотр недоступен для файлов типа {ext}").format(ext=file_ext))
                 
         except Exception as e:
-            self.file_content_widget.setText(f"❌ Ошибка загрузки файла: {str(e)}")
+            self.file_content_widget.setText(self.tr("❌ Ошибка загрузки файла: {err}").format(err=str(e)))
             
     def _load_pdf_content(self):
         """Загрузка содержимого PDF файла."""
         if not PYMUPDF_AVAILABLE:
-            self.file_content_widget.setText("📄 PDF файл\n\n⚠️ Для предварительного просмотра PDF установите PyMuPDF:\npip install PyMuPDF")
+            self.file_content_widget.setText(self.tr("📄 PDF файл\n\n⚠️ Для предварительного просмотра PDF установите PyMuPDF:\npip install PyMuPDF"))
             return
             
         try:
@@ -342,15 +343,15 @@ class FileViewerDialog(QDialog):
                 
                 # Если страниц больше одной, добавляем информацию
                 if len(doc) > 1:
-                    info_text = f"📄 PDF документ ({len(doc)} стр.)\nОтображается первая страница"
+                    info_text = self.tr("📄 PDF документ ({pages} стр.)\nОтображается первая страница").format(pages=len(doc))
                     self.file_content_widget.setToolTip(info_text)
             else:
-                self.file_content_widget.setText("📄 PDF файл пуст")
+                self.file_content_widget.setText(self.tr("📄 PDF файл пуст"))
                 
             doc.close()
             
         except Exception as e:
-            self.file_content_widget.setText(f"❌ Ошибка загрузки PDF: {str(e)}")
+            self.file_content_widget.setText(self.tr("❌ Ошибка загрузки PDF: {err}").format(err=str(e)))
             
     def _load_image_content(self):
         """Загрузка изображения."""
@@ -366,13 +367,13 @@ class FileViewerDialog(QDialog):
                 self.file_content_widget.setPixmap(scaled_pixmap)
                 
                 # Информация о размере
-                info_text = f"🖼️ Изображение {pixmap.width()}x{pixmap.height()}"
+                info_text = self.tr("🖼️ Изображение {w}x{h}").format(w=pixmap.width(), h=pixmap.height())
                 self.file_content_widget.setToolTip(info_text)
             else:
-                self.file_content_widget.setText("❌ Не удалось загрузить изображение")
+                self.file_content_widget.setText(self.tr("❌ Не удалось загрузить изображение"))
                 
         except Exception as e:
-            self.file_content_widget.setText(f"❌ Ошибка загрузки изображения: {str(e)}")
+            self.file_content_widget.setText(self.tr("❌ Ошибка загрузки изображения: {err}").format(err=str(e)))
             
     def _open_external(self):
         """Открытие файла в стандартном приложении."""
@@ -384,7 +385,7 @@ class FileViewerDialog(QDialog):
             else:  # Linux
                 os.system(f'xdg-open "{self.file_path}"')
         except Exception as e:
-            print(f"Ошибка открытия файла: {e}")
+            print(self.tr("Ошибка открытия файла: {err}").format(err=e))
             
     def _copy_path(self):
         """Копирование пути к файлу в буфер обмена."""
@@ -392,4 +393,4 @@ class FileViewerDialog(QDialog):
             clipboard = QApplication.clipboard()
             clipboard.setText(self.file_path)
         except Exception as e:
-            print(f"Ошибка копирования пути: {e}") 
+            print(self.tr("Ошибка копирования пути: {err}").format(err=e)) 

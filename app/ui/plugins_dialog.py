@@ -44,7 +44,7 @@ class PluginsDialog(QDialog):
     
     def setup_ui(self):
         """Настройка интерфейса"""
-        self.setWindowTitle("🔌 Управление LLM плагинами - InvoiceGemini")
+        self.setWindowTitle("🔌 " + self.tr("Управление LLM плагинами - InvoiceGemini"))
         self.setMinimumSize(1000, 700)
         self.resize(1200, 800)
         
@@ -71,10 +71,10 @@ class PluginsDialog(QDialog):
         buttons_layout = QHBoxLayout()
         buttons_layout.addStretch()
         
-        self.refresh_button = QPushButton("🔄 Обновить")
+        self.refresh_button = QPushButton("🔄 " + self.tr("Обновить"))
         self.refresh_button.clicked.connect(self.refresh_all)
         
-        self.close_button = QPushButton("Закрыть")
+        self.close_button = QPushButton(self.tr("Закрыть"))
         self.close_button.clicked.connect(self.accept)
         
         buttons_layout.addWidget(self.refresh_button)
@@ -87,7 +87,7 @@ class PluginsDialog(QDialog):
         header_layout = QVBoxLayout(header_widget)
         
         # Главный заголовок
-        title_label = QLabel("🚀 Система плагинов локальных LLM")
+        title_label = QLabel("🚀 " + self.tr("Система плагинов локальных LLM"))
         title_font = QFont()
         title_font.setPointSize(16)
         title_font.setBold(True)
@@ -95,7 +95,7 @@ class PluginsDialog(QDialog):
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # Подзаголовок
-        subtitle_label = QLabel("Обучайте и используйте модели Llama, Mistral, CodeLlama локально")
+        subtitle_label = QLabel(self.tr("Обучайте и используйте модели Llama, Mistral, CodeLlama локально"))
         subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle_label.setStyleSheet("color: #666; font-size: 12px;")
         
@@ -110,31 +110,31 @@ class PluginsDialog(QDialog):
         layout = QVBoxLayout(tab)
         
         # Статистика плагинов
-        stats_group = QGroupBox("📊 Статистика плагинов")
+        stats_group = QGroupBox("📊 " + self.tr("Статистика плагинов"))
         stats_layout = QGridLayout(stats_group)
         
         self.total_plugins_label = QLabel("0")
         self.loaded_plugins_label = QLabel("0")
         self.available_plugins_label = QLabel("0")
         
-        stats_layout.addWidget(QLabel("Всего плагинов:"), 0, 0)
+        stats_layout.addWidget(QLabel(self.tr("Всего плагинов:")), 0, 0)
         stats_layout.addWidget(self.total_plugins_label, 0, 1)
-        stats_layout.addWidget(QLabel("Загружено:"), 0, 2)
+        stats_layout.addWidget(QLabel(self.tr("Загружено:")), 0, 2)
         stats_layout.addWidget(self.loaded_plugins_label, 0, 3)
-        stats_layout.addWidget(QLabel("Доступно:"), 0, 4)
+        stats_layout.addWidget(QLabel(self.tr("Доступно:")), 0, 4)
         stats_layout.addWidget(self.available_plugins_label, 0, 5)
         
         layout.addWidget(stats_group)
         
         # Список плагинов
-        plugins_group = QGroupBox("🔌 Доступные плагины")
+        plugins_group = QGroupBox("🔌 " + self.tr("Доступные плагины"))
         plugins_layout = QVBoxLayout(plugins_group)
         
         # ФАЗА 2: Оптимизированная таблица плагинов
         self.plugins_table = OptimizedTableWidget()
         self.plugins_table.setColumnCount(6)
         self.plugins_table.setHorizontalHeaderLabels([
-            "Название", "Тип", "Статус", "Память", "Действия", "Информация"
+            self.tr("Название"), self.tr("Тип"), self.tr("Статус"), self.tr("Память"), self.tr("Действия"), self.tr("Информация")
         ])
         
         # Настройка таблицы
@@ -150,13 +150,13 @@ class PluginsDialog(QDialog):
         layout.addWidget(plugins_group)
         
         # Установка пользовательских плагинов
-        install_group = QGroupBox("📦 Установка плагинов")
+        install_group = QGroupBox("📦 " + self.tr("Установка плагинов"))
         install_layout = QHBoxLayout(install_group)
         
-        install_button = QPushButton("📁 Установить из файла")
+        install_button = QPushButton("📁 " + self.tr("Установить из файла"))
         install_button.clicked.connect(self.install_plugin_from_file)
         
-        create_template_button = QPushButton("📝 Создать шаблон")
+        create_template_button = QPushButton("📝 " + self.tr("Создать шаблон"))
         create_template_button.clicked.connect(self.create_plugin_template)
         
         install_layout.addWidget(install_button)
@@ -165,7 +165,7 @@ class PluginsDialog(QDialog):
         
         layout.addWidget(install_group)
         
-        self.tab_widget.addTab(tab, "🔌 Плагины")
+        self.tab_widget.addTab(tab, "🔌 " + self.tr("Плагины"))
     
     def create_training_tab(self):
         """Вкладка обучения моделей"""
@@ -173,52 +173,52 @@ class PluginsDialog(QDialog):
         layout = QVBoxLayout(tab)
         
         # Выбор плагина для обучения
-        plugin_group = QGroupBox("🎯 Выбор модели для обучения")
+        plugin_group = QGroupBox("🎯 " + self.tr("Выбор модели для обучения"))
         plugin_layout = QFormLayout(plugin_group)
         
         self.training_plugin_combo = QComboBox()
         self.training_plugin_combo.currentTextChanged.connect(self.on_training_plugin_changed)
-        plugin_layout.addRow("Плагин:", self.training_plugin_combo)
+        plugin_layout.addRow(self.tr("Плагин:"), self.training_plugin_combo)
         
-        self.plugin_info_label = QLabel("Выберите плагин для получения информации")
+        self.plugin_info_label = QLabel(self.tr("Выберите плагин для получения информации"))
         self.plugin_info_label.setWordWrap(True)
-        plugin_layout.addRow("Информация:", self.plugin_info_label)
+        plugin_layout.addRow(self.tr("Информация:"), self.plugin_info_label)
         
         layout.addWidget(plugin_group)
         
         # Настройки обучения
-        settings_group = QGroupBox("⚙️ Параметры обучения")
+        settings_group = QGroupBox("⚙️ " + self.tr("Параметры обучения"))
         settings_layout = QFormLayout(settings_group)
         
         self.epochs_spin = QSpinBox()
         self.epochs_spin.setRange(1, 50)
         self.epochs_spin.setValue(3)
-        settings_layout.addRow("Эпохи:", self.epochs_spin)
+        settings_layout.addRow(self.tr("Эпохи:"), self.epochs_spin)
         
         self.batch_size_spin = QSpinBox()
         self.batch_size_spin.setRange(1, 32)
         self.batch_size_spin.setValue(4)
-        settings_layout.addRow("Размер батча:", self.batch_size_spin)
+        settings_layout.addRow(self.tr("Размер батча:"), self.batch_size_spin)
         
         self.learning_rate_edit = QLineEdit("2e-4")
-        settings_layout.addRow("Learning rate:", self.learning_rate_edit)
+        settings_layout.addRow(self.tr("Learning rate:"), self.learning_rate_edit)
         
         self.lora_rank_spin = QSpinBox()
         self.lora_rank_spin.setRange(4, 128)
         self.lora_rank_spin.setValue(16)
-        settings_layout.addRow("LoRA Rank:", self.lora_rank_spin)
+        settings_layout.addRow(self.tr("LoRA Rank:"), self.lora_rank_spin)
         
         layout.addWidget(settings_group)
         
         # Выбор датасета
-        dataset_group = QGroupBox("📊 Датасет")
+        dataset_group = QGroupBox("📊 " + self.tr("Датасет"))
         dataset_layout = QVBoxLayout(dataset_group)
         
         dataset_select_layout = QHBoxLayout()
         self.dataset_path_edit = QLineEdit()
-        self.dataset_path_edit.setPlaceholderText("Выберите датасет для обучения...")
+        self.dataset_path_edit.setPlaceholderText(self.tr("Выберите датасет для обучения..."))
         
-        select_dataset_button = QPushButton("📁 Выбрать")
+        select_dataset_button = QPushButton("📁 " + self.tr("Выбрать"))
         select_dataset_button.clicked.connect(self.select_training_dataset)
         
         dataset_select_layout.addWidget(self.dataset_path_edit)
@@ -226,22 +226,22 @@ class PluginsDialog(QDialog):
         dataset_layout.addLayout(dataset_select_layout)
         
         # Информация о датасете
-        self.dataset_info_label = QLabel("Информация о датасете появится после выбора")
+        self.dataset_info_label = QLabel(self.tr("Информация о датасете появится после выбора"))
         self.dataset_info_label.setWordWrap(True)
         dataset_layout.addWidget(self.dataset_info_label)
         
         layout.addWidget(dataset_group)
         
         # Управление обучением
-        control_group = QGroupBox("🚀 Управление обучением")
+        control_group = QGroupBox("🚀 " + self.tr("Управление обучением"))
         control_layout = QVBoxLayout(control_group)
         
         # Кнопки
         buttons_layout = QHBoxLayout()
-        self.start_training_button = QPushButton("🚀 Начать обучение")
+        self.start_training_button = QPushButton("🚀 " + self.tr("Начать обучение"))
         self.start_training_button.clicked.connect(self.start_training)
         
-        self.stop_training_button = QPushButton("🛑 Остановить")
+        self.stop_training_button = QPushButton("🛑 " + self.tr("Остановить"))
         self.stop_training_button.clicked.connect(self.stop_training)
         self.stop_training_button.setEnabled(False)
         
@@ -255,12 +255,12 @@ class PluginsDialog(QDialog):
         self.training_progress.setVisible(False)
         control_layout.addWidget(self.training_progress)
         
-        self.training_status_label = QLabel("Готов к обучению")
+        self.training_status_label = QLabel(self.tr("Готов к обучению"))
         control_layout.addWidget(self.training_status_label)
         
         layout.addWidget(control_group)
         
-        self.tab_widget.addTab(tab, "🎓 Обучение")
+        self.tab_widget.addTab(tab, "🎓 " + self.tr("Обучение"))
     
     def create_dataset_tab(self):
         """Вкладка подготовки датасета"""
@@ -269,9 +269,8 @@ class PluginsDialog(QDialog):
         
         # Информация
         info_label = QLabel(
-            "💡 Эта вкладка поможет подготовить качественный датасет для обучения LLM моделей.\n"
-            "Используется Gemini API для создания правильных аннотаций на основе ваших документов."
-        )
+            self.tr("💡 Эта вкладка поможет подготовить качественный датасет для обучения LLM моделей.\n") +
+            self.tr("Используется Gemini API для создания правильных аннотаций на основе ваших документов."))
         info_label.setWordWrap(True)
         info_label.setStyleSheet("background: #e3f2fd; padding: 10px; border-radius: 5px; color: #1976d2;")
         layout.addWidget(info_label)
@@ -282,9 +281,9 @@ class PluginsDialog(QDialog):
         
         select_images_layout = QHBoxLayout()
         self.images_folder_edit = QLineEdit()
-        self.images_folder_edit.setPlaceholderText("Выберите папку с изображениями счетов...")
+        self.images_folder_edit.setPlaceholderText(self.tr("Выберите папку с изображениями счетов..."))
         
-        select_folder_button = QPushButton("📁 Выбрать папку")
+        select_folder_button = QPushButton("📁 " + self.tr("Выбрать папку"))
         select_folder_button.clicked.connect(self.select_images_folder)
         
         select_images_layout.addWidget(self.images_folder_edit)
@@ -292,7 +291,7 @@ class PluginsDialog(QDialog):
         images_layout.addLayout(select_images_layout)
         
         # Информация о найденных файлах
-        self.images_info_label = QLabel("Информация о файлах появится после выбора папки")
+        self.images_info_label = QLabel(self.tr("Информация о файлах появится после выбора папки"))
         images_layout.addWidget(self.images_info_label)
         
         layout.addWidget(images_group)
@@ -302,8 +301,8 @@ class PluginsDialog(QDialog):
         generation_layout = QFormLayout(generation_group)
         
         self.output_dataset_edit = QLineEdit()
-        self.output_dataset_edit.setPlaceholderText("Имя датасета...")
-        generation_layout.addRow("Название датасета:", self.output_dataset_edit)
+        self.output_dataset_edit.setPlaceholderText(self.tr("Имя датасета..."))
+        generation_layout.addRow(self.tr("Название датасета:"), self.output_dataset_edit)
         
         self.use_gemini_checkbox = QCheckBox("Использовать Gemini для аннотаций")
         self.use_gemini_checkbox.setChecked(True)
@@ -317,10 +316,10 @@ class PluginsDialog(QDialog):
         
         # Кнопка запуска
         start_generation_layout = QHBoxLayout()
-        self.start_generation_button = QPushButton("🚀 Начать генерацию датасета")
+        self.start_generation_button = QPushButton("🚀 " + self.tr("Начать генерацию датасета"))
         self.start_generation_button.clicked.connect(self.start_dataset_generation)
         
-        self.stop_generation_button = QPushButton("🛑 Остановить")
+        self.stop_generation_button = QPushButton("🛑 " + self.tr("Остановить"))
         self.stop_generation_button.clicked.connect(self.stop_dataset_generation)
         self.stop_generation_button.setEnabled(False)
         
@@ -342,7 +341,7 @@ class PluginsDialog(QDialog):
         
         layout.addWidget(process_group)
         
-        self.tab_widget.addTab(tab, "📊 Датасет")
+        self.tab_widget.addTab(tab, "📊 " + self.tr("Датасет"))
     
     def create_monitoring_tab(self):
         """Вкладка мониторинга"""
@@ -359,14 +358,14 @@ class PluginsDialog(QDialog):
         self.current_loss_label = QLabel("0.000")
         self.current_lr_label = QLabel("0.0000")
         
-        current_layout.addWidget(QLabel("Эпоха:"), 0, 0)
+        current_layout.addWidget(QLabel(self.tr("Эпоха:")), 0, 0)
         current_layout.addWidget(self.current_epoch_label, 0, 1)
-        current_layout.addWidget(QLabel("Шаг:"), 0, 2)
+        current_layout.addWidget(QLabel(self.tr("Шаг:")), 0, 2)
         current_layout.addWidget(self.current_step_label, 0, 3)
         
-        current_layout.addWidget(QLabel("Loss:"), 1, 0)
+        current_layout.addWidget(QLabel(self.tr("Loss:")), 1, 0)
         current_layout.addWidget(self.current_loss_label, 1, 1)
-        current_layout.addWidget(QLabel("Learning Rate:"), 1, 2)
+        current_layout.addWidget(QLabel(self.tr("Learning Rate:")), 1, 2)
         current_layout.addWidget(self.current_lr_label, 1, 3)
         
         layout.addWidget(current_group)
@@ -379,7 +378,7 @@ class PluginsDialog(QDialog):
         self.history_table = OptimizedTableWidget()
         self.history_table.setColumnCount(5)
         self.history_table.setHorizontalHeaderLabels([
-            "Эпоха", "Шаг", "Loss", "Eval Loss", "Время"
+            self.tr("Эпоха"), self.tr("Шаг"), self.tr("Loss"), self.tr("Eval Loss"), self.tr("Время")
         ])
         
         history_layout.addWidget(self.history_table)
@@ -393,17 +392,17 @@ class PluginsDialog(QDialog):
         self.gpu_utilization_label = QLabel("Загрузка...")
         self.cpu_usage_label = QLabel("Загрузка...")
         
-        system_layout.addWidget(QLabel("GPU память:"), 0, 0)
+        system_layout.addWidget(QLabel(self.tr("GPU память:")), 0, 0)
         system_layout.addWidget(self.gpu_memory_label, 0, 1)
-        system_layout.addWidget(QLabel("GPU загрузка:"), 0, 2)
+        system_layout.addWidget(QLabel(self.tr("GPU загрузка:")), 0, 2)
         system_layout.addWidget(self.gpu_utilization_label, 0, 3)
         
-        system_layout.addWidget(QLabel("CPU:"), 1, 0)
+        system_layout.addWidget(QLabel(self.tr("CPU:")), 1, 0)
         system_layout.addWidget(self.cpu_usage_label, 1, 1)
         
         layout.addWidget(system_group)
         
-        self.tab_widget.addTab(tab, "📊 Мониторинг")
+        self.tab_widget.addTab(tab, "📊 " + self.tr("Мониторинг"))
     
     def load_plugin_info(self):
         """Загружает информацию о плагинах"""
@@ -617,18 +616,18 @@ class PluginsDialog(QDialog):
         """Устанавливает плагин из файла"""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Выберите файл плагина",
+            self.tr("Выберите файл плагина"),
             "",
-            "Python файлы (*.py);;Все файлы (*)"
+            self.tr("Python файлы (*.py);;Все файлы (*)")
         )
         
         if file_path:
             try:
                 if self.plugin_manager.install_plugin_from_file(file_path):
-                    QMessageBox.information(self, "Успех", "Плагин установлен успешно!")
+                    QMessageBox.information(self, "Успех", self.tr("Плагин установлен успешно!"))
                     self.refresh_all()
                 else:
-                    QMessageBox.warning(self, "Ошибка", "Не удалось установить плагин")
+                    QMessageBox.warning(self, "Ошибка", self.tr("Не удалось установить плагин"))
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Ошибка установки плагина: {e}")
     
@@ -636,8 +635,8 @@ class PluginsDialog(QDialog):
         """Создает шаблон плагина"""
         plugin_name, ok = QInputDialog.getText(
             self, 
-            "Создание шаблона плагина",
-            "Введите название плагина:"
+            self.tr("Создание шаблона плагина"),
+            self.tr("Введите название плагина:")
         )
         
         if ok and plugin_name:
@@ -645,10 +644,9 @@ class PluginsDialog(QDialog):
                 template_path = self.plugin_manager.create_plugin_template(plugin_name)
                 QMessageBox.information(
                     self, 
-                    "Успех", 
-                    f"Шаблон плагина создан:\n{template_path}\n\n"
-                    "Откройте файл в редакторе и реализуйте методы загрузки модели."
-                )
+                    self.tr("Успех"), 
+                    self.tr("Шаблон плагина создан:\n") + template_path + "\n\n" +
+                    self.tr("Откройте файл в редакторе и реализуйте методы загрузки модели."))
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Ошибка создания шаблона: {e}")
     
@@ -656,9 +654,9 @@ class PluginsDialog(QDialog):
         """Выбор датасета для обучения"""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Выберите датасет для обучения",
+            self.tr("Выберите датасет для обучения"),
             "",
-            "JSON файлы (*.json);;Все файлы (*)"
+            self.tr("JSON файлы (*.json);;Все файлы (*)")
         )
         
         if file_path:
@@ -709,11 +707,11 @@ class PluginsDialog(QDialog):
         dataset_path = self.dataset_path_edit.text()
         
         if not plugin_id:
-            QMessageBox.warning(self, "Ошибка", "Выберите плагин для обучения")
+            QMessageBox.warning(self, "Ошибка", self.tr("Выберите плагин для обучения"))
             return
         
         if not dataset_path or not os.path.exists(dataset_path):
-            QMessageBox.warning(self, "Ошибка", "Выберите корректный датасет")
+            QMessageBox.warning(self, "Ошибка", self.tr("Выберите корректный датасет"))
             return
         
         try:
@@ -723,7 +721,7 @@ class PluginsDialog(QDialog):
                 plugin_instance = self.plugin_manager.create_plugin_instance(plugin_id)
             
             if not plugin_instance:
-                QMessageBox.critical(self, "Ошибка", "Не удалось создать экземпляр плагина")
+                QMessageBox.critical(self, "Ошибка", self.tr("Не удалось создать экземпляр плагина"))
                 return
             
             # Создаем тренер
@@ -836,9 +834,8 @@ class PluginsDialog(QDialog):
             self.training_status_label.setText(f"✅ Обучение завершено: {output_path}")
             QMessageBox.information(
                 self, 
-                "Успех", 
-                f"Модель обучена успешно!\n\nСохранена в: {output_path}"
-            )
+                self.tr("Успех"), 
+                self.tr("Модель обучена успешно!\n\nСохранена в: ") + output_path)
         else:
             self.training_status_label.setText("❌ Обучение прервано с ошибкой")
         
@@ -855,7 +852,7 @@ class PluginsDialog(QDialog):
         self.training_progress.setVisible(False)
         
         self.training_status_label.setText(f"❌ Ошибка: {error_message}")
-        QMessageBox.critical(self, "Ошибка обучения", error_message)
+        QMessageBox.critical(self, self.tr("Ошибка обучения"), error_message)
         
         self.current_trainer = None
         self.training_thread = None
@@ -864,7 +861,7 @@ class PluginsDialog(QDialog):
         """Выбор папки с изображениями для генерации датасета"""
         folder_path = QFileDialog.getExistingDirectory(
             self,
-            "Выберите папку с изображениями счетов"
+            self.tr("Выберите папку с изображениями счетов")
         )
         
         if folder_path:
@@ -906,16 +903,16 @@ class PluginsDialog(QDialog):
         dataset_name = self.output_dataset_edit.text()
         
         if not folder_path or not os.path.exists(folder_path):
-            QMessageBox.warning(self, "Ошибка", "Выберите корректную папку с изображениями")
+            QMessageBox.warning(self, "Ошибка", self.tr("Выберите корректную папку с изображениями"))
             return
         
         if not dataset_name:
-            QMessageBox.warning(self, "Ошибка", "Введите название датасета")
+            QMessageBox.warning(self, "Ошибка", self.tr("Введите название датасета"))
             return
         
         # Проверяем наличие Gemini процессора
         if not self.use_gemini_checkbox.isChecked():
-            QMessageBox.warning(self, "Ошибка", "В данной версии поддерживается только генерация с Gemini")
+            QMessageBox.warning(self, "Ошибка", self.tr("В данной версии поддерживается только генерация с Gemini"))
             return
         
         try:
@@ -925,18 +922,17 @@ class PluginsDialog(QDialog):
                 if not gemini_processor:
                     QMessageBox.warning(
                         self, 
-                        "Ошибка", 
-                        "Gemini процессор недоступен. Проверьте настройки API ключа."
-                    )
+                        self.tr("Ошибка"), 
+                        self.tr("Gemini процессор недоступен. Проверьте настройки API ключа."))
                     return
             else:
-                QMessageBox.critical(self, "Ошибка", "Не удалось получить доступ к Gemini процессору")
+                QMessageBox.critical(self, "Ошибка", self.tr("Не удалось получить доступ к Gemini процессору"))
                 return
             
             # Создаем тренер для генерации датасета
             temp_plugin = self.plugin_manager.create_plugin_instance("llama")  # Используем любой доступный
             if not temp_plugin:
-                QMessageBox.critical(self, "Ошибка", "Не удалось создать временный плагин")
+                QMessageBox.critical(self, "Ошибка", self.tr("Не удалось создать временный плагин"))
                 return
             
             trainer = LLMTrainer(temp_plugin, self.generation_progress_callback)
@@ -1004,9 +1000,9 @@ class PluginsDialog(QDialog):
         
         QMessageBox.information(
             self,
-            "Успех",
-            f"Датасет создан успешно!\n\n{dataset_path}\n\nТеперь вы можете использовать его для обучения."
-        )
+            self.tr("Успех"),
+            self.tr("Датасет создан успешно!\n\n") + dataset_path + "\n\n" +
+            self.tr("Теперь вы можете использовать его для обучения."))
     
     def on_generation_error(self, error_message: str):
         """Обработчик ошибки генерации"""
@@ -1016,7 +1012,7 @@ class PluginsDialog(QDialog):
         self.generation_progress.setVisible(False)
         
         self.generation_log.append(f"❌ Ошибка: {error_message}")
-        QMessageBox.critical(self, "Ошибка генерации", error_message)
+        QMessageBox.critical(self, self.tr("Ошибка генерации"), error_message)
     
     def stop_dataset_generation(self):
         """Останавливает генерацию датасета"""
@@ -1027,7 +1023,7 @@ class PluginsDialog(QDialog):
         """Обновляет всю информацию"""
         self.plugin_manager.reload_plugins()
         self.load_plugin_info()
-        QMessageBox.information(self, "Обновлено", "Информация о плагинах обновлена")
+        QMessageBox.information(self, self.tr("Обновлено"), self.tr("Информация о плагинах обновлена"))
 
 
 class TrainingThread(QThread):

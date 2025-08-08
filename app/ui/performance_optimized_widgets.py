@@ -244,7 +244,6 @@ class AnimatedButton(QPushButton):
             }
             QPushButton:hover {
                 background-color: #45a049;
-                transform: translateY(-2px);
             }
         """
         
@@ -295,7 +294,7 @@ class SmartProgressBar(QProgressBar):
         # Стиль
         self.setStyleSheet("""
             QProgressBar {
-                border: 2px solid #grey;
+                border: 2px solid gray;
                 border-radius: 5px;
                 text-align: center;
                 font-weight: bold;
@@ -570,10 +569,17 @@ def set_rendering_config(config: RenderingConfig):
     # Применяем настройки к QApplication
     app = QApplication.instance()
     if app:
+        # В Qt6 методы/константы UIEffect могут отсутствовать. Делаем проверку и безопасный no-op.
         if not config.enable_animations:
-            app.setEffectEnabled(Qt.UIEffect.UI_AnimateCombo, False)
-            app.setEffectEnabled(Qt.UIEffect.UI_AnimateTooltip, False)
-            app.setEffectEnabled(Qt.UIEffect.UI_AnimateMenu, False)
+            try:
+                ui_effect = getattr(Qt, 'UIEffect', None)
+                if ui_effect and hasattr(app, 'setEffectEnabled'):
+                    app.setEffectEnabled(ui_effect.UI_AnimateCombo, False)
+                    app.setEffectEnabled(ui_effect.UI_AnimateTooltip, False)
+                    app.setEffectEnabled(ui_effect.UI_AnimateMenu, False)
+            except Exception:
+                # Тихо игнорируем, если эффект недоступен в текущей версии Qt
+                pass
 
 
 def optimize_widget_performance(widget: QWidget):

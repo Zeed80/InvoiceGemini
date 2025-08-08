@@ -2754,6 +2754,26 @@ class ModelManagementDialog(QDialog):
         scroll.setWidget(scroll_widget)
         general_layout.addWidget(scroll)
         
+        # Язык интерфейса
+        language_group = QGroupBox("🌐 " + self.tr("Язык интерфейса"))
+        language_layout = QFormLayout()
+        self.language_combo = QComboBox()
+        # Список локалей: (читаемое имя, код)
+        self._available_locales = [
+            (self.tr("Русский"), "ru"),
+            (self.tr("English"), "en"),
+        ]
+        for name, code in self._available_locales:
+            self.language_combo.addItem(name, code)
+        # Установка текущего
+        current_lang = settings_manager.get_string('Interface', 'language', 'ru')
+        idx = next((i for i, (_, code) in enumerate(self._available_locales) if code == current_lang), 0)
+        self.language_combo.setCurrentIndex(idx)
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        language_layout.addRow(self.tr("Выберите язык:"), self.language_combo)
+        language_group.setLayout(language_layout)
+        scroll_layout.addWidget(language_group)
+        
         self.tab_widget.addTab(general_tab, "⚙️ Общие настройки")
 
     def _create_path_input(self):
@@ -2800,3 +2820,15 @@ class ModelManagementDialog(QDialog):
         """Тестирует все подключения"""
         # Реализация тестирования будет добавлена позже
         QMessageBox.information(self, "Тестирование", "Функция тестирования будет реализована позже")
+
+    def _on_language_changed(self):
+        """Обработчик смены языка: сохраняем выбор."""
+        try:
+            code = self.language_combo.currentData()
+            settings_manager.set_value('Interface', 'language', code)
+            settings_manager.save_settings()
+            # Если главное окно имеет метод смены языка – инициируем
+            if self.parent_window and hasattr(self.parent_window, 'change_app_language'):
+                self.parent_window.change_app_language(code)
+        except Exception as e:
+            print(f"Ошибка сохранения языка: {e}")

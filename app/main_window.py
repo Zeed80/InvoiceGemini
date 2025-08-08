@@ -22,6 +22,7 @@ from .ui.performance_optimized_widgets import (
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QUrl, QTimer, QThread
 from PyQt6.QtGui import QPixmap, QImage, QAction, QIcon, QFont
+from PyQt6.QtCore import QTranslator
 from PIL import Image, ImageQt
 import pdf2image
 import tempfile
@@ -140,6 +141,14 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
+        self._translator = QTranslator(self)
+        self._current_language = None
+        # Устанавливаем язык из настроек до построения UI
+        try:
+            lang_code = settings_manager.get_string('Interface', 'language', 'ru')
+            self._install_translator(lang_code)
+        except Exception as e:
+            logger.warning(f"Localization init failed: {e}")
         self.init_ui()
         self.current_image_path = None
         self.current_folder_path = None # NEW: Добавлено для хранения пути к папке
@@ -174,7 +183,7 @@ class MainWindow(QMainWindow):
         # NEW: Initialize new core components
         self.cache_manager = CacheManager()
         self.retry_manager = RetryManager()
-        self.backup_manager = BackupManager()
+        self.backup_manager = BackupManager(app_data_dir=app_config.APP_DATA_PATH)
         
         # Initialize prompt generator
         self.prompt_generator = PromptGenerator(settings_manager)
@@ -5049,6 +5058,71 @@ class MainWindow(QMainWindow):
         
         # Обновляем видимость групп
         self.update_group_visibility_based_on_model(is_cloud_model, is_local_model)
+
+    def _install_translator(self, lang_code: str) -> bool:
+        """Загружает и устанавливает переводчик Qt для выбранного языка."""
+        from PyQt6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is None:
+            return False
+        # Снимаем старый переводчик
+        try:
+            app.removeTranslator(self._translator)
+        except Exception:
+            pass
+        # Пытаемся загрузить .qm из папки translations
+        translations_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'translations')
+        file_name = f'invoicegemini_{lang_code}.qm'
+        qm_path = os.path.join(translations_dir, file_name)
+        loaded = False
+        try:
+            loaded = self._translator.load(qm_path)
+        except Exception as e:
+            logger.warning(f"Failed to load translation '{qm_path}': {e}")
+            loaded = False
+        if loaded:
+            app.installTranslator(self._translator)
+            self._current_language = lang_code
+            logger.info(f"Installed translator: {lang_code}")
+        else:
+            self._current_language = None
+            logger.info("No translation loaded; using source locale")
+        return loaded
+
+    def change_app_language(self, lang_code: str):
+        """Публичный метод смены языка, переустанавливает переводчики и обновляет тексты UI."""
+        self._install_translator(lang_code)
+        # Перевыставляем тексты в текущем окне
+        try:
+            self._retranslate_ui()
+        except Exception as e:
+            logger.warning(f"Retranslate UI failed: {e}")
+        # Обновляем активные диалоги, если открыты
+        try:
+            if self.model_management_dialog is not None:
+                if hasattr(self.model_management_dialog, 'setWindowTitle'):
+                    # Частичный retranslate: можно расширить при необходимости
+                    self.model_management_dialog.setWindowTitle(self.tr("Настройки и управление моделями"))
+        except Exception:
+            pass
+
+    def _retranslate_ui(self):
+        """Обновляет ключевые тексты главного окна. Расширяйте при добавлении новых элементов."""
+        try:
+            self.setWindowTitle(self.tr("Обработка счетов"))
+            # Пример: если есть меню/кнопки, выставить тексты заново
+            # Этот метод можно дополнять при необходимости
+        except Exception:
+            pass
+
+    def changeEvent(self, event):
+        try:
+            from PyQt6.QtCore import QEvent
+            if event.type() == QEvent.Type.LanguageChange:
+                self._retranslate_ui()
+        except Exception:
+            pass
+        super().changeEvent(event)
 
 
 # NEW: LLM Loading Thread

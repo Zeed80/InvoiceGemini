@@ -14,6 +14,7 @@ from PyQt6.QtCore import pyqtSignal, QObject, Qt
 
 from app.field_manager import field_manager
 from app.settings_manager import settings_manager
+from app.ui.performance_optimized_widgets import OptimizedTableWidget
 
 
 class ResultsViewerSignals(QObject):
@@ -65,7 +66,7 @@ class ResultsViewerWidget(QWidget):
         results_layout.addLayout(header_layout)
         
         # Results table
-        self.results_table = QTableWidget()
+        self.results_table = OptimizedTableWidget()
         self.results_table.setSortingEnabled(True)
         results_layout.addWidget(self.results_table)
         
@@ -153,10 +154,7 @@ class ResultsViewerWidget(QWidget):
             
     def _setup_fallback_table(self):
         """Setup basic fallback table structure."""
-        basic_columns = [
-            self.tr("Поле"),
-            self.tr("Значение")
-        ]
+        basic_columns = [self.tr("Поле"), self.tr("Значение")]
         
         self.results_table.setColumnCount(len(basic_columns))
         self.results_table.setHorizontalHeaderLabels(basic_columns)

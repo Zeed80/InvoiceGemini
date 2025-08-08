@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QProgressBar, QSplitter, QTabWidget
 )
 from PyQt6.QtGui import QIcon, QColor, QFont
+from app.ui.performance_optimized_widgets import OptimizedTableWidget, SmartProgressBar
 
 logger = logging.getLogger(__name__)
 
@@ -139,31 +140,31 @@ class BatchProcessingWidget(QWidget):
         layout.addWidget(splitter)
         
         # Прогресс-бар
-        self.progress_bar = QProgressBar()
+        self.progress_bar = SmartProgressBar()
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
         
         # Кнопки управления
         buttons_layout = QHBoxLayout()
         
-        self.start_button = QPushButton("Начать обработку")
+        self.start_button = QPushButton(self.tr("Начать обработку"))
         self.start_button.clicked.connect(self.start_processing)
         self.start_button.setEnabled(False)
         buttons_layout.addWidget(self.start_button)
         
-        self.pause_button = QPushButton("Пауза")
+        self.pause_button = QPushButton(self.tr("Пауза"))
         self.pause_button.clicked.connect(self.pause_processing)
         self.pause_button.setEnabled(False)
         buttons_layout.addWidget(self.pause_button)
         
-        self.cancel_button = QPushButton("Отменить")
+        self.cancel_button = QPushButton(self.tr("Отменить"))
         self.cancel_button.clicked.connect(self.cancel_processing)
         self.cancel_button.setEnabled(False)
         buttons_layout.addWidget(self.cancel_button)
         
         buttons_layout.addStretch()
         
-        self.export_button = QPushButton("Экспорт результатов")
+        self.export_button = QPushButton(self.tr("Экспорт результатов"))
         self.export_button.clicked.connect(self.export_results)
         self.export_button.setEnabled(False)
         buttons_layout.addWidget(self.export_button)
@@ -172,31 +173,31 @@ class BatchProcessingWidget(QWidget):
         
     def _create_control_panel(self) -> QGroupBox:
         """Создание панели управления"""
-        group = QGroupBox("Настройки обработки")
+        group = QGroupBox(self.tr("Настройки обработки"))
         layout = QHBoxLayout(group)
         
         # Выбор папки
-        self.folder_button = QPushButton("Выбрать папку...")
+        self.folder_button = QPushButton(self.tr("Выбрать папку..."))
         self.folder_button.clicked.connect(self.select_folder)
         layout.addWidget(self.folder_button)
         
-        self.folder_label = QLabel("Папка не выбрана")
+        self.folder_label = QLabel(self.tr("Папка не выбрана"))
         layout.addWidget(self.folder_label)
         
         layout.addStretch()
         
         # Задержка между файлами
-        layout.addWidget(QLabel("Задержка (сек):"))
+        layout.addWidget(QLabel(self.tr("Задержка (сек):")))
         self.delay_spinbox = QSpinBox()
         self.delay_spinbox.setRange(0, 60)
         self.delay_spinbox.setValue(1)
-        self.delay_spinbox.setToolTip("Задержка между обработкой файлов")
+        self.delay_spinbox.setToolTip(self.tr("Задержка между обработкой файлов"))
         layout.addWidget(self.delay_spinbox)
         
         # Фильтр по типам файлов
-        layout.addWidget(QLabel("Тип файлов:"))
+        layout.addWidget(QLabel(self.tr("Тип файлов:")))
         self.file_type_combo = QComboBox()
-        self.file_type_combo.addItems(["Все", "PDF", "Изображения", "PDF и изображения"])
+        self.file_type_combo.addItems([self.tr("Все"), "PDF", self.tr("Изображения"), self.tr("PDF и изображения")])
         self.file_type_combo.currentTextChanged.connect(self.filter_files)
         layout.addWidget(self.file_type_combo)
         
@@ -204,10 +205,10 @@ class BatchProcessingWidget(QWidget):
         
     def _create_files_table(self) -> QTableWidget:
         """Создание таблицы файлов"""
-        table = QTableWidget()
+        table = OptimizedTableWidget()
         table.setColumnCount(6)
         table.setHorizontalHeaderLabels([
-            "", "Файл", "Размер", "Статус", "Время", "Результат"
+            "", self.tr("Файл"), self.tr("Размер"), self.tr("Статус"), self.tr("Время"), self.tr("Результат")
         ])
         
         # Настройка колонок
@@ -235,7 +236,7 @@ class BatchProcessingWidget(QWidget):
         stats_widget = QWidget()
         stats_layout = QVBoxLayout(stats_widget)
         
-        self.stats_label = QLabel("Статистика обработки:")
+        self.stats_label = QLabel(self.tr("Статистика обработки:"))
         font = QFont()
         font.setBold(True)
         self.stats_label.setFont(font)
@@ -246,13 +247,13 @@ class BatchProcessingWidget(QWidget):
         self.stats_text.setMaximumHeight(150)
         stats_layout.addWidget(self.stats_text)
         
-        tabs.addTab(stats_widget, "Статистика")
+        tabs.addTab(stats_widget, self.tr("Статистика"))
         
         # Вкладка логов
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumHeight(150)
-        tabs.addTab(self.log_text, "Логи")
+        tabs.addTab(self.log_text, self.tr("Логи"))
         
         return tabs
         
@@ -260,7 +261,7 @@ class BatchProcessingWidget(QWidget):
         """Выбор папки для обработки"""
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Выберите папку с файлами",
+            self.tr("Выберите папку с файлами"),
             ""
         )
         
@@ -297,12 +298,12 @@ class BatchProcessingWidget(QWidget):
             self._add_item_to_table(item)
             
         # Обновление UI
-        self.folder_label.setText(f"Выбрано файлов: {len(self.items)}")
+        self.folder_label.setText(self.tr("Выбрано файлов: {n}").format(n=len(self.items)))
         self.start_button.setEnabled(len(self.items) > 0)
         self._update_stats()
         
         # Лог
-        self._add_log(f"Загружено {len(self.items)} файлов из папки {folder}")
+        self._add_log(self.tr("Загружено {n} файлов из папки {folder}").format(n=len(self.items), folder=folder))
         
     def _add_item_to_table(self, item: BatchItem):
         """Добавление элемента в таблицу"""
@@ -320,7 +321,7 @@ class BatchProcessingWidget(QWidget):
         
         # Размер
         size_mb = item.file_size / (1024 * 1024)
-        self.files_table.setItem(row, 2, QTableWidgetItem(f"{size_mb:.2f} MB"))
+        self.files_table.setItem(row, 2, QTableWidgetItem(self.tr("{size:.2f} MB").format(size=size_mb)))
         
         # Статус
         status_item = QTableWidgetItem(self._get_status_text(item.status))
@@ -328,7 +329,7 @@ class BatchProcessingWidget(QWidget):
         self.files_table.setItem(row, 3, status_item)
         
         # Время обработки
-        time_text = f"{item.processing_time:.1f}s" if item.processing_time else "-"
+        time_text = self.tr("{sec:.1f}с").format(sec=item.processing_time) if item.processing_time else "-"
         self.files_table.setItem(row, 4, QTableWidgetItem(time_text))
         
         # Результат
@@ -338,11 +339,11 @@ class BatchProcessingWidget(QWidget):
     def _get_status_text(self, status: str) -> str:
         """Получение текста статуса"""
         status_map = {
-            "pending": "Ожидание",
-            "processing": "Обработка...",
-            "completed": "Завершено",
-            "error": "Ошибка",
-            "skipped": "Пропущено"
+            "pending": self.tr("Ожидание"),
+            "processing": self.tr("Обработка..."),
+            "completed": self.tr("Завершено"),
+            "error": self.tr("Ошибка"),
+            "skipped": self.tr("Пропущено")
         }
         return status_map.get(status, status)
         
@@ -360,11 +361,11 @@ class BatchProcessingWidget(QWidget):
     def _get_result_summary(self, item: BatchItem) -> str:
         """Получение краткого описания результата"""
         if item.status == "error":
-            return item.error_message or "Неизвестная ошибка"
+            return item.error_message or self.tr("Неизвестная ошибка")
         elif item.result:
             # Подсчет извлеченных полей
             fields_count = len([v for v in item.result.values() if v])
-            return f"Извлечено полей: {fields_count}"
+            return self.tr("Извлечено полей: {n}").format(n=fields_count)
         else:
             return "-"
             
@@ -378,12 +379,12 @@ class BatchProcessingWidget(QWidget):
         for i, item in enumerate(self.items):
             show = True
             
-            if filter_type == "PDF":
+            if filter_type == "PDF":  # PDF не переводим
                 show = item.file_name.lower().endswith('.pdf')
-            elif filter_type == "Изображения":
+            elif filter_type == self.tr("Изображения"):
                 show = any(item.file_name.lower().endswith(ext) 
                           for ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff'])
-                          
+             
             self.files_table.setRowHidden(i, not show)
             
     def start_processing(self):
@@ -397,7 +398,7 @@ class BatchProcessingWidget(QWidget):
             parent = parent.parent()
             
         if not parent:
-            QMessageBox.warning(self, "Ошибка", "Не удалось получить доступ к обработчику")
+            QMessageBox.warning(self, self.tr("Ошибка"), self.tr("Не удалось получить доступ к обработчику"))
             return
             
         # Получаем текущие настройки
@@ -430,7 +431,7 @@ class BatchProcessingWidget(QWidget):
         
         # Запускаем обработку
         self.processing_thread.start()
-        self._add_log("Начата пакетная обработка файлов")
+        self._add_log(self.tr("Начата пакетная обработка файлов"))
         
     def pause_processing(self):
         """Приостановка обработки"""
@@ -444,7 +445,7 @@ class BatchProcessingWidget(QWidget):
             self.processing_thread.wait()
             
         self._on_batch_completed()
-        self._add_log("Обработка отменена пользователем")
+        self._add_log(self.tr("Обработка отменена пользователем"))
         
     def _on_item_started(self, index: int):
         """Обработка начала обработки элемента"""
@@ -456,7 +457,7 @@ class BatchProcessingWidget(QWidget):
         status_item.setText(self._get_status_text("processing"))
         status_item.setForeground(self._get_status_color("processing"))
         
-        self._add_log(f"Обработка файла: {item.file_name}")
+        self._add_log(self.tr("Обработка файла: {name}").format(name=item.file_name))
         
     def _on_item_completed(self, index: int, result: dict):
         """Обработка завершения обработки элемента"""
@@ -465,10 +466,10 @@ class BatchProcessingWidget(QWidget):
         # Обновляем таблицу
         self.files_table.item(index, 3).setText(self._get_status_text("completed"))
         self.files_table.item(index, 3).setForeground(self._get_status_color("completed"))
-        self.files_table.item(index, 4).setText(f"{item.processing_time:.1f}s")
+        self.files_table.item(index, 4).setText(self.tr("{sec:.1f}с").format(sec=item.processing_time))
         self.files_table.item(index, 5).setText(self._get_result_summary(item))
         
-        self._add_log(f"Файл обработан: {item.file_name}")
+        self._add_log(self.tr("Файл обработан: {name}").format(name=item.file_name))
         self._update_stats()
         
     def _on_item_error(self, index: int, error_message: str):
@@ -480,7 +481,7 @@ class BatchProcessingWidget(QWidget):
         self.files_table.item(index, 3).setForeground(self._get_status_color("error"))
         self.files_table.item(index, 5).setText(error_message)
         
-        self._add_log(f"Ошибка обработки {item.file_name}: {error_message}")
+        self._add_log(self.tr("Ошибка обработки {name}: {err}").format(name=item.file_name, err=error_message))
         self._update_stats()
         
     def _on_progress_updated(self, current: int, total: int):
@@ -494,7 +495,7 @@ class BatchProcessingWidget(QWidget):
         self.cancel_button.setEnabled(False)
         self.export_button.setEnabled(True)
         
-        self._add_log("Пакетная обработка завершена")
+        self._add_log(self.tr("Пакетная обработка завершена"))
         self._update_stats()
         
         # Показываем сообщение
@@ -503,8 +504,8 @@ class BatchProcessingWidget(QWidget):
         
         QMessageBox.information(
             self,
-            "Обработка завершена",
-            f"Обработано файлов: {completed}\nОшибок: {errors}"
+            self.tr("Обработка завершена"),
+            self.tr("Обработано файлов: {done}\nОшибок: {err}").format(done=completed, err=errors)
         )
         
     def _update_stats(self):
@@ -518,7 +519,7 @@ class BatchProcessingWidget(QWidget):
         total_time = sum(i.processing_time or 0 for i in self.items if i.processing_time)
         avg_time = total_time / completed if completed > 0 else 0
         
-        stats_text = f"""
+        stats_text = self.tr("""
 Всего файлов: {total}
 Выбрано: {selected}
 Обработано: {completed}
@@ -526,14 +527,14 @@ class BatchProcessingWidget(QWidget):
 
 Общее время: {total_time:.1f} сек
 Среднее время: {avg_time:.1f} сек/файл
-        """
+        """).format(total=total, selected=selected, completed=completed, errors=errors, total_time=total_time, avg_time=avg_time)
         
         self.stats_text.setText(stats_text.strip())
         
     def _add_log(self, message: str):
         """Добавление записи в лог"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.append(f"[{timestamp}] {message}")
+        self.log_text.append(self.tr("[{ts}] {msg}").format(ts=timestamp, msg=message))
         
     def _show_context_menu(self, position):
         """Показ контекстного меню"""
