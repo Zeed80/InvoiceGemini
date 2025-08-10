@@ -13,29 +13,32 @@ if (-not (Test-Path $TranslationsDir)) {
     New-Item -ItemType Directory -Path $TranslationsDir | Out-Null
 }
 
-function Get-ToolPath([string]$toolName) {
-    # Если указан явный путь к PyQt6 bin — используем его
-    if ($PyQtBinPath -and (Test-Path (Join-Path $PyQtBinPath $toolName))) {
-        return (Join-Path $PyQtBinPath $toolName)
+function Resolve-Tool {
+    param(
+        [string[]]$Candidates
+    )
+    foreach ($name in $Candidates) {
+        # 1) Явный путь
+        if ($PyQtBinPath) {
+            $full = Join-Path $PyQtBinPath $name
+            if (Test-Path $full) { return $full }
+        }
+        # 2) В PATH
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd.Source }
     }
-    # Иначе пробуем найти в PATH
-    $cmd = Get-Command $toolName -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    throw "Не найден инструмент: $toolName. Укажите -PyQtBinPath или добавьте его в PATH."
+    return $null
 }
 
-try {
-    $pylupdate = Get-ToolPath 'pylupdate6.exe'
-} catch {
-    # Падём обратно на pylupdate6 без .exe (если запускается из шела Python)
-    $pylupdate = 'pylupdate6'
-}
+# Списки возможных имён инструментов (Qt/PyQt/PySide)
+$pylupdateCandidates = @('pylupdate6.exe','pylupdate6','pyside6-lupdate.exe','pyside6-lupdate','lupdate.exe','lupdate')
+$lreleaseCandidates  = @('lrelease.exe','lrelease','pyside6-lrelease.exe','pyside6-lrelease')
 
-try {
-    $lrelease = Get-ToolPath 'lrelease.exe'
-} catch {
-    $lrelease = 'lrelease'
-}
+$pylupdate = Resolve-Tool -Candidates $pylupdateCandidates
+$lrelease  = Resolve-Tool -Candidates $lreleaseCandidates
+
+if (-not $pylupdate) { throw "Не найден инструмент pylupdate/lupdate. Укажите -PyQtBinPath или добавьте в PATH (проверьте Qt/PySide6)." }
+if (-not $lrelease)  { throw "Не найден инструмент lrelease. Укажите -PyQtBinPath или добавьте в PATH (проверьте Qt/PySide6)." }
 
 Write-Host "📂 Корень проекта: $ProjectRoot"
 Write-Host "🌐 Каталог переводов: $TranslationsDir"
@@ -49,21 +52,16 @@ if (-not $sourceFiles -or $sourceFiles.Count -eq 0) {
     exit 1
 }
 
-# Вспомогательная функция для вызова pylupdate6 с большим числом аргументов
 function Run-Pylupdate6 {
     param(
         [string[]]$Files,
         [string]$TsOut
     )
     Write-Host "📝 Генерация TS: $TsOut"
-    # pylupdate6 app/**/*.py -ts translations/invoicegemini_ru.ts
-    & $pylupdate @Files -ts $TsOut
-    if ($LASTEXITCODE -ne 0) {
-        throw "Ошибка pylupdate6 при генерации $TsOut"
-    }
+    & $pylupdate @Files -ts $TsOut | Out-String | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "Ошибка pylupdate/lupdate при генерации $TsOut" }
 }
 
-# Генерация и компиляция переводов
 foreach ($lang in $Languages) {
     $tsPath = Join-Path $TranslationsDir ("invoicegemini_{0}.ts" -f $lang)
     $qmPath = Join-Path $TranslationsDir ("invoicegemini_{0}.qm" -f $lang)
@@ -71,10 +69,8 @@ foreach ($lang in $Languages) {
     Run-Pylupdate6 -Files $sourceFiles -TsOut $tsPath
 
     Write-Host "🛠 Компиляция QM: $qmPath"
-    & $lrelease $tsPath -qm $qmPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "Ошибка lrelease при компиляции $tsPath"
-    }
+    & $lrelease $tsPath -qm $qmPath | Out-String | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "Ошибка lrelease при компиляции $tsPath" }
 }
 
 Write-Host "✅ Готово. Файлы .qm созданы в $TranslationsDir"
