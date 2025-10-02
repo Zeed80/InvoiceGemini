@@ -152,6 +152,8 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.current_image_path = None
         self.current_folder_path = None # NEW: Добавлено для хранения пути к папке
+        self.current_invoice_data = None  # Данные текущего обработанного документа для Paperless
+        self.current_file_path = None  # Путь к текущему обработанному файлу для Paperless
         self.temp_dir = tempfile.TemporaryDirectory()
         self.processing_thread = None
         
@@ -1512,6 +1514,13 @@ class MainWindow(QMainWindow):
         plugin_editor_action.triggered.connect(self.show_plugin_editor)
         settings_menu.addAction(plugin_editor_action)
         
+        settings_menu.addSeparator()
+        
+        # Интеграция с Paperless-NGX
+        paperless_action = QAction("📄 Интеграция с Paperless-NGX...", self)
+        paperless_action.triggered.connect(self.show_paperless_integration_dialog)
+        settings_menu.addAction(paperless_action)
+        
         # Меню Обучение
         training_menu = menu_bar.addMenu("Обучение")
         open_training_action = QAction("Обучение моделей", self)
@@ -1830,6 +1839,10 @@ class MainWindow(QMainWindow):
             # Сохраняем результаты для дальнейшего использования
             self.processing_thread.result = results # Сохраняем для совместимости с сохранением одиночного файла
             
+            # Сохраняем данные для интеграции с Paperless
+            self.current_invoice_data = results
+            self.current_file_path = self.current_image_path
+            
             # Очищаем таблицу
             self.results_table.setRowCount(0)
             
@@ -2039,6 +2052,18 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка открытия диалога LLM провайдеров: {e}")
             print(f"Ошибка открытия диалога LLM провайдеров: {e}")
+    
+    def show_paperless_integration_dialog(self):
+        """Показывает диалог интеграции с Paperless-NGX."""
+        try:
+            from .ui.paperless_integration_dialog import PaperlessIntegrationDialog
+            
+            dialog = PaperlessIntegrationDialog(self)
+            dialog.exec()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка открытия диалога Paperless: {e}")
+            logging.error(f"Ошибка открытия диалога Paperless: {e}", exc_info=True)
     
     def on_llm_providers_updated(self):
         """Обработчик обновления настроек LLM провайдеров."""
@@ -3061,6 +3086,34 @@ class MainWindow(QMainWindow):
                 "Не удалось обновить систему хранения настроек.\n"
                 "Приложение продолжит работу в совместимом режиме."
             )
+
+    def get_all_processed_documents(self):
+        """Получает все обработанные документы из базы данных для массовой синхронизации"""
+        try:
+            # Получаем доступ к хранилищу
+            storage = get_storage_integration()
+            
+            # Получаем все документы
+            all_documents = storage.get_all_invoices()
+            
+            # Преобразуем в формат для синхронизации
+            processed_docs = []
+            for doc in all_documents:
+                # Добавляем путь к файлу если он доступен
+                doc_data = doc.copy()
+                
+                # Проверяем наличие пути к файлу в базе
+                if 'file_path' in doc_data and doc_data['file_path']:
+                    processed_docs.append(doc_data)
+                else:
+                    # Если пути нет, пропускаем документ
+                    logger.warning(f"Документ {doc_data.get('id', 'unknown')} не содержит путь к файлу")
+            
+            return processed_docs
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения обработанных документов: {e}", exc_info=True)
+            return []
 
     def closeEvent(self, event):
         """Обработка закрытия окна."""
