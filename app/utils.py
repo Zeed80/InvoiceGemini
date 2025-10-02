@@ -17,6 +17,53 @@ from PIL import Image
 from . import config
 
 
+def safe_print(*args, **kwargs):
+    """
+    Безопасный вывод текста с emoji для Windows.
+    Заменяет emoji на текстовые метки для избежания UnicodeEncodeError.
+    """
+    # Маппинг emoji на текстовые метки
+    emoji_map = {
+        '🚀': '[START]',
+        '✅': '[OK]',
+        '⚠': '[WARN]',
+        '❌': '[ERROR]',
+        '📊': '[STATS]',
+        '🔍': '[SEARCH]',
+        '⚡': '[FAST]',
+        '🔧': '[CONFIG]',
+        '🎯': '[TARGET]',
+        '📂': '[FOLDER]',
+        '💾': '[SAVE]',
+        '🤖': '[AI]',
+        '📄': '[DOC]',
+        '📁': '[DIR]',
+        '🔄': '[SYNC]',
+        '📝': '[NOTE]',
+        '🔐': '[SECURE]',
+        '📈': '[CHART]',
+        '🎨': '[DESIGN]',
+        '🌐': '[WEB]',
+        '🔌': '[PLUGIN]',
+    }
+    
+    # Преобразуем все аргументы в строки и заменяем emoji
+    safe_args = []
+    for arg in args:
+        text = str(arg)
+        for emoji, replacement in emoji_map.items():
+            text = text.replace(emoji, replacement)
+        safe_args.append(text)
+    
+    # Выводим безопасный текст
+    try:
+        print(*safe_args, **kwargs)
+    except UnicodeEncodeError:
+        # Если все еще есть проблемы, используем ASCII
+        ascii_args = [arg.encode('ascii', 'replace').decode('ascii') for arg in safe_args]
+        print(*ascii_args, **kwargs)
+
+
 def show_error_message(parent, title, message):
     """Показать сообщение об ошибке."""
     QMessageBox.critical(parent, title, message)

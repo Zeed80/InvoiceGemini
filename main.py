@@ -9,6 +9,37 @@ import os
 import sys
 import logging
 from pathlib import Path
+import builtins
+
+# Патч для безопасного вывода emoji на Windows
+_original_print = builtins.print
+
+def safe_print(*args, **kwargs):
+    """Безопасный print с заменой emoji для Windows"""
+    emoji_map = {
+        '🚀': '[START]', '✅': '[OK]', '⚠': '[WARN]', '❌': '[ERROR]',
+        '📊': '[STATS]', '🔍': '[SEARCH]', '⚡': '[FAST]', '🔧': '[CONFIG]',
+        '🎯': '[TARGET]', '📂': '[FOLDER]', '💾': '[SAVE]', '🤖': '[AI]',
+        '📄': '[DOC]', '📁': '[DIR]', '🔄': '[SYNC]', '📝': '[NOTE]',
+        '🔐': '[SECURE]', '📈': '[CHART]', '🎨': '[DESIGN]', '🌐': '[WEB]',
+        '🔌': '[PLUGIN]',
+    }
+    
+    safe_args = []
+    for arg in args:
+        text = str(arg)
+        for emoji, replacement in emoji_map.items():
+            text = text.replace(emoji, replacement)
+        safe_args.append(text)
+    
+    try:
+        _original_print(*safe_args, **kwargs)
+    except UnicodeEncodeError:
+        ascii_args = [arg.encode('ascii', 'replace').decode('ascii') for arg in safe_args]
+        _original_print(*ascii_args, **kwargs)
+
+# Заменяем встроенную функцию print
+builtins.print = safe_print
 
 # Setup HF_HUB_OFFLINE first (важно для корректной работы)
 os.environ["HF_HUB_OFFLINE"] = "0"
@@ -50,6 +81,26 @@ from app import utils
 from app.settings_manager import settings_manager
 
 
+class SafeFormatter(logging.Formatter):
+    """Форматтер с безопасной обработкой emoji для Windows"""
+    
+    emoji_map = {
+        '🚀': '[START]', '✅': '[OK]', '⚠': '[WARN]', '❌': '[ERROR]',
+        '📊': '[STATS]', '🔍': '[SEARCH]', '⚡': '[FAST]', '🔧': '[CONFIG]',
+        '🎯': '[TARGET]', '📂': '[FOLDER]', '💾': '[SAVE]', '🤖': '[AI]',
+        '📄': '[DOC]', '📁': '[DIR]', '🔄': '[SYNC]', '📝': '[NOTE]',
+        '🔐': '[SECURE]', '📈': '[CHART]', '🎨': '[DESIGN]', '🌐': '[WEB]',
+        '🔌': '[PLUGIN]', '🧹': '[CLEAN]',
+    }
+    
+    def format(self, record):
+        # Форматируем запись
+        message = super().format(record)
+        # Заменяем emoji
+        for emoji, replacement in self.emoji_map.items():
+            message = message.replace(emoji, replacement)
+        return message
+
 def setup_logging():
     """Setup enhanced application logging."""
     log_dir = Path("logs")
@@ -59,11 +110,11 @@ def setup_logging():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
-    # Create formatters
-    detailed_formatter = logging.Formatter(
+    # Create formatters with safe emoji handling
+    detailed_formatter = SafeFormatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
     )
-    simple_formatter = logging.Formatter(
+    simple_formatter = SafeFormatter(
         '%(asctime)s - %(levelname)s - %(message)s'
     )
     
