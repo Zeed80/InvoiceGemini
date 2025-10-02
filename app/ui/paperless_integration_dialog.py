@@ -12,6 +12,7 @@ from PyQt6.QtGui import QIcon
 import logging
 from typing import Dict, Any, Optional
 from pathlib import Path
+from app.core.scheduler import get_scheduler, ScheduleInterval
 
 
 class PaperlessSyncWorker(QThread):
@@ -430,6 +431,9 @@ class PaperlessIntegrationDialog(QDialog):
             settings_manager.set_setting("paperless_confidence_threshold", config.get("confidence_threshold", 0.7))
             settings_manager.set_setting("paperless_sync_tags_to_invoicegemini", config.get("sync_tags_to_invoicegemini", True))
             
+            # Настраиваем планировщик
+            self._configure_scheduler(config)
+            
             QMessageBox.information(self, self.tr("Успех"), 
                                    self.tr("Настройки сохранены!"))
             self._log_sync(self.tr("💾 Настройки сохранены"))
@@ -783,6 +787,70 @@ class PaperlessIntegrationDialog(QDialog):
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.sync_log.append(f"[{timestamp}] {message}")
+    
+    def _configure_scheduler(self, config: Dict[str, Any]):
+        """Настраивает планировщик автоматической синхронизации"""
+        try:
+            scheduler = get_scheduler()
+            task_id = "paperless_auto_sync"
+            
+            if config.get("auto_sync", False):
+                # Удаляем старую задачу если есть
+                scheduler.remove_task(task_id)
+                
+                # Конвертируем интервал в минуты
+                interval_seconds = config.get("sync_interval", 300)
+                interval_minutes = max(1, interval_seconds // 60)
+                
+                # Добавляем новую задачу
+                def auto_sync_task():
+                    """Задача автоматической синхронизации"""
+                    try:
+                        if hasattr(self.parent(), 'get_all_processed_documents'):
+                            docs = self.parent().get_all_processed_documents()
+                            
+                            if docs and self.paperless_plugin:
+                                logging.info(f"Автосинхронизация: {len(docs)} документов")
+                                
+                                for doc in docs:
+                                    try:
+                                        self.paperless_plugin.sync_data(doc, direction="export")
+                                    except Exception as e:
+                                        logging.error(f"Ошибка синхронизации документа: {e}")
+                                
+                                logging.info("Автосинхронизация завершена")
+                    except Exception as e:
+                        logging.error(f"Ошибка автосинхронизации: {e}", exc_info=True)
+                
+                # Планируем задачу
+                success = scheduler.add_task(
+                    task_id=task_id,
+                    name=self.tr("Автосинхронизация Paperless"),
+                    func=auto_sync_task,
+                    interval=ScheduleInterval.MINUTES,
+                    interval_value=interval_minutes,
+                    enabled=True
+                )
+                
+                if success:
+                    # Запускаем планировщик если еще не запущен
+                    if not scheduler.running:
+                        scheduler.start()
+                    
+                    self._log_sync(
+                        self.tr(f"⏰ Автосинхронизация настроена: каждые {interval_minutes} мин")
+                    )
+                    logging.info(f"Планировщик настроен: {interval_minutes} минут")
+                else:
+                    logging.error("Не удалось настроить автосинхронизацию")
+            else:
+                # Отключаем автосинхронизацию
+                if scheduler.remove_task(task_id):
+                    self._log_sync(self.tr("⏰ Автосинхронизация отключена"))
+                    logging.info("Автосинхронизация отключена")
+                    
+        except Exception as e:
+            logging.error(f"Ошибка настройки планировщика: {e}", exc_info=True)
     
     def set_paperless_plugin(self, plugin):
         """Устанавливает плагин Paperless для использования"""
