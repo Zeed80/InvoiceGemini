@@ -894,8 +894,8 @@ class DonutTrainer(BaseLoraTrainer):
                     """Вспомогательный метод для логирования"""
                     try:
                         logger.info(message)
-                    except:
-                        print(f"OptimizedDonutTrainer: {message}")
+                    except (AttributeError, OSError) as e:
+                        print(f"OptimizedDonutTrainer: {message} (log error: {e})")
             
             # Настройка использования кастомного оптимизатора
             use_8bit_optimizer = training_args.get('use_8bit_optimizer', True)
@@ -1340,8 +1340,8 @@ class DonutTrainer(BaseLoraTrainer):
         try:
             model.gradient_checkpointing_enable()
             optimizations_applied.append("Gradient Checkpointing")
-        except:
-            pass
+        except (AttributeError, RuntimeError) as e:
+            logging.debug(f"Gradient checkpointing не поддерживается: {e}")
             
         # 3. Freeze encoder (опционально)
         freeze_encoder = training_args.get('freeze_encoder', False)

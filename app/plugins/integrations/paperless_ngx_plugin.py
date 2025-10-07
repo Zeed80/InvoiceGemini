@@ -167,7 +167,8 @@ class PaperlessNGXPlugin(IntegrationPlugin):
             response = self._session.get(test_url, timeout=10)
             return response.status_code == 200
             
-        except:
+        except (requests.RequestException, ValueError) as e:
+            logging.warning(f"Не удалось проверить подключение к Paperless-NGX: {e}")
             return False
     
     def sync_data(self, data: Any, direction: str = "export") -> Dict[str, Any]:

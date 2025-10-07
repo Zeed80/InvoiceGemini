@@ -194,16 +194,14 @@ class OptimizationManager(QObject):
                     # Проверяем, можем ли мы установить атрибут
                     if not app.testAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps):
                         app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps)
-                except:
-                    # Игнорируем ошибку, если атрибут не может быть установлен
-                    pass
+                except (RuntimeError, AttributeError) as e:
+                    logging.debug(f"Не удалось установить AA_UseHighDpiPixmaps: {e}")
                 
                 try:
                     if not app.testAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling):
                         app.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
-                except:
-                    # Игнорируем ошибку, если атрибут не может быть установлен
-                    pass
+                except (RuntimeError, AttributeError) as e:
+                    logging.debug(f"Не удалось установить AA_EnableHighDpiScaling: {e}")
                 
                 # Оптимизация стилей
                 app.setStyleSheet("""

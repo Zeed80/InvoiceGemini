@@ -83,8 +83,9 @@ class ConnectionPool:
         """Возвращает соединение в пул"""
         try:
             self.connections.put_nowait(conn)
-        except:
+        except queue.Full:
             # Пул полный, закрываем соединение
+            logging.debug("Пул соединений полный, закрываем соединение")
             conn.close()
     
     def close_all(self):

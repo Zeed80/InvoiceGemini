@@ -402,7 +402,29 @@ class BackupManager:
             version_file = self.app_data_dir / "version.txt"
             if version_file.exists():
                 return version_file.read_text().strip()
-        except:
-            pass
+        except (IOError, OSError) as e:
+            logger.debug(f"Не удалось прочитать файл версии: {e}")
             
-        return "1.0.0"  # Версия по умолчанию 
+        return "1.0.0"  # Версия по умолчанию
+    
+    def backup_settings(self) -> bool:
+        """
+        Быстрое создание резервной копии только настроек.
+        
+        Returns:
+            bool: True если успешно, False если ошибка
+        """
+        try:
+            success, result = self.create_backup(
+                backup_name=f"settings_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                include_models=False,
+                include_cache=False
+            )
+            if success:
+                logger.info(f"Резервная копия настроек создана: {result}")
+            else:
+                logger.warning(f"Не удалось создать резервную копию настроек: {result}")
+            return success
+        except Exception as e:
+            logger.error(f"Ошибка создания резервной копии настроек: {e}", exc_info=True)
+            return False 

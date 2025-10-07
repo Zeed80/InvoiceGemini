@@ -193,8 +193,8 @@ class PerformanceMonitor(QObject):
             for metric in metrics:
                 try:
                     self.metrics_queue.put_nowait(metric)
-                except:
-                    pass  # Игнорируем ошибки переполнения очереди
+                except queue.Full:
+                    logging.debug("Очередь метрик переполнена, пропускаем метрику")
             
             # Проверка на проблемы
             if cpu_percent > self.thresholds['cpu_usage']:
@@ -413,8 +413,8 @@ class PerformanceMonitor(QObject):
                         0x00000020  # NORMAL_PRIORITY_CLASS
                     )
                     optimizations_applied.append("Установлен нормальный приоритет процесса")
-                except:
-                    pass
+                except (OSError, AttributeError, ImportError) as e:
+                    logging.debug(f"Не удалось установить приоритет процесса: {e}")
             
             self.logger.info(f"Применены оптимизации: {optimizations_applied}")
             

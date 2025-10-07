@@ -367,7 +367,8 @@ class DatasetQualityAnalyzer(QObject):
             
             return round(overall_score, 1)
             
-        except:
+        except (KeyError, TypeError, ValueError, ZeroDivisionError) as e:
+            logging.error(f"Ошибка вычисления общего балла качества: {e}", exc_info=True)
             return 0.0
     
     def _generate_recommendations(self, results):
@@ -2479,7 +2480,8 @@ class ModernTrainingDialog(QDialog):
                                 pdf_stats['with_text'] += 1
                             else:
                                 pdf_stats['without_text'] += 1
-                        except:
+                        except (IOError, OSError, KeyError, Exception) as e:
+                            logging.warning(f"Не удалось проанализировать PDF {pdf_file}: {e}")
                             pdf_stats['without_text'] += 1
                     
                     # Рассчитываем процент файлов с текстом
@@ -3617,8 +3619,8 @@ class ModernTrainingDialog(QDialog):
                 if hasattr(self, 'trocr_auto_thread') and self.trocr_auto_thread.isRunning():
                     self.trocr_auto_thread.quit()
                     self.trocr_auto_thread.wait()
-            except:
-                pass
+            except (RuntimeError, AttributeError) as e:
+                logging.warning(f"Ошибка при остановке worker: {e}")
         
         self.reset_trocr_dataset_ui()
         
@@ -4015,8 +4017,8 @@ class ModernTrainingDialog(QDialog):
                 self.reset_training_ui()
                 self.status_label.setText("❌ Критическая ошибка")
                 self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-            except:
-                pass
+            except (RuntimeError, AttributeError, Exception) as e:
+                logging.error(f"Ошибка при сбросе UI: {e}")
         
     def on_training_progress(self, progress):
         """Обработчик прогресса обучения"""
@@ -4102,15 +4104,15 @@ class ModernTrainingDialog(QDialog):
                     self.current_worker.progress.disconnect()
                     self.current_worker.log_message.disconnect()
                     print("TrainingDialog: Сигналы worker отключены")
-                except:
-                    pass  # Сигналы могли быть уже отключены
+                except (RuntimeError, TypeError) as e:
+                    logging.debug(f"Сигналы worker уже были отключены: {e}")
             
             if self.current_thread:
                 try:
                     self.current_thread.started.disconnect()
                     print("TrainingDialog: Сигналы thread отключены")
-                except:
-                    pass
+                except (RuntimeError, TypeError) as e:
+                    logging.debug(f"Сигналы thread уже были отключены: {e}")
             
             # Останавливаем поток если он еще работает
             if self.current_thread and self.current_thread.isRunning():
@@ -4480,8 +4482,8 @@ class ModernTrainingDialog(QDialog):
         # Сохраняем настройки
         try:
             self.save_settings()
-        except:
-            pass  # Игнорируем ошибки сохранения при закрытии
+        except (IOError, OSError, RuntimeError) as e:
+            logging.warning(f"Не удалось сохранить настройки при закрытии: {e}")
         
         # Останавливаем поток подготовки данных
         if hasattr(self, 'preparation_thread') and self.preparation_thread and self.preparation_thread.isRunning():
@@ -5029,8 +5031,8 @@ class ModernTrainingDialog(QDialog):
                 self.reset_training_ui()
                 self.status_label.setText("❌ Критическая ошибка")
                 self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-            except:
-                pass
+            except (RuntimeError, AttributeError, Exception) as e:
+                logging.error(f"Ошибка при сбросе UI: {e}")
         
     def on_training_progress(self, progress):
         """Обработчик прогресса обучения"""
@@ -5528,8 +5530,8 @@ class ModernTrainingDialog(QDialog):
                 self.reset_training_ui()
                 self.status_label.setText("❌ Критическая ошибка")
                 self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-            except:
-                pass
+            except (RuntimeError, AttributeError, Exception) as e:
+                logging.error(f"Ошибка при сбросе UI: {e}")
         
     def on_training_progress(self, progress):
         """Обработчик прогресса обучения"""
@@ -5677,8 +5679,8 @@ class ModernTrainingDialog(QDialog):
                 self.trocr_auto_thread.wait()
                 delattr(self, 'trocr_auto_worker')
                 delattr(self, 'trocr_auto_thread')
-            except:
-                pass
+            except (RuntimeError, AttributeError, Exception) as e:
+                logging.error(f"Ошибка при сбросе UI: {e}")
     
     def update_dataset_info(self, dataset_path, info_label):
         """Обновляет информацию о датасете в интерфейсе"""

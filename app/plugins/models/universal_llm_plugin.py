@@ -6,12 +6,18 @@ import os
 import json
 import base64
 import tempfile
+import re
 from datetime import datetime
 from typing import Dict, Optional, Any
 from pathlib import Path
 from PIL import Image
 
 from ..base_llm_plugin import BaseLLMPlugin, LLM_PROVIDERS
+from .adaptive_prompt_manager import (
+    create_adaptive_invoice_prompt,
+    get_model_generation_params,
+    AdaptivePromptManager
+)
 
 class UniversalLLMPlugin(BaseLLMPlugin):
     """
@@ -572,43 +578,62 @@ class UniversalLLMPlugin(BaseLLMPlugin):
         return response.choices[0].message.content
     
     def _generate_ollama_response(self, prompt: str, image_path: str = None, image_context: str = "", timeout: int = 30) -> str:
-        """Генерация ответа через Ollama API."""
+        """Генерация ответа через Ollama API с адаптивными параметрами."""
         import requests
+        from .ollama_utils import is_vision_model
+        
+        # Получаем оптимальные параметры для модели
+        generation_params = get_model_generation_params(self.model_name)
+        
+        # ОТЛАДКА: Выводим промпт
+        print(f"\n[DEBUG] Ollama prompt (first 800 chars):\n{prompt[:800]}\n")
         
         # Подготавливаем данные для запроса
         data = {
             "model": self.model_name,
             "prompt": prompt,
             "stream": False,
-            "options": {
-                "temperature": self.generation_config.get("temperature", 0.1),
-                "num_predict": self.generation_config.get("max_tokens", 4096)
-            }
+            "options": generation_params
         }
         
-        # Добавляем изображение если поддерживается
-        if image_path and self.provider_config.supports_vision and "vision" in self.model_name.lower():
+        # Добавляем изображение если модель поддерживает vision
+        # ИСПРАВЛЕНИЕ: используем is_vision_model вместо проверки "vision" в названии
+        if image_path and is_vision_model(self.model_name):
             try:
                 base64_image = self._encode_image_base64(image_path)
                 if base64_image:
                     data["images"] = [base64_image]
+                    print(f"✅ Изображение добавлено в запрос к Ollama (модель: {self.model_name})")
+                else:
+                    print(f"⚠️ Не удалось закодировать изображение для {self.model_name}")
             except Exception as e:
                 print(f"❌ Ошибка добавления изображения в Ollama: {e}")
         
-        # Если нет поддержки vision, добавляем контекст текстом
-        if image_context and not (image_path and self.provider_config.supports_vision):
-            data["prompt"] += f"\n\nКонтекст изображения: {image_context}"
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Для gemma3 ВСЕГДА добавляем OCR текст
+        # даже если модель поддерживает vision, т.к. она плохо работает с изображениями
+        if image_context:
+            # Добавляем OCR текст для лучшего извлечения данных
+            data["prompt"] += f"\n\nDocument OCR text:\n{image_context[:3000]}\n"
+            print(f"ℹ️ OCR текст добавлен в промпт для улучшения извлечения (модель: {self.model_name})")
         
         try:
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Увеличиваем таймаут для gemma3 с vision+OCR
+            effective_timeout = 120 if "gemma" in self.model_name.lower() else max(timeout, 60)
+            print(f"⏱️ Таймаут для {self.model_name}: {effective_timeout} секунд")
+            
             response = requests.post(
                 f"{self.base_url}/api/generate",
                 json=data,
-                timeout=max(timeout, 60)  # Минимум 60 секунд для Ollama
+                timeout=effective_timeout
             )
             
             if response.status_code == 200:
                 result = response.json()
                 response_text = result.get("response", "")
+                
+                # ОТЛАДКА: Выводим ответ модели
+                print(f"\n[DEBUG] Ollama raw response (first 1500 chars):\n{response_text[:1500]}\n")
+                
                 if response_text:
                     return response_text
                 else:
@@ -651,16 +676,39 @@ class UniversalLLMPlugin(BaseLLMPlugin):
             return None
         
         try:
-            # Создаем промпт
-            prompt = custom_prompt or self.create_invoice_prompt()
-            
             # Получаем OCR контекст если провайдер не поддерживает vision
             image_context = ""
-            if not self.provider_config.supports_vision or \
-               (self.provider_name == "deepseek") or \
-               (self.provider_name == "mistral" and "pixtral" not in self.model_name.lower()) or \
-               (self.provider_name == "ollama" and "vision" not in self.model_name.lower()):
+            model_has_vision = False
+            
+            # Определяем поддержку vision для модели
+            if self.provider_name == "ollama":
+                from .ollama_utils import is_vision_model
+                model_has_vision = is_vision_model(self.model_name)
+            else:
+                model_has_vision = self.provider_config.supports_vision and not (
+                    (self.provider_name == "deepseek") or
+                    (self.provider_name == "mistral" and "pixtral" not in self.model_name.lower())
+                )
+            
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Для gemma3 ВСЕГДА извлекаем OCR
+            # т.к. она плохо работает с vision, несмотря на поддержку
+            should_use_ocr = (
+                not model_has_vision or 
+                (self.provider_name == "ollama" and "gemma" in self.model_name.lower())
+            )
+            
+            if should_use_ocr:
+                print(f"📝 Извлекаем OCR текст для улучшения точности (модель: {self.model_name})")
                 image_context = self.extract_text_from_image(image_path, ocr_lang or "rus+eng")
+                if image_context:
+                    print(f"✅ OCR извлечен, длина: {len(image_context)} символов")
+            
+            # Создаем промпт с адаптивной системой
+            prompt = custom_prompt or self.create_invoice_prompt(
+                use_adaptive=True,
+                ocr_text=image_context if image_context else None,
+                image_available=model_has_vision
+            )
             
             # Генерируем ответ
             response = self.generate_response(prompt, image_path, image_context)

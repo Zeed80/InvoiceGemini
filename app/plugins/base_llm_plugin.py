@@ -128,7 +128,13 @@ LLM_PROVIDERS = {
         name="ollama",
         display_name="Ollama (Локально)",
         models=[
+            # Vision модели (поддержка изображений)
             "llama3.2-vision:11b",
+            "qwen2.5vl:7b",
+            "gemma3:12b",
+            "gemma3:4b",
+            
+            # Text-only модели
             "llama3.2:3b",
             "llama3.1:8b",
             "llama3.1:70b",
@@ -138,7 +144,7 @@ LLM_PROVIDERS = {
         default_model="llama3.2-vision:11b",
         requires_api_key=False,
         supports_vision=True,
-        supports_files=True  # Ollama может поддерживать файлы через кастомные модели
+        supports_files=True  # Ollama поддерживает файлы через vision модели
     )
 }
 
@@ -357,19 +363,51 @@ class BaseLLMPlugin(BaseProcessor):
             logger.error(f"Ошибка OCR: {e}")
             return "Не удалось извлечь текст из изображения"
     
-    def create_invoice_prompt(self, custom_prompt: Optional[str] = None, include_context_fields: bool = True) -> str:
+    def create_invoice_prompt(self, custom_prompt: Optional[str] = None, include_context_fields: bool = True, 
+                             use_adaptive: bool = True, ocr_text: Optional[str] = None, image_available: bool = False) -> str:
         """
         Создает промпт для извлечения данных из инвойса.
         
         Args:
             custom_prompt: Пользовательский промпт
             include_context_fields: Включать ли контекстные поля из настроек
+            use_adaptive: Использовать адаптивную систему промптов (для Ollama)
+            ocr_text: Текст из OCR (для адаптивной системы)
+            image_available: Доступно ли изображение
             
         Returns:
             str: Промпт для модели
         """
         if custom_prompt:
             return custom_prompt
+        
+        # Для Ollama используем адаптивную систему промптов
+        if self.provider_name == 'ollama' and use_adaptive:
+            try:
+                from .models.adaptive_prompt_manager import create_adaptive_invoice_prompt
+                from ..field_manager import FieldManager
+                
+                # Получаем поля для извлечения
+                field_manager = FieldManager()
+                fields = {}
+                for field in field_manager.get_enabled_fields():
+                    # Используем display_name для отображения поля
+                    fields[field.id] = field.display_name
+                
+                # Создаем адаптивный промпт
+                adaptive_prompt = create_adaptive_invoice_prompt(
+                    model_name=self.model_name,
+                    fields=fields,
+                    image_available=image_available,
+                    ocr_text=ocr_text
+                )
+                
+                print(f"[ADAPTIVE] Создан адаптивный промпт для {self.model_name}")
+                return adaptive_prompt
+                
+            except Exception as e:
+                print(f"[WARNING] Ошибка создания адаптивного промпта: {e}")
+                # Продолжаем с обычной системой
         
         # Пытаемся загрузить промпт из файла
         try:
@@ -458,7 +496,7 @@ class BaseLLMPlugin(BaseProcessor):
     
     def parse_llm_response(self, response: str) -> Dict[str, Any]:
         """
-        Парсит ответ LLM и извлекает JSON данные.
+        Парсит ответ LLM и извлекает JSON данные с использованием адаптивного парсера.
         
         Args:
             response: Ответ от LLM
@@ -475,6 +513,31 @@ class BaseLLMPlugin(BaseProcessor):
                 logger.error(f"❌ Ответ содержит ошибку API: {error_msg}")
                 return {"error": error_msg, "note_gemini": f"Ошибка API {self.provider_name}: {error_msg}"}
             
+            # Пробуем адаптивный парсер (для Ollama)
+            if self.provider_name == 'ollama':
+                try:
+                    from .models.response_parser import parse_llm_invoice_response
+                    from ..field_manager import FieldManager
+                    
+                    # Получаем список обязательных полей
+                    field_manager = FieldManager()
+                    required_fields = [field.id for field in field_manager.get_enabled_fields() if hasattr(field, 'id')]
+                    
+                    # Парсим ответ с адаптивной обработкой
+                    parsed_data = parse_llm_invoice_response(
+                        response,
+                        required_fields,
+                        model_name=self.model_name
+                    )
+                    
+                    if parsed_data and any(v != "N/A" for v in parsed_data.values()):
+                        logger.info(f"✅ Успешно извлечены данные с помощью адаптивного парсера")
+                        return parsed_data
+                    
+                except Exception as e:
+                    logger.warning(f"[WARNING] Ошибка адаптивного парсера, fallback на стандартный: {e}")
+            
+            # Fallback на стандартную систему парсинга
             # Очищаем ответ от лишнего текста
             cleaned_response = self._clean_json_string(response)
             logger.debug(f"🧹 Очищенный ответ (первые 200 символов): {cleaned_response[:200]}...")

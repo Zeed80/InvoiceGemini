@@ -386,6 +386,26 @@ def main():
         main_window.show()
         logger.info("Главное окно показано")
         
+        # UX IMPROVEMENT: Проверка первого запуска и показ онбординга
+        from app.settings_manager import settings_manager
+        first_run = settings_manager.get_bool('General', 'first_run_completed', False)
+        
+        if not first_run:
+            logger.info("Первый запуск приложения - показываем мастер онбординга")
+            try:
+                from app.ui.components.onboarding_wizard import OnboardingWizard
+                
+                wizard = OnboardingWizard(main_window)
+                wizard.setup_completed.connect(main_window.on_onboarding_completed)
+                
+                # Показываем мастер с небольшой задержкой для корректного отображения
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(500, wizard.show)
+                
+                logger.info("Мастер онбординга инициализирован")
+            except Exception as e:
+                logger.error(f"Ошибка при запуске мастера онбординга: {e}", exc_info=True)
+        
         logger.info("Запускаем цикл событий...")
         logger.info("=" * 60)
         

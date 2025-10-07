@@ -165,7 +165,8 @@ class UniversalDatasetParser:
                     data = json.load(f)
                     if all(key in data for key in ['images', 'annotations', 'categories']):
                         return True
-            except:
+            except (json.JSONDecodeError, IOError, KeyError) as e:
+                logging.debug(f"Файл {file} не является COCO форматом: {e}")
                 continue
         return False
         
@@ -192,7 +193,8 @@ class UniversalDatasetParser:
                     data = json.load(f)
                     if 'shapes' in data and 'imagePath' in data:
                         return True
-            except:
+            except (json.JSONDecodeError, IOError, KeyError) as e:
+                logging.debug(f"Файл {file} не является LabelMe форматом: {e}")
                 continue
         return False
         
@@ -291,8 +293,8 @@ class UniversalDatasetParser:
             try:
                 with open(yaml_files[0], 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
-            except:
-                pass
+            except (yaml.YAMLError, IOError) as e:
+                logging.debug(f"Не удалось прочитать YAML конфиг: {e}")
         
         # Ищем изображения и аннотации
         for img_file in dataset_path.glob("**/*.jpg"):
@@ -513,8 +515,8 @@ class UniversalDatasetParser:
                     try:
                         with open(txt_file, 'r', encoding='utf-8') as f:
                             text = f.read().strip()
-                    except:
-                        pass
+                    except (IOError, UnicodeDecodeError) as e:
+                        logging.debug(f"Не удалось прочитать файл {txt_file}: {e}")
                 
                 annotations.append(AnnotationData(
                     image_path=str(img_file),

@@ -16,6 +16,7 @@ from PyQt6.QtGui import QFont, QIcon
 
 from ..plugins.base_llm_plugin import BaseLLMPlugin, LLM_PROVIDERS
 from ..settings_manager import settings_manager
+from ..plugins.models.ollama_diagnostic import OllamaDiagnostic
 
 
 class LLMProviderTestThread(QThread):
@@ -292,6 +293,23 @@ class LLMProvidersDialog(QDialog):
             base_url_edit.setPlaceholderText("http://localhost:11434")
             api_layout.addRow(self.tr("URL сервера:"), base_url_edit)
             self.provider_widgets[provider_name]['base_url_edit'] = base_url_edit
+            
+            # Кнопка диагностики Ollama
+            diagnostic_btn = QPushButton(self.tr("🔍 Запустить диагностику"))
+            diagnostic_btn.clicked.connect(lambda: self.run_ollama_diagnostic(base_url_edit.text()))
+            diagnostic_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #9C27B0;
+                    color: white;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #7B1FA2;
+                }
+            """)
+            api_layout.addRow("", diagnostic_btn)
         
         api_group.setLayout(api_layout)
         scroll_layout.addWidget(api_group)
@@ -459,6 +477,85 @@ class LLMProvidersDialog(QDialog):
                 # Для Ollama тестируем без API ключа
                 QTimer.singleShot(100 * list(LLM_PROVIDERS.keys()).index(provider_name),
                                 lambda p=provider_name: self.test_provider(p))
+    
+    def run_ollama_diagnostic(self, base_url: str):
+        """
+        Запускает полную диагностику Ollama.
+        
+        Args:
+            base_url: URL Ollama сервера
+        """
+        try:
+            # Создаем диалог для отображения результатов
+            diagnostic_dialog = QDialog(self)
+            diagnostic_dialog.setWindowTitle("🔍 Диагностика Ollama")
+            diagnostic_dialog.setMinimumSize(700, 500)
+            
+            layout = QVBoxLayout(diagnostic_dialog)
+            
+            # Заголовок
+            header = QLabel("Запуск диагностики Ollama...")
+            header.setStyleSheet("font-size: 14px; font-weight: bold; padding: 10px;")
+            layout.addWidget(header)
+            
+            # Прогресс бар
+            progress = QProgressBar()
+            progress.setRange(0, 0)  # Индетерминированный режим
+            layout.addWidget(progress)
+            
+            # Текстовое поле для результатов
+            results_text = QTextEdit()
+            results_text.setReadOnly(True)
+            results_text.setFont(QFont("Courier New", 10))
+            layout.addWidget(results_text)
+            
+            # Кнопка закрытия
+            close_btn = QPushButton("Закрыть")
+            close_btn.clicked.connect(diagnostic_dialog.close)
+            close_btn.setEnabled(False)
+            layout.addWidget(close_btn)
+            
+            # Показываем диалог
+            diagnostic_dialog.show()
+            
+            # Запускаем диагностику в отдельном потоке
+            def run_diagnostic():
+                try:
+                    diagnostic = OllamaDiagnostic(base_url)
+                    result = diagnostic.run_full_diagnostic(timeout=10)
+                    report = diagnostic.format_diagnostic_report(result)
+                    
+                    # Обновляем UI
+                    header.setText("✅ Диагностика завершена")
+                    progress.setVisible(False)
+                    results_text.setPlainText(report)
+                    close_btn.setEnabled(True)
+                    
+                    # Если есть рекомендуемые модели, обновляем комбобокс
+                    if result.recommended_models:
+                        widgets = self.provider_widgets.get('ollama', {})
+                        model_combo = widgets.get('model_combo')
+                        if model_combo:
+                            current_items = [model_combo.itemText(i) for i in range(model_combo.count())]
+                            for model in result.recommended_models:
+                                if model not in current_items:
+                                    model_combo.addItem(model)
+                    
+                except Exception as e:
+                    header.setText("❌ Ошибка диагностики")
+                    progress.setVisible(False)
+                    results_text.setPlainText(f"Ошибка выполнения диагностики:\n\n{str(e)}")
+                    close_btn.setEnabled(True)
+            
+            # Запускаем через QTimer чтобы не блокировать UI
+            QTimer.singleShot(100, run_diagnostic)
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Ошибка диагностики",
+                f"Не удалось запустить диагностику Ollama:\n{str(e)}"
+            )
     
     def load_settings(self):
         """Загружает сохраненные настройки"""

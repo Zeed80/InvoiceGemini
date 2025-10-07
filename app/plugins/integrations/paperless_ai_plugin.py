@@ -133,7 +133,8 @@ class PaperlessAIPlugin(IntegrationPlugin):
                         self._ai_models_cache = response.json()
                         logging.info(f"Успешное подключение к Paperless-AI через {endpoint}")
                         return True
-                except:
+                except (requests.RequestException, ValueError) as e:
+                    logging.debug(f"Endpoint {endpoint} недоступен: {e}")
                     continue
             
             # Если AI endpoints недоступны, проверяем базовый API
@@ -166,7 +167,8 @@ class PaperlessAIPlugin(IntegrationPlugin):
             response = self._session.get(test_url, timeout=10)
             return response.status_code == 200
             
-        except:
+        except (requests.RequestException, ValueError) as e:
+            logging.warning(f"Не удалось проверить подключение к Paperless-AI: {e}")
             return False
     
     def auto_tag_document(self, document_id: int) -> Dict[str, Any]:
@@ -250,8 +252,8 @@ class PaperlessAIPlugin(IntegrationPlugin):
                         tags.append(("С НДС", 0.95))
                     else:
                         tags.append(("Без НДС", 0.95))
-                except:
-                    pass
+                except (ValueError, TypeError) as e:
+                    logging.debug(f"Не удалось распознать НДС: {e}")
             
             # Анализируем дату
             if invoice_data.get('date'):
@@ -282,8 +284,8 @@ class PaperlessAIPlugin(IntegrationPlugin):
                         tags.append(("Средняя сумма", 0.8))
                     else:
                         tags.append(("Малая сумма", 0.8))
-                except:
-                    pass
+                except (ValueError, TypeError) as e:
+                    logging.debug(f"Не удалось распознать сумму: {e}")
             
             # Анализируем статус оплаты
             if invoice_data.get('payment_status'):

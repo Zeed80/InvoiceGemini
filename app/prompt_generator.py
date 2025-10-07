@@ -219,31 +219,31 @@ Analyze the document and return JSON:"""
         Returns:
             str: Сгенерированный промпт
         """
-        receiver_company = self.get_receiver_company()
-        fields_list = self.generate_fields_list()
-        json_schema = self.generate_json_schema()
-        
-        prompt = f"""Ты эксперт по анализу финансовых документов. Компания "{receiver_company}" является получателем данного счета-фактуры.
+        enabled_fields = self.get_enabled_fields()
+        field_ids = ", ".join([field["id"] for field in enabled_fields])
 
-Проанализируй предоставленное изображение счета-фактуры или инвойса и извлеки из него структурированные данные.
+        prompt_lines = [
+            "You are an AI assistant specialised in extracting structured data from invoices.",
+            "Carefully analyse the provided document (image or OCR text) and return a JSON object with the requested fields.",
+            "",
+            "Extraction requirements:",
+            f"- Use exactly these JSON keys: {field_ids}",
+            "- Use \"N/A\" for fields that are missing or cannot be found",
+            "- Format dates as DD.MM.YYYY",
+            "- Use plain numbers without currency symbols",
+            "- Return ONLY valid JSON with no extra commentary",
+            "",
+            "Field hints:"
+        ]
 
-Извлеки следующие поля из документа:
-{fields_list}
+        for field in enabled_fields:
+            description = field.get("description") or field.get("name") or field["id"]
+            prompt_lines.append(f"- {field['id']}: {description}")
 
-Требования к ответу:
-1. Верни результат ТОЛЬКО в формате JSON
-2. Используй точные ID полей как ключи: {', '.join([f['id'] for f in self.get_enabled_fields()])}
-3. Если поле не найдено, используй значение "N/A"
-4. Все суммы указывай числами без символов валют
-5. Даты в формате DD.MM.YYYY
-6. Будь точным и внимательным к деталям
+        prompt_lines.append("")
+        prompt_lines.append("Respond now with the JSON object only.")
 
-Ожидаемый формат:
-{json_schema}
-
-Проанализируй документ и верни JSON с извлеченными данными:"""
-
-        return prompt
+        return "\n".join(prompt_lines)
         
     def generate_gemini_prompt(self) -> str:
         """Генерирует промпт для Gemini модели."""

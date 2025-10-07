@@ -621,8 +621,8 @@ class OCRProcessor:
             try:
                 import shutil
                 shutil.rmtree(temp_dir, ignore_errors=True)
-            except:
-                pass
+            except (OSError, PermissionError) as e:
+                logging.debug(f"Не удалось удалить временную директорию {temp_dir}: {e}")
     
     @staticmethod
     def get_available_languages():
@@ -639,7 +639,8 @@ class OCRProcessor:
             # Получаем список языков из Tesseract
             langs = pytesseract.get_languages()
             return langs
-        except:
+        except (pytesseract.TesseractError, RuntimeError, OSError) as e:
+            logging.warning(f"Не удалось получить список языков Tesseract: {e}")
             return ['eng']  # В случае ошибки возвращаем только английский
 
     @staticmethod

@@ -213,6 +213,9 @@ class MainWindow(QMainWindow):
         # NEW: Initialize UI components
         self.file_selector = None  # Will be initialized in init_ui
         # self.progress_indicator = None  # Не используется, заменен на progress_bar
+        
+        # UX IMPROVEMENT: Флаг завершения онбординга
+        self.onboarding_completed = settings_manager.get_bool('General', 'first_run_completed', False)
         self.batch_processor = None  # Will be initialized after UI
         self.export_manager = None  # Will be initialized after UI
         
@@ -596,11 +599,11 @@ class MainWindow(QMainWindow):
         self.is_processing = False
         self.processing_thread = None
         
-        # Компактная область результатов
+        # UX IMPROVEMENT: Компактная область результатов с оптимизированными отступами
         results_group = QGroupBox("Результаты")
         results_layout = QVBoxLayout()
-        results_layout.setContentsMargins(8, 6, 8, 6)  # Уменьшенные отступы
-        results_layout.setSpacing(4)  # Уменьшенные промежутки
+        results_layout.setContentsMargins(12, 10, 12, 10)  # Увеличенные отступы для читаемости
+        results_layout.setSpacing(8)  # Увеличенные промежутки
         
         # Компактный заголовок с кнопками
         table_header_layout = QHBoxLayout()
@@ -705,20 +708,20 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.files_widget)  # Новый список файлов вместо изображения
         splitter.addWidget(self.controls_scroll)
         
-        # Улучшенная адаптивная настройка splitter
+        # UX IMPROVEMENT: Улучшенная адаптивная настройка splitter
         splitter.setHandleWidth(8)  # Увеличиваем ширину handle для удобства
         splitter.setChildrenCollapsible(False)  # Запрещаем полное сжатие панелей
         
         # Настройка пропорций с учетом адаптивности
-        splitter.setSizes([320, 680])  # Компактная левая панель, больше места для правой
+        splitter.setSizes([360, 640])  # Оптимизированные пропорции для предотвращения перекрытия
         splitter.setStretchFactor(0, 0)  # Левая панель фиксированной ширины
         splitter.setStretchFactor(1, 1)  # Правая панель растягивается
         
-        # Устанавливаем минимальные размеры панелей
-        self.files_widget.setMinimumWidth(300)  # Уменьшили ширину для компактного списка файлов
-        self.files_widget.setMaximumWidth(350)  # Ограничиваем максимальную ширину
-        self.controls_scroll.setMinimumWidth(350)
-        self.controls_scroll.setMaximumWidth(600)  # Ограничиваем максимальную ширину
+        # UX FIX: Устанавливаем оптимальные размеры панелей чтобы избежать перекрытия
+        self.files_widget.setMinimumWidth(340)  # Увеличили для лучшего отображения
+        self.files_widget.setMaximumWidth(400)  # Увеличили максимум
+        self.controls_scroll.setMinimumWidth(400)  # Увеличили минимум для предотвращения перекрытия
+        self.controls_scroll.setMaximumWidth(700)  # Увеличили максимум
         
         # Добавляем сплиттер в главную компоновку
         main_layout.addWidget(splitter)
@@ -1892,6 +1895,52 @@ class MainWindow(QMainWindow):
             self, "Ошибка обработки", f"Произошла ошибка: {error_msg}"
         )
     
+    def on_onboarding_completed(self, config):
+        """
+        Обработка завершения онбординга
+        
+        Args:
+            config: Словарь с выбранными настройками пользователя
+        """
+        logger.info(f"Онбординг завершен с конфигурацией: {config}")
+        
+        # Применяем выбранный профиль работы
+        workspace_mode = config.get('workspace_mode', 'accountant')
+        
+        # UX IMPROVEMENT: Применяем настройки профиля
+        if workspace_mode == 'accountant':
+            # Бухгалтерия: фокус на точность
+            logger.info("Применяем профиль 'Бухгалтерия'")
+            # Здесь можно установить дефолтную модель LayoutLM
+            # и включить автоматическую валидацию
+            
+        elif workspace_mode == 'batch':
+            # Массовая обработка: фокус на скорость
+            logger.info("Применяем профиль 'Массовая обработка'")
+            # Установить Gemini как дефолт
+            # Включить параллельную обработку
+            
+        elif workspace_mode == 'universal':
+            # Универсальный: все возможности
+            logger.info("Применяем профиль 'Универсальный'")
+            # Оставить все опции доступными
+        
+        # UX IMPROVEMENT: Показываем приветственное сообщение с toast
+        try:
+            from app.ui.components.toast_notification import show_success
+            show_success("🎉 Настройка завершена! Приложение готово к работе.", duration=4000)
+        except ImportError:
+            # Fallback на стандартное сообщение
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "Добро пожаловать!",
+                "Настройка завершена! InvoiceGemini готов к работе.\n\n"
+                "Попробуйте загрузить документ для обработки."
+            )
+        
+        self.onboarding_completed = True
+    
     def save_results(self):
         """Сохранение результатов обработки с использованием ExportManager."""
         # Собираем данные из таблицы
@@ -2050,7 +2099,12 @@ class MainWindow(QMainWindow):
                 self.populate_llm_models()
                 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка открытия диалога LLM провайдеров: {e}")
+            # UX IMPROVEMENT: Toast для ошибок
+            try:
+                from app.ui.components.toast_notification import show_error
+                show_error(f"Ошибка открытия настроек LLM: {str(e)}", duration=5000)
+            except ImportError:
+                QMessageBox.critical(self, "Ошибка", f"Ошибка открытия диалога LLM провайдеров: {e}")
             print(f"Ошибка открытия диалога LLM провайдеров: {e}")
     
     def show_paperless_integration_dialog(self):
@@ -2062,7 +2116,12 @@ class MainWindow(QMainWindow):
             dialog.exec()
                 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка открытия диалога Paperless: {e}")
+            # UX IMPROVEMENT: Toast для ошибок
+            try:
+                from app.ui.components.toast_notification import show_error
+                show_error(f"Ошибка открытия настроек Paperless: {str(e)}", duration=5000)
+            except ImportError:
+                QMessageBox.critical(self, "Ошибка", f"Ошибка открытия диалога Paperless: {e}")
             logging.error(f"Ошибка открытия диалога Paperless: {e}", exc_info=True)
     
     def on_llm_providers_updated(self):
@@ -2589,8 +2648,8 @@ class MainWindow(QMainWindow):
                                         quality_info = " 🟡"
                                     else:
                                         quality_info = " 🟠"
-                            except:
-                                pass
+                            except (IOError, json.JSONDecodeError, KeyError) as e:
+                                logging.debug(f"Не удалось прочитать метаданные модели: {e}")
                         
                         trained_models.append({
                             'name': d,
@@ -2703,6 +2762,16 @@ class MainWindow(QMainWindow):
         processed_fields = 0
         result_fields = [k for k in result.keys() if not k.startswith('_')]
         
+        if "error" in result and "raw_response" in result:
+            error_text = result.get("error", "LLM вернуло ошибку")
+            raw_preview = result.get("raw_response", "")
+            QMessageBox.warning(
+                self,
+                self.tr("Ошибка парсинга LLM"),
+                self.tr("%s\n\nФрагмент ответа:\n%s") % (error_text, raw_preview)
+            )
+            return
+
         for field_name, value in result.items():
             # Пропускаем служебные поля
             if field_name.startswith('_'):
@@ -2757,9 +2826,9 @@ class MainWindow(QMainWindow):
             "№ Invoice": ["№ счета", "номер счета", "invoice_number", "счет №", "invoice number", "№счета", "invoice №", "invoice_id", "invoice no"],
             
             # НДС
-            "% НДС": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка", "VAT %", "vat %"],
-            "VAT %": ["НДС %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка", "% НДС"],
-            "НДС %": ["VAT %", "ндс %", "vat_rate", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка"],
+            "% НДС": ["НДС %", "ндс %", "vat_rate", "vat_percent", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка", "VAT %", "vat %"],
+            "VAT %": ["НДС %", "ндс %", "vat_rate", "vat_percent", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка", "% НДС"],
+            "НДС %": ["VAT %", "ндс %", "vat_rate", "vat_percent", "tax_rate", "ставка ндс", "НДС%", "ндс%", "% ндс", "налоговая ставка"],
             
             # Поставщик
             "Поставщик": ["Sender", "поставщик", "company", "supplier", "vendor", "организация", "название компании"],
@@ -4388,37 +4457,24 @@ class MainWindow(QMainWindow):
     
     def check_ollama_status(self) -> tuple[bool, str]:
         """Специальная проверка статуса Ollama."""
-        try:
-            import requests
-            
-            print(f"🔍 Probing connection to ollama...")
-            
-            # Проверяем доступность сервера
-            response = requests.get("http://localhost:11434/api/tags", timeout=5)
-            if response.status_code == 200:
-                models_data = response.json()
-                available_models = [model['name'] for model in models_data.get('models', [])]
-                
-                if available_models:
-                    print(f"✅ Connection to ollama verified successfully")
-                    print(f"📋 Available models: {len(available_models)} found")
-                    return True, "OK"
-                else:
-                    print(f"❌ ollama: No models available")
-                    return False, "CFG"  # Нет моделей
-            else:
-                print(f"❌ ollama: Server returned {response.status_code}")
-                return False, "ERR"
-                
-        except requests.exceptions.ConnectionError:
-            print(f"❌ ollama: Connection refused - server not running")
-            return False, "ERR"
-        except requests.exceptions.Timeout:
+        from .plugins.models.ollama_utils import check_ollama_status, get_ollama_models
+        
+        print(f"🔍 Probing connection to ollama...")
+        
+        is_available, status_code = check_ollama_status()
+        
+        if is_available and status_code == "OK":
+            models = get_ollama_models()
+            print(f"✅ Connection to ollama verified successfully")
+            print(f"📋 Available models: {len(models)} found")
+        elif status_code == "CFG":
+            print(f"❌ ollama: No models available")
+        elif status_code == "TMO":
             print(f"❌ ollama: Connection timeout")
-            return False, "TMO"
-        except Exception as e:
-            print(f"❌ ollama: {str(e)}")
-            return False, "ERR"
+        else:
+            print(f"❌ ollama: Connection error")
+        
+        return is_available, status_code
     
     def get_status_icon_with_description(self, status_code: str) -> tuple[str, str]:
         """
@@ -4521,13 +4577,8 @@ class MainWindow(QMainWindow):
 
     def check_ollama_availability(self) -> bool:
         """Проверяет доступность Ollama сервера."""
-        try:
-            import requests
-            response = requests.get("http://localhost:11434/api/tags", timeout=2)
-            return response.status_code == 200
-        except (requests.RequestException, requests.ConnectionError, requests.Timeout, ImportError) as e:
-            # Ollama недоступен - это нормально, если не установлен
-            return False
+        from .plugins.models.ollama_utils import check_ollama_availability
+        return check_ollama_availability(timeout=2)
 
     def on_cloud_provider_changed(self):
         """Обработчик изменения выбранного облачного провайдера."""
@@ -4650,7 +4701,10 @@ class MainWindow(QMainWindow):
                 models_added = 0
                 for model in available_models:
                     # Проверяем поддержку файлов (через vision модели)
-                    model_supports_vision = "vision" in model.lower()
+                    from .plugins.models.ollama_utils import is_vision_model
+                    
+                    # Проверяем, является ли модель visual (поддержка изображений)
+                    model_supports_vision = is_vision_model(model)
                     model_supports_files = model_supports_vision and config.supports_files
                     
                     # Фильтруем только модели, которые поддерживают файлы
@@ -4688,16 +4742,8 @@ class MainWindow(QMainWindow):
 
     def get_ollama_models(self) -> list:
         """Получает список доступных моделей из Ollama."""
-        try:
-            import requests
-            response = requests.get("http://localhost:11434/api/tags", timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                return [model['name'] for model in data.get('models', [])]
-            return []
-        except (requests.RequestException, requests.ConnectionError, requests.Timeout, ValueError, KeyError, ImportError) as e:
-            # Ошибка при получении моделей Ollama - возвращаем пустой список
-            return []
+        from .plugins.models.ollama_utils import get_ollama_models
+        return get_ollama_models()
 
     def get_model_pricing_info(self, provider_name: str, model: str) -> str:
         """Возвращает информацию о платности модели."""

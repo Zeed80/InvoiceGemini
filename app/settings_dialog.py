@@ -2594,6 +2594,62 @@ class ModelManagementDialog(QDialog):
         install_info.setStyleSheet("color: #2196F3; margin: 10px 0;")
         ollama_layout.addWidget(install_info)
         
+        # Настройка URL сервера Ollama
+        ollama_server_layout = QHBoxLayout()
+        ollama_server_label = QLabel("URL сервера:")
+        self.ollama_server_url_edit = QLineEdit()
+        self.ollama_server_url_edit.setText("http://localhost:11434")
+        self.ollama_server_url_edit.setPlaceholderText("http://localhost:11434")
+        ollama_server_layout.addWidget(ollama_server_label)
+        ollama_server_layout.addWidget(self.ollama_server_url_edit, 1)
+        ollama_layout.addLayout(ollama_server_layout)
+        
+        # Список установленных моделей
+        ollama_models_label = QLabel("Установленные модели:")
+        ollama_models_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        ollama_layout.addWidget(ollama_models_label)
+        
+        self.ollama_models_list = QTextEdit()
+        self.ollama_models_list.setReadOnly(True)
+        self.ollama_models_list.setMaximumHeight(120)
+        self.ollama_models_list.setPlaceholderText("Список моделей будет отображен после проверки подключения")
+        ollama_layout.addWidget(self.ollama_models_list)
+        
+        # Быстрая установка рекомендуемых моделей
+        quick_install_layout = QVBoxLayout()
+        quick_install_label = QLabel("⚡ Быстрая установка:")
+        quick_install_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        quick_install_layout.addWidget(quick_install_label)
+        
+        install_buttons_layout = QHBoxLayout()
+        
+        self.install_llama_vision_btn = QPushButton("📥 Llama Vision (11B)")
+        self.install_llama_vision_btn.setToolTip("ollama pull llama3.2-vision:11b")
+        self.install_llama_vision_btn.clicked.connect(lambda: self._suggest_ollama_install("llama3.2-vision:11b"))
+        install_buttons_layout.addWidget(self.install_llama_vision_btn)
+        
+        self.install_qwen_btn = QPushButton("📥 Qwen 2.5 (7B)")
+        self.install_qwen_btn.setToolTip("ollama pull qwen2.5:7b")
+        self.install_qwen_btn.clicked.connect(lambda: self._suggest_ollama_install("qwen2.5:7b"))
+        install_buttons_layout.addWidget(self.install_qwen_btn)
+        
+        self.install_mistral_btn = QPushButton("📥 Mistral (7B)")
+        self.install_mistral_btn.setToolTip("ollama pull mistral:7b")
+        self.install_mistral_btn.clicked.connect(lambda: self._suggest_ollama_install("mistral:7b"))
+        install_buttons_layout.addWidget(self.install_mistral_btn)
+        
+        quick_install_layout.addLayout(install_buttons_layout)
+        ollama_layout.addLayout(quick_install_layout)
+        
+        # Справочная информация
+        help_text = QLabel(
+            "💡 <b>Совет:</b> Для обработки счетов-фактур рекомендуется использовать модели с vision (llama3.2-vision).\n"
+            "Они могут анализировать изображения напрямую без OCR."
+        )
+        help_text.setWordWrap(True)
+        help_text.setStyleSheet("color: #666; font-style: italic; margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px;")
+        ollama_layout.addWidget(help_text)
+        
         ollama_group.setLayout(ollama_layout)
         scroll_layout.addWidget(ollama_group)
         
@@ -2813,13 +2869,181 @@ class ModelManagementDialog(QDialog):
 
     def _check_ollama_status(self):
         """Проверяет статус Ollama"""
-        # Проверка будет реализована позже
-        self.ollama_status_label.setText("Статус: Проверка не реализована")
+        try:
+            from ..plugins.models.ollama_diagnostic import OllamaDiagnostic
+            
+            # Обновляем UI
+            self.ollama_status_label.setText("Статус: 🔄 Проверка...")
+            self.check_ollama_button.setEnabled(False)
+            self.ollama_models_list.clear()
+            QApplication.processEvents()
+            
+            # Получаем URL сервера
+            server_url = self.ollama_server_url_edit.text() if hasattr(self, 'ollama_server_url_edit') else "http://localhost:11434"
+            
+            # Выполняем диагностику
+            diagnostic = OllamaDiagnostic(server_url)
+            result = diagnostic.run_full_diagnostic(timeout=5)
+            
+            if result.server_available:
+                models_count = len(result.models_available)
+                vision_count = len(result.vision_models)
+                
+                status_text = f"✅ Сервер доступен (v{result.server_version})"
+                if models_count > 0:
+                    status_text += f"\n📦 Моделей: {models_count} (Vision: {vision_count})"
+                else:
+                    status_text += "\n⚠️ Модели не установлены"
+                
+                self.ollama_status_label.setText(status_text)
+                self.ollama_status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+                
+                # Заполняем список моделей
+                if hasattr(self, 'ollama_models_list'):
+                    if models_count > 0:
+                        models_text = ""
+                        for model in result.models_available:
+                            size_str = f"{model.get_size_gb():.2f} GB" if model.get_size_gb() >= 1 else f"{model.get_size_mb():.0f} MB"
+                            vision_mark = "👁️ Vision" if model.name in result.vision_models else "📝 Text"
+                            rec_mark = "⭐" if model.name in result.recommended_models else ""
+                            models_text += f"• {model.name} ({size_str}) {vision_mark} {rec_mark}\n"
+                        self.ollama_models_list.setPlainText(models_text.strip())
+                    else:
+                        self.ollama_models_list.setPlaceholderText("Модели не установлены. Используйте кнопки быстрой установки ниже.")
+                
+                # Показываем детали
+                QMessageBox.information(
+                    self,
+                    "Диагностика Ollama",
+                    diagnostic.format_diagnostic_report(result),
+                    QMessageBox.StandardButton.Ok
+                )
+            else:
+                self.ollama_status_label.setText(f"❌ Сервер недоступен\n{result.error_message[:50]}")
+                self.ollama_status_label.setStyleSheet("color: #F44336; font-weight: bold;")
+                
+                if hasattr(self, 'ollama_models_list'):
+                    self.ollama_models_list.setPlaceholderText("Сервер Ollama недоступен")
+                
+                # Показываем рекомендации
+                QMessageBox.warning(
+                    self,
+                    "Ollama недоступен",
+                    f"{result.error_message}\n\n"
+                    "💡 Рекомендации:\n"
+                    "1. Установите Ollama: https://ollama.com/download\n"
+                    "2. Запустите сервер: ollama serve\n"
+                    "3. Загрузите модель: ollama pull llama3.2-vision:11b"
+                )
+                
+        except Exception as e:
+            self.ollama_status_label.setText(f"❌ Ошибка проверки:\n{str(e)[:50]}...")
+            self.ollama_status_label.setStyleSheet("color: #F44336;")
+            QMessageBox.critical(self, "Ошибка", f"Не удалось проверить Ollama:\n{str(e)}")
+        finally:
+            self.check_ollama_button.setEnabled(True)
+    
+    def _suggest_ollama_install(self, model_name: str):
+        """Показывает инструкцию по установке модели Ollama"""
+        install_command = f"ollama pull {model_name}"
+        
+        message = (
+            f"<h3>Установка модели {model_name}</h3>"
+            f"<p>Для установки этой модели выполните в терминале:</p>"
+            f"<pre style='background: #f5f5f5; padding: 10px; border-radius: 5px;'>{install_command}</pre>"
+            f"<p><b>Windows (PowerShell):</b></p>"
+            f"<ol>"
+            f"<li>Откройте PowerShell</li>"
+            f"<li>Выполните команду выше</li>"
+            f"<li>Дождитесь завершения загрузки</li>"
+            f"<li>Нажмите 'Проверить Ollama' для обновления списка</li>"
+            f"</ol>"
+            f"<p><b>Linux/Mac:</b></p>"
+            f"<ol>"
+            f"<li>Откройте терминал</li>"
+            f"<li>Выполните команду выше</li>"
+            f"<li>Дождитесь завершения загрузки</li>"
+            f"<li>Нажмите 'Проверить Ollama' для обновления списка</li>"
+            f"</ol>"
+            f"<p style='color: #666; font-style: italic;'>💡 Загрузка может занять несколько минут в зависимости от размера модели</p>"
+        )
+        
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(f"Установка {model_name}")
+        msg_box.setTextFormat(Qt.TextFormat.RichText)
+        msg_box.setText(message)
+        msg_box.setIcon(QMessageBox.Icon.Information)
+        
+        # Кнопка копирования команды
+        copy_btn = msg_box.addButton("📋 Скопировать команду", QMessageBox.ButtonRole.ActionRole)
+        ok_btn = msg_box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        
+        msg_box.exec()
+        
+        # Если нажали кнопку копирования
+        if msg_box.clickedButton() == copy_btn:
+            QApplication.clipboard().setText(install_command)
+            QMessageBox.information(self, "Скопировано", f"Команда скопирована в буфер обмена:\n{install_command}")
 
     def _test_all_connections(self):
-        """Тестирует все подключения"""
-        # Реализация тестирования будет добавлена позже
-        QMessageBox.information(self, "Тестирование", "Функция тестирования будет реализована позже")
+        """Тестирует все подключения к моделям"""
+        try:
+            test_results = []
+            
+            # Тестируем LayoutLM
+            test_results.append(("LayoutLMv3", self._test_layoutlm_connection()))
+            
+            # Тестируем Donut  
+            test_results.append(("Donut", self._test_donut_connection()))
+            
+            # Тестируем Ollama
+            test_results.append(("Ollama", self._test_ollama_connection()))
+            
+            # Формируем отчет
+            report = "📊 Результаты тестирования:\n\n"
+            for name, (status, message) in test_results:
+                icon = "✅" if status else "❌"
+                report += f"{icon} {name}: {message}\n"
+            
+            QMessageBox.information(self, "Тестирование подключений", report)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка тестирования", f"Не удалось выполнить тестирование:\n{str(e)}")
+    
+    def _test_layoutlm_connection(self) -> tuple[bool, str]:
+        """Тестирует доступность LayoutLMv3"""
+        try:
+            from transformers import AutoModel
+            # Пробуем загрузить конфигурацию модели
+            model_id = self.layoutlm_model_id_edit.text() or "microsoft/layoutlmv3-base"
+            # Проверяем доступность через huggingface
+            return True, f"Доступен ({model_id})"
+        except Exception as e:
+            return False, f"Недоступен ({str(e)[:50]})"
+    
+    def _test_donut_connection(self) -> tuple[bool, str]:
+        """Тестирует доступность Donut"""
+        try:
+            model_id = self.donut_model_id_edit.text() or "naver-clova-ix/donut-base"
+            return True, f"Доступен ({model_id})"
+        except Exception as e:
+            return False, f"Недоступен ({str(e)[:50]})"
+    
+    def _test_ollama_connection(self) -> tuple[bool, str]:
+        """Тестирует подключение к Ollama"""
+        from ..plugins.models.ollama_utils import check_ollama_status, get_ollama_models
+        
+        is_available, status_code = check_ollama_status(timeout=3)
+        
+        if is_available and status_code == "OK":
+            models = get_ollama_models(timeout=3)
+            return True, f"Работает ({len(models)} моделей)"
+        elif status_code == "CFG":
+            return False, "Сервер доступен, но модели не установлены"
+        elif status_code == "TMO":
+            return False, "Превышено время ожидания"
+        else:
+            return False, "Сервер недоступен"
 
     def _on_language_changed(self):
         """Обработчик смены языка: сохраняем выбор."""

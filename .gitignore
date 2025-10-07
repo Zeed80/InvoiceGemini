@@ -207,19 +207,26 @@ test_integration.log
 # ============================================================================
 # Development and Debug Files
 # ============================================================================
-debug_*.py
-test_*.py
-*_test.py
-*_debug.py
-analyze_*.py
-retrain_*.py
-fix_*.py
-apply_*.py
-comprehensive_*.py
-mass_*.py
-validate_*.py
-train_*.py
-training_log_*.txt
+# Allow tests/ and examples/ directories
+!tests/
+!examples/
+# But ignore patterns in root only
+/debug_*.py
+/test_*.py
+/*_test.py
+/*_debug.py
+/analyze_*.py
+/retrain_*.py
+/fix_*.py
+/apply_*.py
+/comprehensive_*.py
+/mass_*.py
+/validate_*.py
+/train_*.py
+/training_log_*.txt
+/demo_*.py
+/demo_*.log
+/optimization_test.log
 
 # ============================================================================
 # Memory and Performance
