@@ -15,7 +15,7 @@ from .performance_optimized_widgets import OptimizedTableWidget
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QPixmap, QIcon, QFont, QPalette, QMovie
 
-from ..plugins.plugin_manager import PluginManager
+from ..plugins.unified_plugin_manager import get_unified_plugin_manager
 from ..plugins.llm_trainer import LLMTrainer, TrainingMetrics
 
 class PluginsDialog(QDialog):
@@ -29,7 +29,7 @@ class PluginsDialog(QDialog):
         self.model_manager = model_manager
         
         # Инициализируем менеджер плагинов
-        self.plugin_manager = PluginManager()
+        self.plugin_manager = get_unified_plugin_manager()
         
         # Текущий активный тренер
         self.current_trainer = None

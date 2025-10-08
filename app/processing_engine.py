@@ -367,8 +367,8 @@ class ModelManager:
     def _init_llm_plugins(self):
         """Инициализирует систему LLM плагинов"""
         try:
-            from .plugins.plugin_manager import PluginManager
-            self.plugin_manager = PluginManager()
+            from .plugins.unified_plugin_manager import get_unified_plugin_manager
+            self.plugin_manager = get_unified_plugin_manager()
             print("[OK] Система LLM плагинов инициализирована")
         except ImportError as e:
             print(f"[WARN] Система LLM плагинов недоступна: {e}")

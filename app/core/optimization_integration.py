@@ -12,7 +12,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from ..ui.preview_dialog_v2 import OptimizedPreviewDialog
+from ..ui.preview_dialog import PreviewDialog as OptimizedPreviewDialog  # Используем стандартную версию
 from .optimized_processor import OptimizedProcessingThread
 from ..plugins.unified_plugin_manager import UnifiedPluginManager, get_unified_plugin_manager
 from ..settings_manager import settings_manager

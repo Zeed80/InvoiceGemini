@@ -107,8 +107,7 @@ def register_core_services(container: DIContainer):
     from app.settings_manager import settings_manager
     from app.processing_engine import ModelManager
     from app.field_manager import field_manager
-    from app.plugins.plugin_manager import PluginManager
-    from app.plugins.universal_plugin_manager import UniversalPluginManager
+    from app.plugins.unified_plugin_manager import get_unified_plugin_manager
     
     # Register singletons
     container.register_service('settings_manager', settings_manager, singleton=True)
@@ -123,13 +122,13 @@ def register_core_services(container: DIContainer):
     
     container.register_factory(
         'plugin_manager',
-        lambda c: PluginManager(),
+        lambda c: get_unified_plugin_manager(),
         singleton=True
     )
     
     container.register_factory(
         'universal_plugin_manager',
-        lambda c: UniversalPluginManager(),
+        lambda c: get_unified_plugin_manager(),  # Теперь оба используют один менеджер
         singleton=True
     )
     

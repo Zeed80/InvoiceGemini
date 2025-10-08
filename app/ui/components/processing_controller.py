@@ -12,8 +12,7 @@ from PyQt6.QtWidgets import QProgressBar, QPushButton, QMessageBox
 from app.processing_engine import ModelManager
 from app.threads import ProcessingThread
 from app.settings_manager import settings_manager
-from app.plugins.plugin_manager import PluginManager
-from app.plugins.universal_plugin_manager import UniversalPluginManager
+from app.plugins.unified_plugin_manager import get_unified_plugin_manager
 
 
 class ProcessingSignals(QObject):
@@ -35,8 +34,8 @@ class ProcessingController(QObject):
         
         # Core components
         self.model_manager = ModelManager()
-        self.plugin_manager = PluginManager()
-        self.universal_plugin_manager = UniversalPluginManager()
+        self.plugin_manager = get_unified_plugin_manager()
+        self.universal_plugin_manager = self.plugin_manager  # Алиас для обратной совместимости
         
         # Processing state
         self._processing_thread: Optional[ProcessingThread] = None

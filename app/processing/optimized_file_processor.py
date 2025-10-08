@@ -20,7 +20,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QTimer
 import torch
 
 from ..settings_manager import settings_manager
-from ..core.cache_manager import get_cache_manager
+from ..core.advanced_cache_manager import get_advanced_cache_manager
 from .. import utils
 
 
@@ -127,7 +127,7 @@ class SmartCache:
     """Умный кэш с предиктивной загрузкой"""
     
     def __init__(self):
-        self.cache_manager = get_cache_manager() if hasattr(get_cache_manager, '__call__') else None
+        self.cache_manager = get_advanced_cache_manager()
         self.prediction_cache = {}
         self.access_patterns = {}
         

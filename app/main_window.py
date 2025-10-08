@@ -38,8 +38,8 @@ from .training_dialog import TrainingDialog
 # NEW: Import optimized storage system for Phase 3
 from .core.storage_integration import get_storage_integration, initialize_optimized_storage
 
-# NEW: Import LLM Plugin Manager
-from .plugins.plugin_manager import PluginManager
+# NEW: Import LLM Plugin Manager (UnifiedPluginManager)
+from .plugins.unified_plugin_manager import get_unified_plugin_manager
 from .ui.preview_dialog import PreviewDialog
 from .ui.export_template_designer import ExportTemplateDesigner
 from .ui.field_manager_dialog import FieldManagerDialog
@@ -48,7 +48,7 @@ from .ui.llm_providers_dialog import LLMProvidersDialog
 from .prompt_generator import PromptGenerator
 
 # NEW: Import new components for Phase 1 improvements
-from .core.cache_manager import CacheManager
+from .core.advanced_cache_manager import get_advanced_cache_manager
 from .core.retry_manager import RetryManager
 from .core.backup_manager import BackupManager
 from .ui.components.file_selector import FileSelector
@@ -167,15 +167,13 @@ class MainWindow(QMainWindow):
         self.model_manager = ModelManager()
         
         # NEW: Initialize LLM Plugin Manager
-        # Инициализируем универсальный менеджер плагинов
-        from app.plugins.universal_plugin_manager import UniversalPluginManager
+        # Инициализируем унифицированный менеджер плагинов
         from app.plugins.llm_plugin_adapter import adapt_all_llm_plugins
         from app.plugins.base_plugin import PluginType
         
-        self.universal_plugin_manager = UniversalPluginManager()
-        
-        # Для обратной совместимости также инициализируем старый менеджер
-        self.plugin_manager = PluginManager()
+        # Используем единый унифицированный менеджер плагинов
+        self.plugin_manager = get_unified_plugin_manager()
+        self.universal_plugin_manager = self.plugin_manager  # Алиас для обратной совместимости
         self.current_llm_plugin = None
         
         # Создаем адаптеры для существующих LLM плагинов
@@ -183,7 +181,7 @@ class MainWindow(QMainWindow):
         self.llm_loading_thread = None
         
         # NEW: Initialize new core components
-        self.cache_manager = CacheManager()
+        self.cache_manager = get_advanced_cache_manager()
         self.retry_manager = RetryManager()
         self.backup_manager = BackupManager(app_data_dir=app_config.APP_DATA_PATH)
         

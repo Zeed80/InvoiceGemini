@@ -22,7 +22,7 @@ from .base_plugin import (
     BasePlugin, PluginType, PluginStatus, PluginMetadata,
     ImporterPlugin, IntegrationPlugin, WorkflowPlugin, NotificationPlugin
 )
-from .universal_plugin_manager import UniversalPluginManager
+from .unified_plugin_manager import get_unified_plugin_manager
 
 
 class PluginRepository:
@@ -181,8 +181,8 @@ class AdvancedPluginManager:
         self.config_file = Path(config_file or "config/plugin_manager.json")
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
         
-        # Базовый менеджер плагинов
-        self.base_manager = UniversalPluginManager(str(self.plugins_dir))
+        # Базовый менеджер плагинов (используем унифицированный)
+        self.base_manager = get_unified_plugin_manager()
         
         # Configuration
         self.config = self._load_config()
@@ -345,8 +345,8 @@ class AdvancedPluginManager:
                 if self.progress_callback:
                     self.progress_callback(100, f"Плагин {plugin_id} установлен")
                 
-                # Обновляем базовый менеджер
-                self.base_manager._load_user_plugins()
+                # Обновляем базовый менеджер (перезагружаем плагины)
+                self.base_manager.scan_plugins(force_reload=True)
                 
                 if self.status_callback:
                     self.status_callback(f"✅ Плагин {plugin_id} успешно установлен")
@@ -394,8 +394,8 @@ class AdvancedPluginManager:
                 # Удаляем директорию
                 shutil.rmtree(plugin_dir)
                 
-                # Обновляем базовый менеджер
-                self.base_manager._load_user_plugins()
+                # Обновляем базовый менеджер (перезагружаем плагины)
+                self.base_manager.scan_plugins(force_reload=True)
                 
                 if self.status_callback:
                     self.status_callback(f"✅ Плагин {plugin_id} удален")
@@ -532,16 +532,8 @@ class AdvancedPluginManager:
     
     def _stop_plugin(self, plugin_id: str):
         """Останавливает плагин"""
-        # Удаляем экземпляры плагина из базового менеджера
-        for plugin_type in PluginType:
-            if plugin_id in self.base_manager.plugin_instances[plugin_type]:
-                instance = self.base_manager.plugin_instances[plugin_type][plugin_id]
-                try:
-                    instance.cleanup()
-                except (AttributeError, RuntimeError, Exception) as e:
-                    # Ошибка при очистке экземпляра плагина - не критично
-                    pass
-                del self.base_manager.plugin_instances[plugin_type][plugin_id]
+        # Отключаем плагин через унифицированный менеджер
+        self.base_manager.disable_plugin(plugin_id)
     
     def is_plugin_installed(self, plugin_id: str) -> bool:
         """Проверяет, установлен ли плагин"""

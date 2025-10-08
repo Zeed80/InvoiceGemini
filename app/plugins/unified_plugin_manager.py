@@ -604,6 +604,262 @@ class UnifiedPluginManager(QObject):
                 'user_dir': str(self.user_dir)
             }
     
+    # ==========================================
+    # LLM-специфичные методы (миграция из PluginManager)
+    # ==========================================
+    
+    def create_plugin_by_provider(self, provider_name: str, model_name: str = None, 
+                                 api_key: str = None, **kwargs) -> Optional[BasePlugin]:
+        """
+        Создает LLM плагин по названию провайдера.
+        
+        Args:
+            provider_name: Название провайдера (google, openai, anthropic, etc.)
+            model_name: Название модели
+            api_key: API ключ
+            **kwargs: Дополнительные параметры
+            
+        Returns:
+            BasePlugin: Экземпляр плагина или None
+        """
+        # Маппинг провайдеров на плагины
+        provider_mapping = {
+            "google": "gemini",
+            "openai": "openai", 
+            "anthropic": "anthropic",
+            "mistral": "universalllm",
+            "deepseek": "universalllm",
+            "xai": "universalllm",
+            "ollama": "universalllm"
+        }
+        
+        plugin_id = provider_mapping.get(provider_name.lower())
+        if not plugin_id:
+            logging.error(f"Неподдерживаемый провайдер: {provider_name}")
+            return None
+        
+        # Для универсального плагина передаем название провайдера
+        if plugin_id == "universalllm":
+            kwargs["provider_name"] = provider_name
+        
+        if model_name:
+            kwargs["model_name"] = model_name
+        if api_key:
+            kwargs["api_key"] = api_key
+        
+        # Включаем плагин и возвращаем экземпляр
+        if self.enable_plugin(plugin_id):
+            return self.get_plugin(plugin_id)
+        return None
+    
+    def get_providers_info(self) -> Dict[str, Dict]:
+        """
+        Возвращает информацию о поддерживаемых LLM провайдерах.
+        
+        Returns:
+            Dict: Информация о провайдерах
+        """
+        try:
+            from .base_llm_plugin import LLM_PROVIDERS
+            
+            providers_info = {}
+            for provider_id, config in LLM_PROVIDERS.items():
+                providers_info[provider_id] = {
+                    "name": config.name,
+                    "display_name": config.display_name,
+                    "models": config.models,
+                    "default_model": config.default_model,
+                    "requires_api_key": config.requires_api_key,
+                    "api_key_name": config.api_key_name,
+                    "supports_vision": config.supports_vision
+                }
+            
+            return providers_info
+        except ImportError:
+            logging.warning("LLM_PROVIDERS not available")
+            return {}
+    
+    def get_recommended_plugin(self, provider_name: str) -> Optional[str]:
+        """
+        Возвращает рекомендуемый плагин для провайдера.
+        
+        Args:
+            provider_name: Название провайдера
+            
+        Returns:
+            str: ID рекомендуемого плагина или None
+        """
+        recommendations = {
+            "google": "gemini",
+            "openai": "openai", 
+            "anthropic": "anthropic",
+            "mistral": "universalllm",
+            "deepseek": "universalllm",
+            "xai": "universalllm",
+            "ollama": "universalllm"
+        }
+        
+        return recommendations.get(provider_name.lower())
+    
+    def create_plugin_template(self, plugin_name: str, output_dir: str = None) -> str:
+        """
+        Создает шаблон плагина для пользователя.
+        
+        Args:
+            plugin_name: Название плагина
+            output_dir: Директория для сохранения (по умолчанию user_dir)
+            
+        Returns:
+            str: Путь к созданному файлу шаблона
+        """
+        output_dir = Path(output_dir) if output_dir else self.user_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        template_content = f'''"""
+Пользовательский плагин {plugin_name} для InvoiceGemini
+"""
+from typing import Dict, Any, Optional
+from app.plugins.base_llm_plugin import BaseLLMPlugin
+
+class {plugin_name.title()}Plugin(BaseLLMPlugin):
+    """
+    Пользовательский плагин для работы с моделью {plugin_name}.
+    """
+    
+    def __init__(self, model_name: str = "{plugin_name}", model_path: Optional[str] = None, **kwargs):
+        super().__init__(model_name, model_path, **kwargs)
+        self.model_family = "{plugin_name.lower()}"
+    
+    def load_model(self, model_path: Optional[str] = None) -> bool:
+        """Загружает модель {plugin_name}."""
+        try:
+            # TODO: Реализуйте загрузку вашей модели
+            self.is_loaded = True
+            return True
+        except Exception as e:
+            logging.error(f"Ошибка загрузки модели {{self.model_name}}: {{e}}")
+            self.is_loaded = False
+            return False
+    
+    def generate_response(self, prompt: str, image_context: str = "") -> str:
+        """Генерирует ответ модели."""
+        if not self.is_loaded:
+            return "Модель не загружена"
+        # TODO: Реализуйте генерацию ответа
+        return "Ответ модели"
+    
+    def extract_invoice_data(self, image_path, ocr_lang=None, custom_prompt=None):
+        """Основной метод извлечения данных из счета."""
+        if not self.is_loaded:
+            if not self.load_model():
+                return None
+        # TODO: Реализуйте извлечение данных
+        return {{"status": "success"}}
+'''
+        
+        filename = f"{plugin_name.lower()}_plugin.py"
+        filepath = output_dir / filename
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(template_content)
+        
+        logging.info(f"Создан шаблон плагина: {filepath}")
+        return str(filepath)
+    
+    # ==========================================
+    # Методы обратной совместимости с PluginManager
+    # ==========================================
+    
+    def get_available_plugin_ids(self) -> List[str]:
+        """
+        Возвращает список ID доступных плагинов.
+        Метод обратной совместимости с PluginManager.
+        
+        Returns:
+            List[str]: Список ID плагинов
+        """
+        return list(self.registry.get_all().keys())
+    
+    def create_plugin_instance(self, plugin_id: str, **kwargs) -> Optional[BasePlugin]:
+        """
+        Создает экземпляр плагина.
+        Метод обратной совместимости с PluginManager.
+        
+        Args:
+            plugin_id: ID плагина
+            **kwargs: Параметры для инициализации
+            
+        Returns:
+            BasePlugin: Экземпляр плагина или None
+        """
+        # Включаем плагин (создает экземпляр если нужно)
+        if self.enable_plugin(plugin_id):
+            return self.get_plugin(plugin_id)
+        return None
+    
+    def get_plugin_instance(self, plugin_id: str) -> Optional[BasePlugin]:
+        """
+        Возвращает существующий экземпляр плагина.
+        Метод обратной совместимости с PluginManager.
+        
+        Args:
+            plugin_id: ID плагина
+            
+        Returns:
+            BasePlugin: Экземпляр плагина или None
+        """
+        return self.get_plugin(plugin_id)
+    
+    def remove_plugin_instance(self, plugin_id: str) -> bool:
+        """
+        Удаляет экземпляр плагина.
+        Метод обратной совместимости с PluginManager.
+        
+        Args:
+            plugin_id: ID плагина
+            
+        Returns:
+            bool: True если удаление успешно
+        """
+        return self.disable_plugin(plugin_id)
+    
+    def get_plugin_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Возвращает информацию о плагине.
+        Метод обратной совместимости с PluginManager.
+        
+        Args:
+            plugin_id: ID плагина
+            
+        Returns:
+            Dict: Информация о плагине или None
+        """
+        plugin_info = self.registry.get(plugin_id)
+        if not plugin_info:
+            return None
+        
+        metadata = plugin_info['metadata']
+        return {
+            "id": plugin_id,
+            "name": metadata.name,
+            "version": metadata.version,
+            "description": metadata.description,
+            "author": metadata.author,
+            "plugin_type": metadata.plugin_type.value,
+            "is_loaded": plugin_id in self._instances,
+            "enabled": plugin_info['enabled']
+        }
+    
+    def get_plugin_statistics(self) -> Dict[str, Any]:
+        """
+        Возвращает статистику плагинов.
+        Метод обратной совместимости с PluginManager.
+        
+        Returns:
+            Dict: Статистика плагинов
+        """
+        return self.get_statistics()
+    
     def cleanup(self):
         """Очистка ресурсов"""
         logging.info("🧹 Cleaning up UnifiedPluginManager...")
