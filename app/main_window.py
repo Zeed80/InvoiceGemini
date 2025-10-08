@@ -3238,8 +3238,11 @@ class MainWindow(QMainWindow):
             
             # NEW: Очищаем кэш перед закрытием
             if self.cache_manager:
-                self.cache_manager.clear_expired()
-                print("Очищен устаревший кэш")
+                try:
+                    self.cache_manager.cleanup()
+                    print("Кэш-менеджер очищен")
+                except Exception as e:
+                    print(f"Предупреждение при очистке кэша: {e}")
                 
             # NEW: Очищаем ресурсы оптимизированной системы хранения (Phase 3)
             if hasattr(self, 'storage_integration') and self.storage_integration:
